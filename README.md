@@ -14,6 +14,9 @@ A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) 
   - Weekly activity bar chart (Monday–Sunday) with interactive hover tooltips (token count + cost)
   - Per-model token usage for the current calendar week with dynamic model family detection
   - All-time session and message statistics
+- **CCS profile breakdown** — automatically discovers [CCS](https://github.com/kaitranntt/ccs) instances in `~/.ccs/instances/` and shows per-profile token/cost stats with a hybrid profile selector (tabs for up to 4 profiles, dropdown for more)
+  - Profile overlay on the daily activity chart: grey bars show total usage, colored bars show the selected profile's share
+  - Tooltip shows both total and per-profile token counts when a profile is selected
 - **Automatic subscription detection** via the Anthropic OAuth API
 - **Dynamic model pricing** — new Anthropic model families are detected automatically, no code changes needed
 - **Currency support** — costs displayed in EUR for French locale, USD otherwise (exchange rate from ECB via [Frankfurter](https://www.frankfurter.app/))
@@ -57,7 +60,7 @@ The plugin runs a lightweight bash script at the configured interval that:
 
 1. Reads your OAuth token from `~/.claude/.credentials.json`
 2. Queries the Anthropic usage API for current rate limit status
-3. Parses local JSONL session files for token consumption statistics
+3. Scans `~/.claude/projects/` (default profile) and any `~/.ccs/instances/*/projects/` directories (CCS profiles) for token consumption statistics — each profile is processed in parallel
 4. Fetches model pricing from LiteLLM and USD/EUR exchange rate from ECB (cached daily in `~/.claude/pricing-cache.json`)
 
 API usage responses are cached for 2 minutes (`~/.claude/usage-cache.json`) to avoid rate limiting, with stale fallback on errors.

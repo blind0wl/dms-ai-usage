@@ -9,7 +9,9 @@ PluginSettings {
     pluginId: "claudeCodeUsage"
 
     property string lang: Qt.locale().name.split(/[_-]/)[0]
-    function tr(key) { return Tr.tr(key, lang) }
+    function tr(key) {
+        return Tr.tr(key, lang);
+    }
 
     StyledText {
         width: parent.width

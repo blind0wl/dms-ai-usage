@@ -104,7 +104,7 @@ WEEK_SESSIONS=$(echo "$OUTPUT2" | grep "^WEEK_SESSIONS=" | cut -d= -f2)
 assert_eq "$WEEK_SESSIONS" "2" "WEEK_SESSIONS=2"
 
 # WEEK_MODELS should contain opus and sonnet
-WEEK_MODELS=$(echo "$OUTPUT2" | grep "^WEEK_MODELS=" | cut -d= -f2)
+WEEK_MODELS=$(echo "$OUTPUT2" | grep "^WEEK_MODELS=" | cut -d= -f2-)
 assert_match "$WEEK_MODELS" "opus" "WEEK_MODELS contains opus"
 assert_match "$WEEK_MODELS" "sonnet" "WEEK_MODELS contains sonnet"
 
@@ -229,9 +229,123 @@ TODAY_COST7=$(echo "$OUTPUT7" | grep "^TODAY_COST=" | cut -d= -f2)
 assert_eq "$TODAY_COST7" "0.00" "Cost=0 when model family not in pricing cache"
 
 # ============================================================
-echo "=== Test 8: Week boundary — previous week data excluded from WEEK_TOKENS ==="
+echo "=== Test 8: PROFILES field — default profile always present ==="
 # ============================================================
 ENV8=$(setup_env "test8")
+OUTPUT8=$(run_script "$ENV8")
+
+if echo "$OUTPUT8" | grep -q "^PROFILES="; then
+    pass "PROFILES key present"
+else
+    fail "PROFILES key missing"
+fi
+
+PROFILES8=$(echo "$OUTPUT8" | grep "^PROFILES=" | cut -d= -f2)
+assert_match "$PROFILES8" "default" "PROFILES contains default"
+
+# ============================================================
+echo "=== Test 9: PROFILES discovers CCS instances ==="
+# ============================================================
+ENV9=$(setup_env "test9")
+mkdir -p "$ENV9/.ccs/instances/work/projects/proj1"
+mkdir -p "$ENV9/.ccs/instances/home/projects/proj2"
+
+make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 500 300 0 0 "sess-r" \
+    > "$ENV9/.ccs/instances/work/projects/proj1/test.jsonl"
+
+OUTPUT9=$(run_script "$ENV9")
+
+PROFILES9=$(echo "$OUTPUT9" | grep "^PROFILES=" | cut -d= -f2)
+assert_match "$PROFILES9" "default" "PROFILES contains default (test9)"
+assert_match "$PROFILES9" "work" "PROFILES contains work"
+assert_match "$PROFILES9" "home" "PROFILES contains home"
+
+# ============================================================
+echo "=== Test 10: PROFILE_WEEK_TOKENS format and values ==="
+# ============================================================
+ENV10=$(setup_env "test10")
+mkdir -p "$ENV10/.ccs/instances/work/projects/proj1"
+
+# default: 630 tokens (100+200+50+30+150+100)
+make_jsonl_line "$TODAY" "claude-opus-4-20250514" 100 200 50 30 "sess-a" \
+    > "$ENV10/.claude/projects/test-project/t.jsonl"
+make_jsonl_line "$TODAY" "claude-opus-4-20250514" 150 100 0 0 "sess-a" \
+    >> "$ENV10/.claude/projects/test-project/t.jsonl"
+
+# work: 800 tokens (500+300)
+make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 500 300 0 0 "sess-r" \
+    > "$ENV10/.ccs/instances/work/projects/proj1/t.jsonl"
+
+OUTPUT10=$(run_script "$ENV10")
+
+PWT=$(echo "$OUTPUT10" | grep "^PROFILE_WEEK_TOKENS=" | cut -d= -f2)
+if [ -n "$PWT" ]; then
+    pass "PROFILE_WEEK_TOKENS present"
+else
+    fail "PROFILE_WEEK_TOKENS missing"
+fi
+assert_match "$PWT" "default:[0-9]+" "PROFILE_WEEK_TOKENS has default:N"
+assert_match "$PWT" "work:800" "PROFILE_WEEK_TOKENS work:800"
+
+# Aggregate WEEK_TOKENS must equal sum: 630+800=1430
+AGG10=$(echo "$OUTPUT10" | grep "^WEEK_TOKENS=" | cut -d= -f2)
+assert_eq "$AGG10" "1430" "WEEK_TOKENS aggregate = 1430"
+
+# ============================================================
+echo "=== Test 11: PROFILE_DAILY pipe-separated, 7 values per profile ==="
+# ============================================================
+ENV11=$(setup_env "test11")
+mkdir -p "$ENV11/.ccs/instances/work/projects/proj1"
+
+make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 100 50 0 0 "s1" \
+    > "$ENV11/.ccs/instances/work/projects/proj1/t.jsonl"
+
+OUTPUT11=$(run_script "$ENV11")
+
+PD=$(echo "$OUTPUT11" | grep "^PROFILE_DAILY=" | cut -d= -f2)
+if [ -n "$PD" ]; then
+    pass "PROFILE_DAILY present"
+else
+    fail "PROFILE_DAILY missing"
+fi
+
+# Verify pipe separator exists (at least 2 profiles = 1 pipe)
+assert_match "$PD" "[|]" "PROFILE_DAILY has pipe separator"
+
+# Each block should have 7 comma-separated values
+# Check work block: split on | then check count of commas in work part
+WORK_BLOCK=$(echo "$PD" | tr '|' '\n' | grep "^work:")
+WORK_VALS=$(echo "$WORK_BLOCK" | cut -d: -f2)
+COMMA_COUNT=$(echo "$WORK_VALS" | tr -cd ',' | wc -c)
+assert_eq "$COMMA_COUNT" "6" "PROFILE_DAILY work block has 7 values (6 commas)"
+
+# ============================================================
+echo "=== Test 12: PROFILE_WEEK_MODELS uses = not : for model/count ==="
+# ============================================================
+ENV12=$(setup_env "test12")
+mkdir -p "$ENV12/.ccs/instances/work/projects/proj1"
+
+make_jsonl_line "$TODAY" "claude-opus-4-20250514" 100 50 0 0 "s1" \
+    > "$ENV12/.ccs/instances/work/projects/proj1/t.jsonl"
+
+OUTPUT12=$(run_script "$ENV12")
+
+PWM=$(echo "$OUTPUT12" | grep "^PROFILE_WEEK_MODELS=" | cut -d= -f2-)
+if [ -n "$PWM" ]; then
+    pass "PROFILE_WEEK_MODELS present"
+else
+    fail "PROFILE_WEEK_MODELS missing"
+fi
+assert_match "$PWM" "opus=[0-9]+" "PROFILE_WEEK_MODELS uses = separator for model/count"
+
+# Also verify the aggregate WEEK_MODELS field uses = (not :)
+AGG_WM12=$(echo "$OUTPUT12" | sed -n 's/^WEEK_MODELS=//p')
+assert_match "$AGG_WM12" "opus=[0-9]+" "aggregate WEEK_MODELS also uses = separator"
+
+# ============================================================
+echo "=== Test 13: Week boundary — previous week data excluded from WEEK_TOKENS ==="
+# ============================================================
+ENV13=$(setup_env "test13")
 
 # Compute last Sunday (always before current week which starts Monday)
 LAST_SUNDAY=$(date -d "last Sunday" +%Y-%m-%d)
@@ -243,26 +357,26 @@ fi
 {
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 100 100 0 0 "sess-w1"
     make_jsonl_line "$LAST_SUNDAY" "claude-sonnet-4-20250514" 500 500 0 0 "sess-w2"
-} > "$ENV8/.claude/projects/test-project/test.jsonl"
+} > "$ENV13/.claude/projects/test-project/test.jsonl"
 
-OUTPUT8=$(run_script "$ENV8")
-WEEK_TOKENS8=$(echo "$OUTPUT8" | grep "^WEEK_TOKENS=" | cut -d= -f2)
-assert_eq "$WEEK_TOKENS8" "200" "Previous week data excluded from WEEK_TOKENS"
+OUTPUT13=$(run_script "$ENV13")
+WEEK_TOKENS13=$(echo "$OUTPUT13" | grep "^WEEK_TOKENS=" | cut -d= -f2)
+assert_eq "$WEEK_TOKENS13" "200" "Previous week data excluded from WEEK_TOKENS"
 
 # Previous week data should still count toward MONTH_TOKENS if same month
-MONTH_TOKENS8=$(echo "$OUTPUT8" | grep "^MONTH_TOKENS=" | cut -d= -f2)
+MONTH_TOKENS13=$(echo "$OUTPUT13" | grep "^MONTH_TOKENS=" | cut -d= -f2)
 LAST_SUNDAY_MONTH=$(date -d "$LAST_SUNDAY" +%Y-%m)
 CURRENT_MONTH=$(date +%Y-%m)
 if [ "$LAST_SUNDAY_MONTH" = "$CURRENT_MONTH" ]; then
-    assert_eq "$MONTH_TOKENS8" "1200" "Previous week same-month data included in MONTH_TOKENS"
+    assert_eq "$MONTH_TOKENS13" "1200" "Previous week same-month data included in MONTH_TOKENS"
 else
-    assert_eq "$MONTH_TOKENS8" "200" "Previous month data excluded from MONTH_TOKENS"
+    assert_eq "$MONTH_TOKENS13" "200" "Previous month data excluded from MONTH_TOKENS"
 fi
 
 # ============================================================
-echo "=== Test 9: Month boundary — previous month data excluded ==="
+echo "=== Test 14: Month boundary — previous month data excluded ==="
 # ============================================================
-ENV9=$(setup_env "test9")
+ENV14=$(setup_env "test14")
 
 # Use a date from the previous month
 PREV_MONTH_DATE=$(date -d "$(date +%Y-%m-01) - 1 day" +%Y-%m-%d)
@@ -270,16 +384,16 @@ PREV_MONTH_DATE=$(date -d "$(date +%Y-%m-01) - 1 day" +%Y-%m-%d)
 {
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 100 100 0 0 "sess-m1"
     make_jsonl_line "$PREV_MONTH_DATE" "claude-sonnet-4-20250514" 400 400 0 0 "sess-m2"
-} > "$ENV9/.claude/projects/test-project/test.jsonl"
+} > "$ENV14/.claude/projects/test-project/test.jsonl"
 
-OUTPUT9=$(run_script "$ENV9")
-MONTH_TOKENS9=$(echo "$OUTPUT9" | grep "^MONTH_TOKENS=" | cut -d= -f2)
-assert_eq "$MONTH_TOKENS9" "200" "Previous month data excluded from MONTH_TOKENS"
+OUTPUT14=$(run_script "$ENV14")
+MONTH_TOKENS14=$(echo "$OUTPUT14" | grep "^MONTH_TOKENS=" | cut -d= -f2)
+assert_eq "$MONTH_TOKENS14" "200" "Previous month data excluded from MONTH_TOKENS"
 
 # ============================================================
-echo "=== Test 10: Malformed JSONL lines are skipped ==="
+echo "=== Test 15: Malformed JSONL lines are skipped ==="
 # ============================================================
-ENV10=$(setup_env "test10")
+ENV15=$(setup_env "test15")
 
 {
     echo "this is not json"
@@ -287,16 +401,16 @@ ENV10=$(setup_env "test10")
     echo '{"truncated": true'
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 100 100 0 0 "sess-mf"
     echo '{"type":"assistant","timestamp":"invalid"}'
-} > "$ENV10/.claude/projects/test-project/test.jsonl"
+} > "$ENV15/.claude/projects/test-project/test.jsonl"
 
-OUTPUT10=$(run_script "$ENV10")
-WEEK_TOKENS10=$(echo "$OUTPUT10" | grep "^WEEK_TOKENS=" | cut -d= -f2)
-assert_eq "$WEEK_TOKENS10" "200" "Malformed lines skipped, valid line counted"
+OUTPUT15=$(run_script "$ENV15")
+WEEK_TOKENS15=$(echo "$OUTPUT15" | grep "^WEEK_TOKENS=" | cut -d= -f2)
+assert_eq "$WEEK_TOKENS15" "200" "Malformed lines skipped, valid line counted"
 
 # ============================================================
-echo "=== Test 11: Non-assistant types excluded ==="
+echo "=== Test 16: Non-assistant types excluded ==="
 # ============================================================
-ENV11=$(setup_env "test11")
+ENV16=$(setup_env "test16")
 
 {
     # User message — should be ignored
@@ -305,41 +419,41 @@ ENV11=$(setup_env "test11")
     printf '{"type":"tool","timestamp":"%sT12:00:00Z","sessionId":"sess-t","message":{"model":"claude-sonnet-4-20250514","usage":{"input_tokens":888,"output_tokens":888,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' "$TODAY"
     # Valid assistant message
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 50 50 0 0 "sess-a"
-} > "$ENV11/.claude/projects/test-project/test.jsonl"
+} > "$ENV16/.claude/projects/test-project/test.jsonl"
 
-OUTPUT11=$(run_script "$ENV11")
-WEEK_TOKENS11=$(echo "$OUTPUT11" | grep "^WEEK_TOKENS=" | cut -d= -f2)
-assert_eq "$WEEK_TOKENS11" "100" "Only assistant messages counted"
-WEEK_MESSAGES11=$(echo "$OUTPUT11" | grep "^WEEK_MESSAGES=" | cut -d= -f2)
-assert_eq "$WEEK_MESSAGES11" "1" "Non-assistant messages excluded from count"
+OUTPUT16=$(run_script "$ENV16")
+WEEK_TOKENS16=$(echo "$OUTPUT16" | grep "^WEEK_TOKENS=" | cut -d= -f2)
+assert_eq "$WEEK_TOKENS16" "100" "Only assistant messages counted"
+WEEK_MESSAGES16=$(echo "$OUTPUT16" | grep "^WEEK_MESSAGES=" | cut -d= -f2)
+assert_eq "$WEEK_MESSAGES16" "1" "Non-assistant messages excluded from count"
 
 # ============================================================
-echo "=== Test 12: Multiple projects aggregated ==="
+echo "=== Test 17: Multiple projects aggregated ==="
 # ============================================================
-ENV12=$(setup_env "test12")
-mkdir -p "$ENV12/.claude/projects/project-a"
-mkdir -p "$ENV12/.claude/projects/project-b"
+ENV17=$(setup_env "test17")
+mkdir -p "$ENV17/.claude/projects/project-a"
+mkdir -p "$ENV17/.claude/projects/project-b"
 
 {
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 100 100 0 0 "sess-pa"
-} > "$ENV12/.claude/projects/project-a/log.jsonl"
+} > "$ENV17/.claude/projects/project-a/log.jsonl"
 {
     make_jsonl_line "$TODAY" "claude-opus-4-20250514" 200 200 0 0 "sess-pb"
-} > "$ENV12/.claude/projects/project-b/log.jsonl"
+} > "$ENV17/.claude/projects/project-b/log.jsonl"
 
-OUTPUT12=$(run_script "$ENV12")
-WEEK_TOKENS12=$(echo "$OUTPUT12" | grep "^WEEK_TOKENS=" | cut -d= -f2)
-assert_eq "$WEEK_TOKENS12" "600" "Tokens from multiple projects aggregated"
-WEEK_SESSIONS12=$(echo "$OUTPUT12" | grep "^WEEK_SESSIONS=" | cut -d= -f2)
-assert_eq "$WEEK_SESSIONS12" "2" "Sessions from multiple projects counted"
+OUTPUT17=$(run_script "$ENV17")
+WEEK_TOKENS17=$(echo "$OUTPUT17" | grep "^WEEK_TOKENS=" | cut -d= -f2)
+assert_eq "$WEEK_TOKENS17" "600" "Tokens from multiple projects aggregated"
+WEEK_SESSIONS17=$(echo "$OUTPUT17" | grep "^WEEK_SESSIONS=" | cut -d= -f2)
+assert_eq "$WEEK_SESSIONS17" "2" "Sessions from multiple projects counted"
 
 # ============================================================
-echo "=== Test 13: Usage API cache — fresh cache used ==="
+echo "=== Test 18: Usage API cache — fresh cache used ==="
 # ============================================================
-ENV13=$(setup_env "test13")
+ENV18=$(setup_env "test18")
 
 # Create credentials so the API path is entered
-cat > "$ENV13/.claude/.credentials.json" << 'CREDEOF'
+cat > "$ENV18/.claude/.credentials.json" << 'CREDEOF'
 {
     "claudeAiOauth": {
         "subscriptionType": "pro",
@@ -351,7 +465,7 @@ CREDEOF
 
 # Create fresh usage cache (cached_at = now)
 NOW_TS=$(date +%s)
-cat > "$ENV13/.claude/usage-cache.json" << CACHEEOF
+cat > "$ENV18/.claude/usage-cache.json" << CACHEEOF
 {
     "cached_at": $NOW_TS,
     "data": {
@@ -362,20 +476,20 @@ cat > "$ENV13/.claude/usage-cache.json" << CACHEEOF
 }
 CACHEEOF
 
-OUTPUT13=$(run_script "$ENV13")
-FIVE13=$(echo "$OUTPUT13" | grep "^FIVE_HOUR_UTIL=" | cut -d= -f2)
-assert_eq "$FIVE13" "42" "Fresh cache: FIVE_HOUR_UTIL from cache"
-SEVEN13=$(echo "$OUTPUT13" | grep "^SEVEN_DAY_UTIL=" | cut -d= -f2)
-assert_eq "$SEVEN13" "15" "Fresh cache: SEVEN_DAY_UTIL from cache"
-EXTRA13=$(echo "$OUTPUT13" | grep "^EXTRA_USAGE_ENABLED=" | cut -d= -f2)
-assert_eq "$EXTRA13" "true" "Fresh cache: EXTRA_USAGE_ENABLED from cache"
+OUTPUT18=$(run_script "$ENV18")
+FIVE18=$(echo "$OUTPUT18" | grep "^FIVE_HOUR_UTIL=" | cut -d= -f2)
+assert_eq "$FIVE18" "42" "Fresh cache: FIVE_HOUR_UTIL from cache"
+SEVEN18=$(echo "$OUTPUT18" | grep "^SEVEN_DAY_UTIL=" | cut -d= -f2)
+assert_eq "$SEVEN18" "15" "Fresh cache: SEVEN_DAY_UTIL from cache"
+EXTRA18=$(echo "$OUTPUT18" | grep "^EXTRA_USAGE_ENABLED=" | cut -d= -f2)
+assert_eq "$EXTRA18" "true" "Fresh cache: EXTRA_USAGE_ENABLED from cache"
 
 # ============================================================
-echo "=== Test 14: Stats cache parsing ==="
+echo "=== Test 19: Stats cache parsing ==="
 # ============================================================
-ENV14=$(setup_env "test14")
+ENV19=$(setup_env "test19")
 
-cat > "$ENV14/.claude/stats-cache.json" << 'STATSEOF'
+cat > "$ENV19/.claude/stats-cache.json" << 'STATSEOF'
 {
     "totalSessions": 150,
     "totalMessages": 4200,
@@ -383,20 +497,20 @@ cat > "$ENV14/.claude/stats-cache.json" << 'STATSEOF'
 }
 STATSEOF
 
-OUTPUT14=$(run_script "$ENV14")
-AT_SESS14=$(echo "$OUTPUT14" | grep "^ALLTIME_SESSIONS=" | cut -d= -f2)
-assert_eq "$AT_SESS14" "150" "Stats cache: ALLTIME_SESSIONS"
-AT_MSGS14=$(echo "$OUTPUT14" | grep "^ALLTIME_MESSAGES=" | cut -d= -f2)
-assert_eq "$AT_MSGS14" "4200" "Stats cache: ALLTIME_MESSAGES"
-FIRST14=$(echo "$OUTPUT14" | grep "^FIRST_SESSION=" | cut -d= -f2)
-assert_eq "$FIRST14" "2024-06-15" "Stats cache: ISO timestamp T-suffix stripped"
+OUTPUT19=$(run_script "$ENV19")
+AT_SESS19=$(echo "$OUTPUT19" | grep "^ALLTIME_SESSIONS=" | cut -d= -f2)
+assert_eq "$AT_SESS19" "150" "Stats cache: ALLTIME_SESSIONS"
+AT_MSGS19=$(echo "$OUTPUT19" | grep "^ALLTIME_MESSAGES=" | cut -d= -f2)
+assert_eq "$AT_MSGS19" "4200" "Stats cache: ALLTIME_MESSAGES"
+FIRST19=$(echo "$OUTPUT19" | grep "^FIRST_SESSION=" | cut -d= -f2)
+assert_eq "$FIRST19" "2024-06-15" "Stats cache: ISO timestamp T-suffix stripped"
 
 # ============================================================
-echo "=== Test 15: Cost with multiple model families ==="
+echo "=== Test 20: Cost with multiple model families ==="
 # ============================================================
-ENV15=$(setup_env "test15")
+ENV20=$(setup_env "test20")
 
-cat > "$ENV15/.claude/pricing-cache.json" << MPEOF
+cat > "$ENV20/.claude/pricing-cache.json" << MPEOF
 {
     "updated": "$(date +%Y-%m-%d)",
     "models": {
@@ -409,21 +523,21 @@ MPEOF
 {
     make_jsonl_line "$TODAY" "claude-opus-4-20250514" 1000 1000 0 0 "sess-mp1"
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 1000 1000 0 0 "sess-mp2"
-} > "$ENV15/.claude/projects/test-project/test.jsonl"
+} > "$ENV20/.claude/projects/test-project/test.jsonl"
 
-OUTPUT15=$(run_script "$ENV15")
+OUTPUT20=$(run_script "$ENV20")
 # opus: 1000*0.000015 + 1000*0.000075 = 0.015 + 0.075 = 0.09
 # sonnet: 1000*0.000003 + 1000*0.000015 = 0.003 + 0.015 = 0.018
 # total: 0.108
-TODAY_COST15=$(echo "$OUTPUT15" | grep "^TODAY_COST=" | cut -d= -f2)
-assert_eq "$TODAY_COST15" "0.11" "Multi-model cost summed correctly"
+TODAY_COST20=$(echo "$OUTPUT20" | grep "^TODAY_COST=" | cut -d= -f2)
+assert_eq "$TODAY_COST20" "0.11" "Multi-model cost summed correctly"
 
 # ============================================================
-echo "=== Test 16: Pricing cache without EUR rate — USD_EUR_RATE=0 ==="
+echo "=== Test 21: Pricing cache without EUR rate — USD_EUR_RATE=0 ==="
 # ============================================================
-ENV16=$(setup_env "test16")
+ENV21=$(setup_env "test21")
 
-cat > "$ENV16/.claude/pricing-cache.json" << 'NOEUREOF'
+cat > "$ENV21/.claude/pricing-cache.json" << 'NOEUREOF'
 {
     "updated": "2099-12-31",
     "models": {
@@ -432,34 +546,34 @@ cat > "$ENV16/.claude/pricing-cache.json" << 'NOEUREOF'
 }
 NOEUREOF
 
-OUTPUT16=$(run_script "$ENV16")
-EUR16=$(echo "$OUTPUT16" | grep "^USD_EUR_RATE=" | cut -d= -f2)
-assert_eq "$EUR16" "0" "Missing usd_eur_rate defaults to 0"
+OUTPUT21=$(run_script "$ENV21")
+EUR21=$(echo "$OUTPUT21" | grep "^USD_EUR_RATE=" | cut -d= -f2)
+assert_eq "$EUR21" "0" "Missing usd_eur_rate defaults to 0"
 
 # ============================================================
-echo "=== Test 17: Session deduplication — same session counted once ==="
+echo "=== Test 22: Session deduplication — same session counted once ==="
 # ============================================================
-ENV17=$(setup_env "test17")
+ENV22=$(setup_env "test22")
 
 {
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 10 10 0 0 "same-sess"
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 20 20 0 0 "same-sess"
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 30 30 0 0 "same-sess"
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 40 40 0 0 "other-sess"
-} > "$ENV17/.claude/projects/test-project/test.jsonl"
+} > "$ENV22/.claude/projects/test-project/test.jsonl"
 
-OUTPUT17=$(run_script "$ENV17")
-WEEK_SESSIONS17=$(echo "$OUTPUT17" | grep "^WEEK_SESSIONS=" | cut -d= -f2)
-assert_eq "$WEEK_SESSIONS17" "2" "Same sessionId counted as 1 session"
-WEEK_MESSAGES17=$(echo "$OUTPUT17" | grep "^WEEK_MESSAGES=" | cut -d= -f2)
-assert_eq "$WEEK_MESSAGES17" "4" "All messages counted regardless of session"
+OUTPUT22=$(run_script "$ENV22")
+WEEK_SESSIONS22=$(echo "$OUTPUT22" | grep "^WEEK_SESSIONS=" | cut -d= -f2)
+assert_eq "$WEEK_SESSIONS22" "2" "Same sessionId counted as 1 session"
+WEEK_MESSAGES22=$(echo "$OUTPUT22" | grep "^WEEK_MESSAGES=" | cut -d= -f2)
+assert_eq "$WEEK_MESSAGES22" "4" "All messages counted regardless of session"
 
 # ============================================================
-echo "=== Test 18: DAILY_COSTS aligns with DAILY indices ==="
+echo "=== Test 23: DAILY_COSTS aligns with DAILY indices ==="
 # ============================================================
-ENV18=$(setup_env "test18")
+ENV23=$(setup_env "test23")
 
-cat > "$ENV18/.claude/pricing-cache.json" << DCEOF
+cat > "$ENV23/.claude/pricing-cache.json" << DCEOF
 {
     "updated": "$(date +%Y-%m-%d)",
     "models": {
@@ -470,18 +584,18 @@ DCEOF
 
 {
     make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 1000 1000 0 0 "sess-dc"
-} > "$ENV18/.claude/projects/test-project/test.jsonl"
+} > "$ENV23/.claude/projects/test-project/test.jsonl"
 
-OUTPUT18=$(run_script "$ENV18")
-DAILY18=$(echo "$OUTPUT18" | grep "^DAILY=" | cut -d= -f2)
-DAILY_COSTS18=$(echo "$OUTPUT18" | grep "^DAILY_COSTS=" | cut -d= -f2)
+OUTPUT23=$(run_script "$ENV23")
+DAILY23=$(echo "$OUTPUT23" | grep "^DAILY=" | cut -d= -f2)
+DAILY_COSTS23=$(echo "$OUTPUT23" | grep "^DAILY_COSTS=" | cut -d= -f2)
 
 # Today's index in calendar week
-TODAY_IDX18=$((DOW - 1))
+TODAY_IDX23=$((DOW - 1))
 
 # Verify tokens and costs are at the same index
-DAILY_TOK=$(echo "$DAILY18" | tr ',' '\n' | sed -n "$((TODAY_IDX18 + 1))p")
-DAILY_CST=$(echo "$DAILY_COSTS18" | tr ',' '\n' | sed -n "$((TODAY_IDX18 + 1))p")
+DAILY_TOK=$(echo "$DAILY23" | tr ',' '\n' | sed -n "$((TODAY_IDX23 + 1))p")
+DAILY_CST=$(echo "$DAILY_COSTS23" | tr ',' '\n' | sed -n "$((TODAY_IDX23 + 1))p")
 assert_eq "$DAILY_TOK" "2000" "DAILY tokens at today's index"
 if [ "$DAILY_CST" != "0" ] && [ "$DAILY_CST" != "0.00" ]; then
     pass "DAILY_COSTS at today's index is non-zero"
@@ -491,8 +605,8 @@ fi
 
 # Verify all other indices are zero
 for i in $(seq 0 6); do
-    if [ "$i" -ne "$TODAY_IDX18" ]; then
-        val=$(echo "$DAILY_COSTS18" | tr ',' '\n' | sed -n "$((i + 1))p")
+    if [ "$i" -ne "$TODAY_IDX23" ]; then
+        val=$(echo "$DAILY_COSTS23" | tr ',' '\n' | sed -n "$((i + 1))p")
         if [ "$val" = "0.00" ] || [ "$val" = "0" ]; then
             pass "DAILY_COSTS[$i] is zero (not today)"
         else
