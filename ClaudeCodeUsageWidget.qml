@@ -22,6 +22,7 @@ PluginComponent {
 
     // Settings
     property int refreshInterval: (pluginData.refreshInterval || 2) * 60000
+    property bool showPacing: pluginData.showPacing !== false
 
     // API usage data
     property string subscriptionType: ""
@@ -134,6 +135,23 @@ PluginComponent {
         return hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
     }
 
+    // Pacing: whether usage is ahead of (over) or behind (under) a linear burn
+    // rate for the time window. Each touches countdownNow so it recomputes on
+    // the 60s timer below.
+    property var fiveHourPace: {
+        void (countdownNow);
+        return paceInfo(displayFiveHourUtil, displayFiveHourReset, 18000000);
+    }
+    property var sevenDayPace: {
+        void (countdownNow);
+        return paceInfo(displaySevenDayUtil, displaySevenDayReset, 604800000);
+    }
+    // Pills are not profile-scoped — derive from aggregate 5h values.
+    property var pillFivePace: {
+        void (countdownNow);
+        return paceInfo(fiveHourUtil, fiveHourReset, 18000000);
+    }
+
     // Today's index in the calendar week (0=Monday, 6=Sunday)
     property int todayIndex: {
         void (countdownNow);
@@ -221,6 +239,72 @@ PluginComponent {
         if (pct > 50)
             return Theme.warning;
         return Theme.primary;
+    }
+
+    // Returns { timeFrac, delta, status } for a usage window.
+    // status: over_quota | over | under | on | unknown
+    function paceInfo(util, resetIso, windowMs) {
+        util = util || 0;
+        if (!resetIso)
+            return util >= 100 ? {
+                timeFrac: 1,
+                delta: util,
+                status: "over_quota"
+            } : {
+                timeFrac: 0,
+                delta: 0,
+                status: "unknown"
+            };
+        var resetMs = new Date(resetIso).getTime();
+        if (isNaN(resetMs))
+            return {
+                timeFrac: 0,
+                delta: 0,
+                status: "unknown"
+            };
+        var remaining = resetMs - countdownNow;
+        var timeFrac = (windowMs - remaining) / windowMs;
+        if (timeFrac < 0)
+            timeFrac = 0;
+        else if (timeFrac > 1)
+            timeFrac = 1;
+        var delta = util - timeFrac * 100;
+        var status;
+        if (util >= 100)
+            status = "over_quota";
+        else if (delta >= 5)
+            status = "over";
+        else if (delta <= -5)
+            status = "under";
+        else
+            status = "on";
+        return {
+            timeFrac: timeFrac,
+            delta: delta,
+            status: status
+        };
+    }
+
+    function paceLabel(p) {
+        if (!p)
+            return "";
+        if (p.status === "over_quota")
+            return tr("Over quota");
+        if (p.status === "over")
+            return Math.round(p.delta) + "% " + tr("over pace");
+        if (p.status === "under")
+            return Math.round(-p.delta) + "% " + tr("under pace");
+        if (p.status === "on")
+            return tr("On pace");
+        return "";
+    }
+
+    function paceColor(status) {
+        if (status === "over_quota")
+            return Theme.error;
+        if (status === "over")
+            return Theme.warning;
+        return Theme.surfaceVariantText;
     }
 
     function formatCost(usd) {
@@ -637,9 +721,10 @@ PluginComponent {
             }
 
             StyledText {
-                text: Math.round(root.fiveHourUtil) + "%"
+                property bool overPace: root.showPacing && (root.pillFivePace.status === "over" || root.pillFivePace.status === "over_quota")
+                text: Math.round(root.fiveHourUtil) + "%" + (overPace ? " ↑" : "")
                 font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceText
+                color: overPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -683,9 +768,10 @@ PluginComponent {
             }
 
             StyledText {
-                text: Math.round(root.fiveHourUtil) + "%"
+                property bool overPace: root.showPacing && (root.pillFivePace.status === "over" || root.pillFivePace.status === "over_quota")
+                text: Math.round(root.fiveHourUtil) + "%" + (overPace ? " ↑" : "")
                 font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceText
+                color: overPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
@@ -880,6 +966,8 @@ PluginComponent {
 
                             property real percent: root.displayFiveHourUtil
                             onPercentChanged: requestPaint()
+                            property var pace: root.fiveHourPace
+                            onPaceChanged: requestPaint()
 
                             onPaint: {
                                 var ctx = getContext("2d");
@@ -899,6 +987,18 @@ PluginComponent {
                                     ctx.lineWidth = lw;
                                     ctx.strokeStyle = root.progressColor(percent);
                                     ctx.lineCap = "round";
+                                    ctx.stroke();
+                                }
+
+                                if (root.showPacing && pace && pace.status !== "unknown") {
+                                    var a = -Math.PI / 2 + 2 * Math.PI * Math.min(Math.max(pace.timeFrac, 0), 1);
+                                    var ri = r - lw / 2 - 1, ro = r + lw / 2 + 1;
+                                    ctx.beginPath();
+                                    ctx.moveTo(cx + ri * Math.cos(a), cy + ri * Math.sin(a));
+                                    ctx.lineTo(cx + ro * Math.cos(a), cy + ro * Math.sin(a));
+                                    ctx.lineWidth = 2;
+                                    ctx.lineCap = "butt";
+                                    ctx.strokeStyle = Theme.surfaceText;
                                     ctx.stroke();
                                 }
                             }
@@ -926,6 +1026,12 @@ PluginComponent {
                                 text: Math.round(root.displayFiveHourUtil) + "% " + root.tr("used")
                                 font.pixelSize: Theme.fontSizeMedium
                                 color: root.progressColor(root.displayFiveHourUtil)
+                            }
+                            StyledText {
+                                text: root.paceLabel(root.fiveHourPace)
+                                visible: root.showPacing && text !== ""
+                                font.pixelSize: Theme.fontSizeMedium
+                                color: root.paceColor(root.fiveHourPace.status)
                             }
                             StyledText {
                                 text: root.displayFiveHourCountdown ? root.tr("Resets in") + " " + root.displayFiveHourCountdown : ""
@@ -958,6 +1064,8 @@ PluginComponent {
 
                             property real percent: root.displaySevenDayUtil
                             onPercentChanged: requestPaint()
+                            property var pace: root.sevenDayPace
+                            onPaceChanged: requestPaint()
 
                             onPaint: {
                                 var ctx = getContext("2d");
@@ -977,6 +1085,18 @@ PluginComponent {
                                     ctx.lineWidth = lw;
                                     ctx.strokeStyle = root.progressColor(percent);
                                     ctx.lineCap = "round";
+                                    ctx.stroke();
+                                }
+
+                                if (root.showPacing && pace && pace.status !== "unknown") {
+                                    var a = -Math.PI / 2 + 2 * Math.PI * Math.min(Math.max(pace.timeFrac, 0), 1);
+                                    var ri = r - lw / 2 - 1, ro = r + lw / 2 + 1;
+                                    ctx.beginPath();
+                                    ctx.moveTo(cx + ri * Math.cos(a), cy + ri * Math.sin(a));
+                                    ctx.lineTo(cx + ro * Math.cos(a), cy + ro * Math.sin(a));
+                                    ctx.lineWidth = 2;
+                                    ctx.lineCap = "butt";
+                                    ctx.strokeStyle = Theme.surfaceText;
                                     ctx.stroke();
                                 }
                             }
@@ -999,6 +1119,12 @@ PluginComponent {
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
+                            }
+                            StyledText {
+                                text: root.paceLabel(root.sevenDayPace)
+                                visible: root.showPacing && text !== ""
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: root.paceColor(root.sevenDayPace.status)
                             }
                             StyledText {
                                 text: {
