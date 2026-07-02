@@ -241,7 +241,12 @@ fetch_profile_usage() {
     local use_cache=false
     if [ -f "$cache_file" ]; then
         local cache_ts now_ts age
-        cache_ts=$(jq -r '.cached_at // 0' "$cache_file" 2>/dev/null || echo 0)
+        # Take only the first line and validate it's a plain integer. A corrupt
+        # cache (e.g. from interleaved concurrent writes) makes jq emit the first
+        # object's value AND then error, which the `|| echo 0` turns into a
+        # multiline string that would crash the arithmetic below under `set -e`.
+        cache_ts=$(jq -r '.cached_at // 0' "$cache_file" 2>/dev/null | head -1)
+        [[ "$cache_ts" =~ ^[0-9]+$ ]] || cache_ts=0
         now_ts=$(date +%s)
         age=$(( now_ts - cache_ts ))
         [ "$age" -lt "$USAGE_CACHE_TTL" ] && use_cache=true
@@ -262,7 +267,15 @@ fetch_profile_usage() {
                 "https://api.anthropic.com/api/oauth/usage" 2>/dev/null || echo '{}')
 
             if echo "$api_resp" | jq -e '.five_hour' >/dev/null 2>&1; then
-                jq -n --argjson data "$api_resp" '{cached_at: (now | floor), data: $data}' > "$cache_file" 2>/dev/null || true
+                # Write atomically: overlapping widget refreshes both target the
+                # same cache file, and a plain `> "$cache_file"` interleaves their
+                # output into corrupt JSON. Write to a per-PID temp then rename.
+                local cache_tmp="${cache_file}.$$.tmp"
+                if jq -n --argjson data "$api_resp" '{cached_at: (now | floor), data: $data}' > "$cache_tmp" 2>/dev/null; then
+                    mv -f "$cache_tmp" "$cache_file" 2>/dev/null || rm -f "$cache_tmp"
+                else
+                    rm -f "$cache_tmp"
+                fi
             elif [ -f "$cache_file" ]; then
                 api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
             fi
