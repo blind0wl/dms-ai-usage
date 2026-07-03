@@ -151,6 +151,9 @@ PluginComponent {
         void (countdownNow);
         return paceInfo(fiveHourUtil, fiveHourReset, 18000000);
     }
+    // Whether the taskbar pill should show the over-pace arrow/color. Shared by
+    // the horizontal and vertical pills so they never diverge.
+    readonly property bool pillOverPace: showPacing && (pillFivePace.status === "over" || pillFivePace.status === "over_quota")
 
     // Today's index in the calendar week (0=Monday, 6=Sunday)
     property int todayIndex: {
@@ -305,6 +308,22 @@ PluginComponent {
         if (status === "over")
             return Theme.warning;
         return Theme.surfaceVariantText;
+    }
+
+    // Draws the pace tick — a short radial mark at the linear-burn position — on
+    // a ring canvas. Shared by the 5h and 7d popout rings.
+    function drawPaceTick(ctx, cx, cy, r, lw, pace) {
+        if (!showPacing || !pace || pace.status === "unknown")
+            return;
+        var a = -Math.PI / 2 + 2 * Math.PI * Math.min(Math.max(pace.timeFrac, 0), 1);
+        var ri = r - lw / 2 - 1, ro = r + lw / 2 + 1;
+        ctx.beginPath();
+        ctx.moveTo(cx + ri * Math.cos(a), cy + ri * Math.sin(a));
+        ctx.lineTo(cx + ro * Math.cos(a), cy + ro * Math.sin(a));
+        ctx.lineWidth = 2;
+        ctx.lineCap = "butt";
+        ctx.strokeStyle = Theme.surfaceText;
+        ctx.stroke();
     }
 
     function formatCost(usd) {
@@ -721,10 +740,9 @@ PluginComponent {
             }
 
             StyledText {
-                property bool overPace: root.showPacing && (root.pillFivePace.status === "over" || root.pillFivePace.status === "over_quota")
-                text: Math.round(root.fiveHourUtil) + "%" + (overPace ? " ↑" : "")
+                text: Math.round(root.fiveHourUtil) + "%" + (root.pillOverPace ? " ↑" : "")
                 font.pixelSize: Theme.fontSizeSmall
-                color: overPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
+                color: root.pillOverPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
             }
         }
@@ -768,10 +786,9 @@ PluginComponent {
             }
 
             StyledText {
-                property bool overPace: root.showPacing && (root.pillFivePace.status === "over" || root.pillFivePace.status === "over_quota")
-                text: Math.round(root.fiveHourUtil) + "%" + (overPace ? " ↑" : "")
+                text: Math.round(root.fiveHourUtil) + "%" + (root.pillOverPace ? " ↑" : "")
                 font.pixelSize: Theme.fontSizeSmall
-                color: overPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
+                color: root.pillOverPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
@@ -990,17 +1007,7 @@ PluginComponent {
                                     ctx.stroke();
                                 }
 
-                                if (root.showPacing && pace && pace.status !== "unknown") {
-                                    var a = -Math.PI / 2 + 2 * Math.PI * Math.min(Math.max(pace.timeFrac, 0), 1);
-                                    var ri = r - lw / 2 - 1, ro = r + lw / 2 + 1;
-                                    ctx.beginPath();
-                                    ctx.moveTo(cx + ri * Math.cos(a), cy + ri * Math.sin(a));
-                                    ctx.lineTo(cx + ro * Math.cos(a), cy + ro * Math.sin(a));
-                                    ctx.lineWidth = 2;
-                                    ctx.lineCap = "butt";
-                                    ctx.strokeStyle = Theme.surfaceText;
-                                    ctx.stroke();
-                                }
+                                root.drawPaceTick(ctx, cx, cy, r, lw, pace);
                             }
 
                             StyledText {
@@ -1088,17 +1095,7 @@ PluginComponent {
                                     ctx.stroke();
                                 }
 
-                                if (root.showPacing && pace && pace.status !== "unknown") {
-                                    var a = -Math.PI / 2 + 2 * Math.PI * Math.min(Math.max(pace.timeFrac, 0), 1);
-                                    var ri = r - lw / 2 - 1, ro = r + lw / 2 + 1;
-                                    ctx.beginPath();
-                                    ctx.moveTo(cx + ri * Math.cos(a), cy + ri * Math.sin(a));
-                                    ctx.lineTo(cx + ro * Math.cos(a), cy + ro * Math.sin(a));
-                                    ctx.lineWidth = 2;
-                                    ctx.lineCap = "butt";
-                                    ctx.strokeStyle = Theme.surfaceText;
-                                    ctx.stroke();
-                                }
+                                root.drawPaceTick(ctx, cx, cy, r, lw, pace);
                             }
 
                             StyledText {
