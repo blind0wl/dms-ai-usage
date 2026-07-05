@@ -605,18 +605,19 @@ PluginComponent {
 
             Canvas {
                 id: hRing
-                width: 20
-                height: 20
+                width: root.iconSize
+                height: root.iconSize
                 anchors.verticalCenter: parent.verticalCenter
                 renderStrategy: Canvas.Cooperative
 
                 property real percent: root.fiveHourUtil
                 onPercentChanged: requestPaint()
+                onWidthChanged: requestPaint()
 
                 onPaint: {
                     var ctx = getContext("2d");
                     ctx.reset();
-                    var cx = width / 2, cy = height / 2, r = 7.5, lw = 2.5;
+                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
 
                     ctx.beginPath();
                     ctx.arc(cx, cy, r, 0, 2 * Math.PI);
@@ -638,7 +639,7 @@ PluginComponent {
 
             StyledText {
                 text: Math.round(root.fiveHourUtil) + "%"
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                 color: Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -651,18 +652,19 @@ PluginComponent {
 
             Canvas {
                 id: vRing
-                width: 20
-                height: 20
+                width: root.iconSize
+                height: root.iconSize
                 anchors.horizontalCenter: parent.horizontalCenter
                 renderStrategy: Canvas.Cooperative
 
                 property real percent: root.fiveHourUtil
                 onPercentChanged: requestPaint()
+                onWidthChanged: requestPaint()
 
                 onPaint: {
                     var ctx = getContext("2d");
                     ctx.reset();
-                    var cx = width / 2, cy = height / 2, r = 7.5, lw = 2.5;
+                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
 
                     ctx.beginPath();
                     ctx.arc(cx, cy, r, 0, 2 * Math.PI);
@@ -684,7 +686,7 @@ PluginComponent {
 
             StyledText {
                 text: Math.round(root.fiveHourUtil) + "%"
-                font.pixelSize: Theme.fontSizeSmall
+                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                 color: Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
             }
