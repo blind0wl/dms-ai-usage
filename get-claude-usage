@@ -111,6 +111,19 @@ if [ -n "$PRICING_JSON" ]; then
     USD_EUR_RATE=$(echo "$PRICING_JSON" | jq -r '.usd_eur_rate // 0' 2>/dev/null || echo "0")
 fi
 
+# Local vs UTC date bucketing. strflocaltime (jq >= 1.6) maps each UTC timestamp
+# to the LOCAL calendar date so daily boundaries line up with TODAY/WEEK_START/...
+# (computed via local `date`). jq's try/catch only rescues runtime errors, not an
+# unknown-function *compile* error, so probe the exact conversion chain here and
+# fall back to the raw UTC date slice on older jq.
+# $ts/$d below are jq variables inside a single-quoted jq program, not shell vars.
+# shellcheck disable=SC2016
+if jq -rn '"2020-01-01T00:00:00Z"[:19] + "Z" | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strflocaltime("%Y-%m-%d")' >/dev/null 2>&1; then
+    JQ_DATE_EXPR='(try (($ts[:19] + "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | strflocaltime("%Y-%m-%d")) catch (if ($ts | length) >= 10 then $ts[:10] else "1970-01-01" end))'
+else
+    JQ_DATE_EXPR='(if ($ts | length) >= 10 then $ts[:10] else "1970-01-01" end)'
+fi
+
 # --- Per-profile token counting ---
 # Usage: count_profile_tokens <projects_dir> <tmpfile>
 # Writes WEEK_TOKENS=N, WEEK_MESSAGES=N, ... to tmpfile
@@ -127,7 +140,15 @@ count_profile_tokens() {
     done
 
     find "$proj_dir" -name "*.jsonl" -mtime -31 -exec cat {} + 2>/dev/null \
-        | jq -r -R 'fromjson? | select(.type == "assistant") | "\(.timestamp[:10]) \(.message.model // "unknown") \(.message.usage.input_tokens // 0) \(.message.usage.output_tokens // 0) \(.message.usage.cache_read_input_tokens // 0) \(.message.usage.cache_creation_input_tokens // 0) \(.sessionId // "unknown")"' \
+        | jq -r -R 'fromjson? | select(.type == "assistant")
+            # Bucket by LOCAL calendar date, not UTC. Timestamps are ISO-8601 UTC
+            # (e.g. 2026-06-30T00:10:33Z); convert to the local date so the daily
+            # boundaries match TODAY/WEEK_START/MONTH_START (computed via local `date`)
+            # and the widget'"'"'s todayIndex. Falls back to the raw UTC slice if parsing
+            # fails or jq lacks strflocaltime (see JQ_DATE_EXPR probe above).
+            | (.timestamp // "") as $ts
+            | ('"$JQ_DATE_EXPR"') as $d
+            | "\($d) \(.message.model // "unknown") \(.message.usage.input_tokens // 0) \(.message.usage.output_tokens // 0) \(.message.usage.cache_read_input_tokens // 0) \(.message.usage.cache_creation_input_tokens // 0) \(.sessionId // "unknown")"' \
         | awk -v week_start="$WEEK_START" -v month_start="$MONTH_START" -v today="$TODAY" -v day_dates="$day_dates" -v pricing="$PRICING_AWK" '
         BEGIN {
             split(day_dates, dates, ",")
@@ -234,7 +255,12 @@ fetch_profile_usage() {
     local use_cache=false
     if [ -f "$cache_file" ]; then
         local cache_ts now_ts age
-        cache_ts=$(jq -r '.cached_at // 0' "$cache_file" 2>/dev/null || echo 0)
+        # Take only the first line and validate it's a plain integer. A corrupt
+        # cache (e.g. from interleaved concurrent writes) makes jq emit the first
+        # object's value AND then error, which the `|| echo 0` turns into a
+        # multiline string that would crash the arithmetic below under `set -e`.
+        cache_ts=$(jq -r '.cached_at // 0' "$cache_file" 2>/dev/null | head -1)
+        [[ "$cache_ts" =~ ^[0-9]+$ ]] || cache_ts=0
         now_ts=$(date +%s)
         age=$(( now_ts - cache_ts ))
         [ "$age" -lt "$USAGE_CACHE_TTL" ] && use_cache=true
@@ -255,7 +281,15 @@ fetch_profile_usage() {
                 "https://api.anthropic.com/api/oauth/usage" 2>/dev/null || echo '{}')
 
             if echo "$api_resp" | jq -e '.five_hour' >/dev/null 2>&1; then
-                jq -n --argjson data "$api_resp" '{cached_at: (now | floor), data: $data}' > "$cache_file" 2>/dev/null || true
+                # Write atomically: overlapping widget refreshes both target the
+                # same cache file, and a plain `> "$cache_file"` interleaves their
+                # output into corrupt JSON. Write to a per-PID temp then rename.
+                local cache_tmp="${cache_file}.$$.tmp"
+                if jq -n --argjson data "$api_resp" '{cached_at: (now | floor), data: $data}' > "$cache_tmp" 2>/dev/null; then
+                    mv -f "$cache_tmp" "$cache_file" 2>/dev/null || rm -f "$cache_tmp"
+                else
+                    rm -f "$cache_tmp"
+                fi
             elif [ -f "$cache_file" ]; then
                 api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
             fi
