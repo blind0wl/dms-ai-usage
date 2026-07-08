@@ -40,4 +40,11 @@ PluginSettings {
         unit: "min"
         leftIcon: "schedule"
     }
+
+    ToggleSetting {
+        settingKey: "showPacing"
+        label: root.tr("Show pacing")
+        description: root.tr("Show whether usage is ahead of or behind the time window")
+        defaultValue: true
+    }
 }

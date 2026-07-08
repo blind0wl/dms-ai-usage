@@ -46,6 +46,19 @@ var strings = {
         { fr: "Profil" },
     "total":
         { fr: "total" },
+    // Pacing
+    "over pace":
+        { fr: "au-dessus du rythme" },
+    "under pace":
+        { fr: "en dessous du rythme" },
+    "On pace":
+        { fr: "Dans les temps" },
+    "Over quota":
+        { fr: "Quota dépassé" },
+    "Show pacing":
+        { fr: "Afficher le rythme" },
+    "Show whether usage is ahead of or behind the time window":
+        { fr: "Indique si l'utilisation est en avance ou en retard sur la fenêtre de temps" },
 }
 
 function tr(key, lang) {

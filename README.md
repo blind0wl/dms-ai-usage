@@ -9,6 +9,7 @@ A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) 
 - **Taskbar pill** with circular progress ring showing 5-hour rate limit utilization
 - **Detailed popout** with:
   - 5-hour and 7-day rate window utilization with countdown timers
+  - Pacing indicator showing whether you're over or under a linear burn rate for each window (e.g. "6% over pace", "25% under pace")
   - Token consumption breakdown (today, calendar week, calendar month)
   - Estimated API cost per period (today, calendar week, calendar month) with automatic pricing from [LiteLLM](https://github.com/BerriAI/litellm)
   - Weekly activity bar chart (Monday–Sunday) with interactive hover tooltips (token count + cost)
