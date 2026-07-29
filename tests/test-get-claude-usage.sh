@@ -637,6 +637,14 @@ PWT24=$(echo "$OUTPUT24" | grep "^PROFILE_WEEK_TOKENS=" | cut -d= -f2)
 RANQIA_TOK=$(echo "$PWT24" | tr ',' '\n' | grep "^ranqia:" | cut -d: -f2)
 assert_eq "$RANQIA_TOK" "600" "ccp profile token count"
 
+# Per-profile session/message counts are emitted
+PWM24=$(echo "$OUTPUT24" | grep "^PROFILE_WEEK_MESSAGES=" | cut -d= -f2)
+PWS24=$(echo "$OUTPUT24" | grep "^PROFILE_WEEK_SESSIONS=" | cut -d= -f2)
+assert_eq "$(echo "$PWM24" | tr ',' '\n' | grep '^ranqia:' | cut -d: -f2)" "1" \
+    "PROFILE_WEEK_MESSAGES per profile"
+assert_eq "$(echo "$PWS24" | tr ',' '\n' | grep '^ranqia:' | cut -d: -f2)" "1" \
+    "PROFILE_WEEK_SESSIONS per profile"
+
 # ============================================================
 echo "=== Test 25: ccp profile without CLAUDE_CONFIG_DIR is ignored ==="
 # ============================================================

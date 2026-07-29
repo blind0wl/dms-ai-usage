@@ -95,6 +95,8 @@ PluginComponent {
     property real displaySevenDayUtil: currentPd && currentPd.sevenDayUtil !== undefined ? currentPd.sevenDayUtil : sevenDayUtil
     property string displaySevenDayReset: currentPd && currentPd.sevenDayReset !== undefined ? currentPd.sevenDayReset : sevenDayReset
     property real displayWeekTokens: currentPd && currentPd.weekTokens !== undefined ? currentPd.weekTokens : weekTokens
+    property int displayWeekMessages: currentPd && currentPd.weekMessages !== undefined ? currentPd.weekMessages : weekMessages
+    property int displayWeekSessions: currentPd && currentPd.weekSessions !== undefined ? currentPd.weekSessions : weekSessions
     property real displayMonthTokens: currentPd && currentPd.monthTokens !== undefined ? currentPd.monthTokens : monthTokens
     property real displayTodayCost: currentPd && currentPd.todayCost !== undefined ? currentPd.todayCost : todayCost
     property real displayWeekCost: currentPd && currentPd.weekCost !== undefined ? currentPd.weekCost : weekCost
@@ -555,6 +557,12 @@ PluginComponent {
             break;
         case "PROFILE_MONTH_TOKENS":
             profileData = parseProfileSimple(val, "monthTokens", false);
+            break;
+        case "PROFILE_WEEK_MESSAGES":
+            profileData = parseProfileSimple(val, "weekMessages", false);
+            break;
+        case "PROFILE_WEEK_SESSIONS":
+            profileData = parseProfileSimple(val, "weekSessions", false);
             break;
         case "PROFILE_TODAY_COST":
             profileData = parseProfileSimple(val, "todayCost", true);
@@ -1128,15 +1136,15 @@ PluginComponent {
                             StyledText {
                                 text: {
                                     var parts = [];
-                                    if (root.weekSessions > 0)
-                                        parts.push(root.weekSessions + " " + root.tr("sessions"));
-                                    if (root.weekMessages > 0)
-                                        parts.push(root.weekMessages + " " + root.tr("msgs"));
+                                    if (root.displayWeekSessions > 0)
+                                        parts.push(root.displayWeekSessions + " " + root.tr("sessions"));
+                                    if (root.displayWeekMessages > 0)
+                                        parts.push(root.displayWeekMessages + " " + root.tr("msgs"));
                                     return parts.join(" · ");
                                 }
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
-                                visible: root.selectedProfile === "all"
+                                visible: text !== ""
                             }
                             StyledText {
                                 text: root.displaySevenDayCountdown ? root.tr("Resets in") + " " + root.displaySevenDayCountdown : ""
