@@ -15,7 +15,11 @@ A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) 
   - Weekly activity bar chart (Monday–Sunday) with interactive hover tooltips (token count + cost)
   - Per-model token usage for the current calendar week with dynamic model family detection
   - All-time session and message statistics
-- **CCS profile breakdown** — automatically discovers [CCS](https://github.com/kaitranntt/ccs) instances in `~/.ccs/instances/` and shows per-profile token/cost stats with a hybrid profile selector (tabs for up to 4 profiles, dropdown for more)
+- **Profile breakdown** — per-profile token/cost stats with a hybrid profile selector (tabs for up to 4 profiles, dropdown for more). Profiles are discovered automatically from:
+  - `~/.claude` (the `default` profile)
+  - [CCS](https://github.com/kaitranntt/ccs) instances in `~/.ccs/instances/`
+  - [claude-code-profiles](https://github.com/felipeadeildo/claude-code-profiles) profiles in `~/.ccp/profiles/*.env` (the `CLAUDE_CONFIG_DIR` declared in each `.env` is used)
+  - Any directory you add manually under **Custom Profiles** in the plugin settings
   - Profile overlay on the daily activity chart: grey bars show total usage, colored bars show the selected profile's share
   - Tooltip shows both total and per-profile token counts when a profile is selected
 - **Automatic subscription detection** via the Anthropic OAuth API
@@ -53,7 +57,24 @@ Then restart DMS.
 
 ## Configuration
 
-Open DMS Settings (`Mod + ,` > Plugins > Claude Code Usage) to adjust the refresh interval.
+Open DMS Settings (`Mod + ,` > Plugins > Claude Code Usage) to adjust the refresh interval,
+toggle pacing indicators, and register custom profiles.
+
+### Custom Profiles
+
+If you use a profile manager the plugin doesn't detect automatically, add it under
+**Custom Profiles** with a name and a config directory path:
+
+| Name | Config directory |
+|------|------------------|
+| `work` | `~/.ccp/data/work` |
+
+The path is a `CLAUDE_CONFIG_DIR` — the folder that contains `projects/`, i.e. whatever
+`~/.claude` is for the default profile. The plugin reads usage from `<path>/projects/`
+and, when present, `<path>/.credentials.json` so rate limits are tracked per profile too.
+
+Entries whose `projects/` folder doesn't exist are ignored, and a name already claimed by
+an auto-detected profile is skipped.
 
 ## How It Works
 
@@ -61,7 +82,7 @@ The plugin runs a lightweight bash script at the configured interval that:
 
 1. Reads your OAuth token from `~/.claude/.credentials.json`
 2. Queries the Anthropic usage API for current rate limit status
-3. Scans `~/.claude/projects/` (default profile) and any `~/.ccs/instances/*/projects/` directories (CCS profiles) for token consumption statistics — each profile is processed in parallel
+3. Scans `<config dir>/projects/` for every discovered profile (see above) for token consumption statistics — each profile is processed in parallel
 4. Fetches model pricing from LiteLLM and USD/EUR exchange rate from ECB (cached daily in `~/.claude/pricing-cache.json`)
 
 API usage responses are cached for 2 minutes (`~/.claude/usage-cache.json`) to avoid rate limiting, with stale fallback on errors.
