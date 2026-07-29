@@ -5,9 +5,7 @@ TMPDIR_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
 CLAUDE_DIR="${HOME}/.claude"
-CREDENTIALS="${CLAUDE_DIR}/.credentials.json"
 STATS_CACHE="${CLAUDE_DIR}/stats-cache.json"
-PROJECTS_DIR="${CLAUDE_DIR}/projects"
 PRICING_CACHE="${CLAUDE_DIR}/pricing-cache.json"
 USAGE_CACHE="${CLAUDE_DIR}/usage-cache.json"
 USAGE_CACHE_TTL=120  # seconds
@@ -306,28 +304,74 @@ fetch_profile_usage() {
         "$sub_type" "$tier" "$five_util" "$five_reset" "$seven_util" "$seven_reset" "$extra" > "$out_file"
 }
 
-# --- Collect profile list: default + CCS instances ---
+# --- Collect profile list ---
 PROFILE_DIRS=()
 PROFILE_NAMES=()
 PROFILE_CREDS=()  # credentials file per profile
 
-if [ -d "$PROJECTS_DIR" ]; then
-    PROFILE_DIRS+=("$PROJECTS_DIR")
-    PROFILE_NAMES+=("default")
-    PROFILE_CREDS+=("$CREDENTIALS")
-fi
+# add_profile <name> <claude_config_dir>
+# First registration of a name wins.
+add_profile() {
+    local name="$1" dir="$2"
+
+    # , | : are output delimiters, they cannot survive in a profile name
+    name="${name//[,|:]/}"
+    [ -n "$name" ] || return 0
+    [ -n "$dir" ] || return 0
+
+    case "$dir" in
+        "~/"*) dir="${HOME}/${dir#\~/}" ;;
+        "~") dir="$HOME" ;;
+    esac
+    dir="${dir%/}"
+
+    [ -d "${dir}/projects" ] || return 0
+
+    local existing
+    for existing in "${PROFILE_NAMES[@]}"; do
+        [ "$existing" = "$name" ] && return 0
+    done
+
+    PROFILE_DIRS+=("${dir}/projects")
+    PROFILE_NAMES+=("$name")
+    PROFILE_CREDS+=("${dir}/.credentials.json")
+}
+
+add_profile "default" "$CLAUDE_DIR"
 
 CCS_INSTANCES_DIR="${HOME}/.ccs/instances"
 if [ -d "$CCS_INSTANCES_DIR" ]; then
     for inst in "$CCS_INSTANCES_DIR"/*/; do
-        [ -d "${inst}projects" ] || continue
-        name=$(basename "$inst" | tr -d ',|:')
-        [ -z "$name" ] && continue
-        PROFILE_DIRS+=("${inst}projects")
-        PROFILE_NAMES+=("$name")
-        PROFILE_CREDS+=("${inst}.credentials.json")
+        [ -d "$inst" ] || continue
+        inst="${inst%/}"
+        add_profile "${inst##*/}" "$inst"
     done
 fi
+
+# claude-code-profiles: ~/.ccp/profiles/<name>.env declares CLAUDE_CONFIG_DIR
+# (user-editable, so read it rather than assuming ~/.ccp/data/<name>).
+CCP_PROFILES_DIR="${HOME}/.ccp/profiles"
+if [ -d "$CCP_PROFILES_DIR" ]; then
+    for env_file in "$CCP_PROFILES_DIR"/*.env; do
+        [ -f "$env_file" ] || continue
+        ccp_dir=""
+        while IFS= read -r line; do
+            case "$line" in
+                CLAUDE_CONFIG_DIR=*) ccp_dir="${line#*=}"; break ;;
+            esac
+        done < "$env_file"
+        [ -n "$ccp_dir" ] || continue
+        name="${env_file##*/}"
+        add_profile "${name%.env}" "$ccp_dir"
+    done
+fi
+
+# Manual entries from plugin settings: "name=/path/to/config/dir"
+for arg in "$@"; do
+    case "$arg" in
+        *=*) add_profile "${arg%%=*}" "${arg#*=}" ;;
+    esac
+done
 
 # --- Run token counting + usage fetch in parallel for each profile ---
 TMPFILES=()      # token stats tmpfile per profile

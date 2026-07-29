@@ -37,8 +37,9 @@ chmod +x "$mock_curl"
 
 run_script() {
     local home_dir="$1"
-    # Override HOME and prepend mock curl to PATH
-    HOME="$home_dir" PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" 2>/dev/null
+    shift
+    # Override HOME and prepend mock curl to PATH; remaining args go to the script
+    HOME="$home_dir" PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" "$@" 2>/dev/null
 }
 
 # Build a JSONL fixture line
@@ -614,6 +615,79 @@ for i in $(seq 0 6); do
         fi
     fi
 done
+
+# ============================================================
+echo "=== Test 24: PROFILES discovers claude-code-profiles (ccp) ==="
+# ============================================================
+ENV24=$(setup_env "test24")
+mkdir -p "$ENV24/.ccp/profiles"
+mkdir -p "$ENV24/ccpdata/ranqia/projects/proj1"
+echo "CLAUDE_CONFIG_DIR=$ENV24/ccpdata/ranqia" > "$ENV24/.ccp/profiles/ranqia.env"
+
+make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 400 200 0 0 "sess-ccp" \
+    > "$ENV24/ccpdata/ranqia/projects/proj1/t.jsonl"
+
+OUTPUT24=$(run_script "$ENV24")
+PROFILES24=$(echo "$OUTPUT24" | grep "^PROFILES=" | cut -d= -f2)
+assert_match "$PROFILES24" "default" "PROFILES contains default (test24)"
+assert_match "$PROFILES24" "ranqia" "PROFILES contains ccp profile"
+
+# Tokens from the ccp profile are counted (400+200)
+PWT24=$(echo "$OUTPUT24" | grep "^PROFILE_WEEK_TOKENS=" | cut -d= -f2)
+RANQIA_TOK=$(echo "$PWT24" | tr ',' '\n' | grep "^ranqia:" | cut -d: -f2)
+assert_eq "$RANQIA_TOK" "600" "ccp profile token count"
+
+# ============================================================
+echo "=== Test 25: ccp profile without CLAUDE_CONFIG_DIR is ignored ==="
+# ============================================================
+ENV25=$(setup_env "test25")
+mkdir -p "$ENV25/.ccp/profiles"
+printf '# Profile: broken\nANTHROPIC_BASE_URL=https://example.com\n' \
+    > "$ENV25/.ccp/profiles/broken.env"
+
+OUTPUT25=$(run_script "$ENV25")
+PROFILES25=$(echo "$OUTPUT25" | grep "^PROFILES=" | cut -d= -f2)
+assert_eq "$PROFILES25" "default" "ccp profile without CLAUDE_CONFIG_DIR is skipped"
+
+# ============================================================
+echo "=== Test 26: manual profiles passed as name=path arguments ==="
+# ============================================================
+ENV26=$(setup_env "test26")
+mkdir -p "$ENV26/manual/work/projects/proj1"
+make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 100 100 0 0 "sess-m" \
+    > "$ENV26/manual/work/projects/proj1/t.jsonl"
+
+OUTPUT26=$(run_script "$ENV26" "work=$ENV26/manual/work")
+PROFILES26=$(echo "$OUTPUT26" | grep "^PROFILES=" | cut -d= -f2)
+assert_match "$PROFILES26" "work" "manual profile appears in PROFILES"
+
+# A manual path that has no projects/ dir is ignored
+OUTPUT26B=$(run_script "$ENV26" "ghost=$ENV26/does-not-exist")
+PROFILES26B=$(echo "$OUTPUT26B" | grep "^PROFILES=" | cut -d= -f2)
+assert_eq "$PROFILES26B" "default" "manual profile with missing projects/ is skipped"
+
+# Tilde in a manual path is expanded against HOME
+OUTPUT26C=$(run_script "$ENV26" "tilde=~/manual/work")
+PROFILES26C=$(echo "$OUTPUT26C" | grep "^PROFILES=" | cut -d= -f2)
+assert_match "$PROFILES26C" "tilde" "manual profile path expands leading ~"
+
+# ============================================================
+echo "=== Test 27: duplicate profile names are registered once ==="
+# ============================================================
+ENV27=$(setup_env "test27")
+mkdir -p "$ENV27/.ccs/instances/work/projects/proj1"
+mkdir -p "$ENV27/other/projects/proj1"
+
+# "work" is already discovered from CCS; the manual entry must not duplicate it
+OUTPUT27=$(run_script "$ENV27" "work=$ENV27/other")
+PROFILES27=$(echo "$OUTPUT27" | grep "^PROFILES=" | cut -d= -f2)
+WORK_COUNT=$(echo "$PROFILES27" | tr ',' '\n' | grep -c '^work$')
+assert_eq "$WORK_COUNT" "1" "duplicate profile name registered only once"
+
+# Delimiter characters are stripped from profile names
+OUTPUT27B=$(run_script "$ENV27" "a:b,c|d=$ENV27/other")
+PROFILES27B=$(echo "$OUTPUT27B" | grep "^PROFILES=" | cut -d= -f2)
+assert_match "$PROFILES27B" "abcd" "delimiters stripped from manual profile name"
 
 # ============================================================
 echo ""
