@@ -23,6 +23,7 @@ PluginComponent {
     // Settings
     property int refreshInterval: (pluginData.refreshInterval || 2) * 60000
     property bool showPacing: pluginData.showPacing !== false
+    property var customProfiles: pluginData.customProfiles || []
 
     // API usage data
     property string subscriptionType: ""
@@ -680,9 +681,15 @@ PluginComponent {
 
     // --- Data fetching ---
 
+    // Pick up an added/removed profile now instead of waiting for the refresh timer
+    onCustomProfilesChanged: {
+        if (!usageProcess.running)
+            usageProcess.running = true;
+    }
+
     Process {
         id: usageProcess
-        command: ["bash", root.scriptPath]
+        command: ["bash", root.scriptPath].concat(root.customProfiles.filter(p => p && p.name && p.path).map(p => p.name + "=" + p.path))
         running: false
 
         stdout: SplitParser {
