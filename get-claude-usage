@@ -320,8 +320,8 @@ add_profile() {
     [ -n "$dir" ] || return 0
 
     case "$dir" in
-        "~/"*) dir="${HOME}/${dir#\~/}" ;;
-        "~") dir="$HOME" ;;
+        [~]/*) dir="${HOME}/${dir#*/}" ;;
+        [~]) dir="$HOME" ;;
     esac
     dir="${dir%/}"
 
