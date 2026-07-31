@@ -18,7 +18,12 @@ PluginComponent {
 
     // Calendar week labels: Monday to Sunday (fixed order)
     property int refreshEpoch: 0
-    property var dayLabels: lang === "fr" ? ["Lu", "Ma", "Me", "Je", "Ve", "Sa", "Di"] : ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
+    readonly property var dayLabelsByLanguage: ({
+        en: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+        fr: ["Lu", "Ma", "Me", "Je", "Ve", "Sa", "Di"],
+        es: ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
+    })
+    property var dayLabels: dayLabelsByLanguage[lang] || dayLabelsByLanguage.en
 
     // Settings
     property int refreshInterval: (pluginData.refreshInterval || 2) * 60000
@@ -348,19 +353,19 @@ PluginComponent {
         if (!tier || tier === "unknown")
             return "";
         if (tier.indexOf("max_20x") >= 0)
-            return "Max 20x";
+            return tr("Max") + " 20x";
         if (tier.indexOf("max_5x") >= 0)
-            return "Max 5x";
+            return tr("Max") + " 5x";
         if (tier.indexOf("max") >= 0)
-            return "Max";
+            return tr("Max");
         if (tier.indexOf("pro") >= 0)
-            return "Pro";
+            return tr("Pro");
         if (tier.indexOf("free") >= 0)
-            return "Free";
+            return tr("Free");
         if (tier.indexOf("team") >= 0)
-            return "Team";
+            return tr("Team");
         if (tier.indexOf("enterprise") >= 0)
-            return "Enterprise";
+            return tr("Enterprise");
         return tier.replace(/_/g, " ").replace(/\b\w/g, function (c) {
             return c.toUpperCase();
         });
