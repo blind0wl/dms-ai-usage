@@ -42,12 +42,31 @@ function progressColor(pct) {
     return "primary"
 }
 
+var testLang = "en"
+var tierTranslations = {
+    Free: { fr: "Gratuit", es: "Gratis" },
+    Team: { fr: "Équipe", es: "Equipo" },
+    Enterprise: { fr: "Entreprise", es: "Empresa" }
+}
+
+function tr(key) {
+    return tierTranslations[key] && tierTranslations[key][testLang]
+        ? tierTranslations[key][testLang]
+        : key
+}
+
 function formatTier(tier) {
-    if (tier.indexOf("max_20x") >= 0) return "Max 20x"
-    if (tier.indexOf("max_5x") >= 0) return "Max 5x"
-    if (tier.indexOf("pro") >= 0) return "Pro"
-    if (tier.indexOf("free") >= 0) return "Free"
-    return tier
+    if (!tier || tier === "unknown") return ""
+    if (tier.indexOf("max_20x") >= 0) return tr("Max") + " 20x"
+    if (tier.indexOf("max_5x") >= 0) return tr("Max") + " 5x"
+    if (tier.indexOf("max") >= 0) return tr("Max")
+    if (tier.indexOf("pro") >= 0) return tr("Pro")
+    if (tier.indexOf("free") >= 0) return tr("Free")
+    if (tier.indexOf("team") >= 0) return tr("Team")
+    if (tier.indexOf("enterprise") >= 0) return tr("Enterprise")
+    return tier.replace(/_/g, " ").replace(/\b\w/g, function (c) {
+        return c.toUpperCase()
+    })
 }
 
 function formatCost(usd, lang, usdEurRate) {
@@ -202,9 +221,9 @@ echo "=== Test 4: formatTier ==="
 # ============================================================
 
 test_format_tier() {
-    local input="$1" expected="$2" label="$3"
+    local input="$1" lang="$2" expected="$3" label="$4"
     local result
-    result=$(run_js "${JS_HARNESS} console.log(formatTier('$input'))")
+    result=$(run_js "${JS_HARNESS} testLang='$lang'; console.log(formatTier('$input'))")
     if [ "$result" = "$expected" ]; then
         pass "$label"
     else
@@ -212,12 +231,14 @@ test_format_tier() {
     fi
 }
 
-test_format_tier "t3_max_20x_something" "Max 20x" "formatTier max_20x"
-test_format_tier "t2_max_5x_something" "Max 5x" "formatTier max_5x"
-test_format_tier "t1_pro_something" "Pro" "formatTier pro"
-test_format_tier "free_tier" "Free" "formatTier free"
-test_format_tier "unknown" "unknown" "formatTier unknown passthrough"
-test_format_tier "custom_plan" "custom_plan" "formatTier unrecognised passthrough"
+test_format_tier "t3_max_20x_something" "en" "Max 20x" "formatTier max_20x"
+test_format_tier "t2_max_5x_something" "en" "Max 5x" "formatTier max_5x"
+test_format_tier "t1_pro_something" "en" "Pro" "formatTier pro"
+test_format_tier "free_tier" "fr" "Gratuit" "formatTier free in French"
+test_format_tier "team_tier" "es" "Equipo" "formatTier team in Spanish"
+test_format_tier "enterprise_tier" "fr" "Entreprise" "formatTier enterprise in French"
+test_format_tier "unknown" "en" "" "formatTier hides unknown"
+test_format_tier "custom_plan" "en" "Custom Plan" "formatTier formats unrecognised tiers"
 
 # ============================================================
 echo "=== Test 5: formatCost ==="

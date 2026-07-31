@@ -250,9 +250,12 @@ fetch_profile_usage() {
 
     # Check cache freshness
     local api_resp="{}"
-    local use_cache=false
+    local use_cache=false cache_matches=false
     if [ -f "$cache_file" ]; then
-        local cache_ts now_ts age
+        local cache_identity cache_ts now_ts age
+        cache_identity=$(jq -r '.identity // ""' "$cache_file" 2>/dev/null | head -1)
+        [ "$cache_identity" = "$creds_file" ] && cache_matches=true
+
         # Take only the first line and validate it's a plain integer. A corrupt
         # cache (e.g. from interleaved concurrent writes) makes jq emit the first
         # object's value AND then error, which the `|| echo 0` turns into a
@@ -261,7 +264,7 @@ fetch_profile_usage() {
         [[ "$cache_ts" =~ ^[0-9]+$ ]] || cache_ts=0
         now_ts=$(date +%s)
         age=$(( now_ts - cache_ts ))
-        [ "$age" -lt "$USAGE_CACHE_TTL" ] && use_cache=true
+        [ "$cache_matches" = true ] && [ "$age" -lt "$USAGE_CACHE_TTL" ] && use_cache=true
     fi
 
     if [ "$use_cache" = true ]; then
@@ -283,12 +286,13 @@ fetch_profile_usage() {
                 # same cache file, and a plain `> "$cache_file"` interleaves their
                 # output into corrupt JSON. Write to a per-PID temp then rename.
                 local cache_tmp="${cache_file}.$$.tmp"
-                if jq -n --argjson data "$api_resp" '{cached_at: (now | floor), data: $data}' > "$cache_tmp" 2>/dev/null; then
+                if jq -n --arg identity "$creds_file" --argjson data "$api_resp" \
+                    '{cached_at: (now | floor), identity: $identity, data: $data}' > "$cache_tmp" 2>/dev/null; then
                     mv -f "$cache_tmp" "$cache_file" 2>/dev/null || rm -f "$cache_tmp"
                 else
                     rm -f "$cache_tmp"
                 fi
-            elif [ -f "$cache_file" ]; then
+            elif [ "$cache_matches" = true ]; then
                 api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
             fi
         fi
