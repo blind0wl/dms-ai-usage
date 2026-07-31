@@ -3,6 +3,7 @@ on:
   pull_request:
   push:
     branches: [master]
+  workflow_dispatch:
 
 jobs:
   shellcheck:
@@ -55,6 +56,7 @@ jobs:
     if: needs.check-source-changes.outputs.has_source_changes == 'true' && needs.check-source-changes.outputs.version_changed != 'true'
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     steps:
@@ -87,3 +89,7 @@ jobs:
           gh pr create \
             --title "Bump version to ${new_version}" \
             --body "Automated patch version bump: \`${current}\` → \`${new_version}\`"
+
+          # Events created by GITHUB_TOKEN do not trigger other workflow runs.
+          # Dispatch CI explicitly so required checks attach to the bump commit.
+          gh workflow run ci.yml --ref "$branch"

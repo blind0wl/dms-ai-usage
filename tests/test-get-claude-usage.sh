@@ -469,6 +469,7 @@ NOW_TS=$(date +%s)
 cat > "$ENV18/.claude/usage-cache.json" << CACHEEOF
 {
     "cached_at": $NOW_TS,
+    "identity": "$ENV18/.claude/.credentials.json",
     "data": {
         "five_hour": {"utilization": 42, "resets_at": "2099-01-01T00:00:00Z"},
         "seven_day": {"utilization": 15, "resets_at": "2099-01-07T00:00:00Z"},
@@ -484,6 +485,14 @@ SEVEN18=$(echo "$OUTPUT18" | grep "^SEVEN_DAY_UTIL=" | cut -d= -f2)
 assert_eq "$SEVEN18" "15" "Fresh cache: SEVEN_DAY_UTIL from cache"
 EXTRA18=$(echo "$OUTPUT18" | grep "^EXTRA_USAGE_ENABLED=" | cut -d= -f2)
 assert_eq "$EXTRA18" "true" "Fresh cache: EXTRA_USAGE_ENABLED from cache"
+
+# A fresh cache created for another config directory must not leak usage data
+sed "s|$ENV18/.claude/.credentials.json|$ENV18/old-profile/.credentials.json|" \
+    "$ENV18/.claude/usage-cache.json" > "$ENV18/.claude/usage-cache-other.json"
+mv "$ENV18/.claude/usage-cache-other.json" "$ENV18/.claude/usage-cache.json"
+OUTPUT18B=$(run_script "$ENV18")
+FIVE18B=$(echo "$OUTPUT18B" | grep "^FIVE_HOUR_UTIL=" | cut -d= -f2)
+assert_eq "$FIVE18B" "0" "Fresh cache from another profile is ignored"
 
 # ============================================================
 echo "=== Test 19: Stats cache parsing ==="
