@@ -327,9 +327,12 @@ add_profile() {
 
     [ -d "${dir}/projects" ] || return 0
 
-    local existing
+    local existing existing_dir
     for existing in "${PROFILE_NAMES[@]}"; do
         [ "$existing" = "$name" ] && return 0
+    done
+    for existing_dir in "${PROFILE_DIRS[@]}"; do
+        [ "$existing_dir" -ef "${dir}/projects" ] && return 0
     done
 
     PROFILE_DIRS+=("${dir}/projects")

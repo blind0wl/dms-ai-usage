@@ -697,6 +697,15 @@ OUTPUT27B=$(run_script "$ENV27" "a:b,c|d=$ENV27/other")
 PROFILES27B=$(echo "$OUTPUT27B" | grep "^PROFILES=" | cut -d= -f2)
 assert_match "$PROFILES27B" "abcd" "delimiters stripped from manual profile name"
 
+# The same config directory under another name must not be counted twice
+OUTPUT27C=$(run_script "$ENV27" "alias=$ENV27/.ccs/instances/work")
+PROFILES27C=$(echo "$OUTPUT27C" | grep "^PROFILES=" | cut -d= -f2)
+if echo "$PROFILES27C" | tr ',' '\n' | grep -q '^alias$'; then
+    fail "duplicate config directory registered under another name"
+else
+    pass "duplicate config directory registered only once"
+fi
+
 # ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
