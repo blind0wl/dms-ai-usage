@@ -164,7 +164,7 @@ PluginSettings {
             DankButton {
                 width: customProfilesSetting.actionWidth
                 height: 40
-                text: I18n.tr("Add")
+                text: root.tr("Add")
                 onClicked: customProfilesSetting.addItem()
             }
         }
@@ -218,7 +218,7 @@ PluginSettings {
 
                             StyledText {
                                 anchors.centerIn: parent
-                                text: I18n.tr("Remove")
+                                text: root.tr("Remove")
                                 color: Theme.onError
                                 font.pixelSize: Theme.fontSizeSmall
                                 font.weight: Font.Medium
@@ -237,7 +237,7 @@ PluginSettings {
             }
 
             StyledText {
-                text: I18n.tr("No items added yet")
+                text: root.tr("No items added yet")
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
                 visible: customProfilesSetting.items.length === 0
