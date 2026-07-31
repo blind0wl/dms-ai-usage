@@ -59,6 +59,14 @@ var strings = {
         { fr: "Afficher le rythme" },
     "Show whether usage is ahead of or behind the time window":
         { fr: "Indique si l'utilisation est en avance ou en retard sur la fenêtre de temps" },
+    "Custom Profiles":
+        { fr: "Profils personnalisés" },
+    "Name":
+        { fr: "Nom" },
+    "Config directory":
+        { fr: "Dossier de configuration" },
+    "Track extra Claude config directories. Point at a CLAUDE_CONFIG_DIR (the folder containing projects/). ~/.claude, Claude Code Switcher and claude-code-profiles are detected automatically.":
+        { fr: "Suivre d'autres dossiers de configuration Claude. Indiquez un CLAUDE_CONFIG_DIR (le dossier contenant projects/). ~/.claude, Claude Code Switcher et claude-code-profiles sont détectés automatiquement." },
 }
 
 function tr(key, lang) {

@@ -23,6 +23,8 @@ PluginComponent {
     // Settings
     property int refreshInterval: (pluginData.refreshInterval || 2) * 60000
     property bool showPacing: pluginData.showPacing !== false
+    property var customProfiles: pluginData.customProfiles || []
+    property bool customProfilesRefreshPending: false
 
     // API usage data
     property string subscriptionType: ""
@@ -95,6 +97,8 @@ PluginComponent {
     property real displaySevenDayUtil: currentPd && currentPd.sevenDayUtil !== undefined ? currentPd.sevenDayUtil : sevenDayUtil
     property string displaySevenDayReset: currentPd && currentPd.sevenDayReset !== undefined ? currentPd.sevenDayReset : sevenDayReset
     property real displayWeekTokens: currentPd && currentPd.weekTokens !== undefined ? currentPd.weekTokens : weekTokens
+    property int displayWeekMessages: currentPd && currentPd.weekMessages !== undefined ? currentPd.weekMessages : weekMessages
+    property int displayWeekSessions: currentPd && currentPd.weekSessions !== undefined ? currentPd.weekSessions : weekSessions
     property real displayMonthTokens: currentPd && currentPd.monthTokens !== undefined ? currentPd.monthTokens : monthTokens
     property real displayTodayCost: currentPd && currentPd.todayCost !== undefined ? currentPd.todayCost : todayCost
     property real displayWeekCost: currentPd && currentPd.weekCost !== undefined ? currentPd.weekCost : weekCost
@@ -556,6 +560,12 @@ PluginComponent {
         case "PROFILE_MONTH_TOKENS":
             profileData = parseProfileSimple(val, "monthTokens", false);
             break;
+        case "PROFILE_WEEK_MESSAGES":
+            profileData = parseProfileSimple(val, "weekMessages", false);
+            break;
+        case "PROFILE_WEEK_SESSIONS":
+            profileData = parseProfileSimple(val, "weekSessions", false);
+            break;
         case "PROFILE_TODAY_COST":
             profileData = parseProfileSimple(val, "todayCost", true);
             break;
@@ -672,9 +682,17 @@ PluginComponent {
 
     // --- Data fetching ---
 
+    // Pick up an added/removed profile now instead of waiting for the refresh timer
+    onCustomProfilesChanged: {
+        if (usageProcess.running)
+            customProfilesRefreshPending = true;
+        else
+            usageProcess.running = true;
+    }
+
     Process {
         id: usageProcess
-        command: ["bash", root.scriptPath]
+        command: ["bash", root.scriptPath].concat(root.customProfiles.filter(p => p && p.name && p.path).map(p => p.name + "=" + p.path))
         running: false
 
         stdout: SplitParser {
@@ -685,6 +703,13 @@ PluginComponent {
             if (exitCode === 0) {
                 root.isLoading = false;
                 root.refreshEpoch++;
+            }
+            if (root.customProfilesRefreshPending) {
+                root.customProfilesRefreshPending = false;
+                Qt.callLater(function() {
+                    if (!usageProcess.running)
+                        usageProcess.running = true;
+                });
             }
         }
     }
@@ -1128,15 +1153,15 @@ PluginComponent {
                             StyledText {
                                 text: {
                                     var parts = [];
-                                    if (root.weekSessions > 0)
-                                        parts.push(root.weekSessions + " " + root.tr("sessions"));
-                                    if (root.weekMessages > 0)
-                                        parts.push(root.weekMessages + " " + root.tr("msgs"));
+                                    if (root.displayWeekSessions > 0)
+                                        parts.push(root.displayWeekSessions + " " + root.tr("sessions"));
+                                    if (root.displayWeekMessages > 0)
+                                        parts.push(root.displayWeekMessages + " " + root.tr("msgs"));
                                     return parts.join(" · ");
                                 }
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
-                                visible: root.selectedProfile === "all"
+                                visible: text !== ""
                             }
                             StyledText {
                                 text: root.displaySevenDayCountdown ? root.tr("Resets in") + " " + root.displaySevenDayCountdown : ""
