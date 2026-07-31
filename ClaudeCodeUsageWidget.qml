@@ -24,6 +24,7 @@ PluginComponent {
     property int refreshInterval: (pluginData.refreshInterval || 2) * 60000
     property bool showPacing: pluginData.showPacing !== false
     property var customProfiles: pluginData.customProfiles || []
+    property bool customProfilesRefreshPending: false
 
     // API usage data
     property string subscriptionType: ""
@@ -683,7 +684,9 @@ PluginComponent {
 
     // Pick up an added/removed profile now instead of waiting for the refresh timer
     onCustomProfilesChanged: {
-        if (!usageProcess.running)
+        if (usageProcess.running)
+            customProfilesRefreshPending = true;
+        else
             usageProcess.running = true;
     }
 
@@ -700,6 +703,13 @@ PluginComponent {
             if (exitCode === 0) {
                 root.isLoading = false;
                 root.refreshEpoch++;
+            }
+            if (root.customProfilesRefreshPending) {
+                root.customProfilesRefreshPending = false;
+                Qt.callLater(function() {
+                    if (!usageProcess.running)
+                        usageProcess.running = true;
+                });
             }
         }
     }
