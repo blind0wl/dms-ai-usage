@@ -38,8 +38,8 @@ var strings = {
         { fr: "Surveillez l'utilisation de votre abonnement Claude Code. Les limites et le type d'abonnement sont détectés automatiquement via l'API Anthropic." },
     "Refresh Interval":
         { fr: "Intervalle de rafraîchissement" },
-    "How often to fetch usage data (seconds)":
-        { fr: "Fréquence de mise à jour des données (secondes)" },
+    "How often to fetch usage data (minutes)":
+        { fr: "Fréquence de mise à jour des données (minutes)" },
     "All":
         { fr: "Tout" },
     "Profile":

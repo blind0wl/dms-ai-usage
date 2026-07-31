@@ -11,7 +11,7 @@ PluginComponent {
     id: root
 
     // i18n
-    property string lang: Qt.locale().name.split(/[_-]/)[0]
+    property string lang: (SessionData.locale || Qt.locale().name).split(/[_-]/)[0]
     function tr(key) {
         return Tr.tr(key, lang);
     }
