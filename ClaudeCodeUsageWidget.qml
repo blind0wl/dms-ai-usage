@@ -1052,31 +1052,40 @@ PluginComponent {
                         }
 
                         Column {
+                            width: Math.max(0, parent.width - fiveHourRing.width - parent.spacing)
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: Theme.spacingS
 
                             StyledText {
+                                width: parent.width
                                 text: root.tr("5h Rate Window")
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
+                                wrapMode: Text.WordWrap
                             }
                             StyledText {
+                                width: parent.width
                                 text: Math.round(root.displayFiveHourUtil) + "% " + root.tr("used")
                                 font.pixelSize: Theme.fontSizeMedium
                                 color: root.progressColor(root.displayFiveHourUtil)
+                                wrapMode: Text.WordWrap
                             }
                             StyledText {
+                                width: parent.width
                                 text: root.paceLabel(root.fiveHourPace)
                                 visible: root.showPacing && text !== ""
                                 font.pixelSize: Theme.fontSizeMedium
                                 color: root.paceColor(root.fiveHourPace.status)
+                                wrapMode: Text.WordWrap
                             }
                             StyledText {
+                                width: parent.width
                                 text: root.displayFiveHourCountdown ? root.tr("Resets in") + " " + root.displayFiveHourCountdown : ""
                                 font.pixelSize: Theme.fontSizeMedium
                                 color: Theme.surfaceVariantText
                                 visible: root.displayFiveHourCountdown !== ""
+                                wrapMode: Text.WordWrap
                             }
                         }
                     }
@@ -1140,22 +1149,28 @@ PluginComponent {
                         }
 
                         Column {
+                            width: Math.max(0, parent.width - weeklySmallRing.width - parent.spacing)
                             anchors.verticalCenter: parent.verticalCenter
                             spacing: Theme.spacingXS
 
                             StyledText {
+                                width: parent.width
                                 text: root.tr("7-Day Usage") + " · " + Math.round(root.displaySevenDayUtil) + "%"
                                 font.pixelSize: Theme.fontSizeMedium
                                 font.weight: Font.Medium
                                 color: Theme.surfaceText
+                                wrapMode: Text.WordWrap
                             }
                             StyledText {
+                                width: parent.width
                                 text: root.paceLabel(root.sevenDayPace)
                                 visible: root.showPacing && text !== ""
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: root.paceColor(root.sevenDayPace.status)
+                                wrapMode: Text.WordWrap
                             }
                             StyledText {
+                                width: parent.width
                                 text: {
                                     var parts = [];
                                     if (root.displayWeekSessions > 0)
@@ -1167,12 +1182,15 @@ PluginComponent {
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                                 visible: text !== ""
+                                wrapMode: Text.WordWrap
                             }
                             StyledText {
+                                width: parent.width
                                 text: root.displaySevenDayCountdown ? root.tr("Resets in") + " " + root.displaySevenDayCountdown : ""
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: Theme.surfaceVariantText
                                 visible: root.displaySevenDayCountdown !== ""
+                                wrapMode: Text.WordWrap
                             }
                         }
                     }
@@ -1541,6 +1559,7 @@ PluginComponent {
                         spacing: Theme.spacingS
 
                         DankIcon {
+                            id: allTimeIcon
                             name: "calendar_today"
                             size: 14
                             color: Theme.surfaceVariantText
@@ -1548,6 +1567,7 @@ PluginComponent {
                         }
 
                         StyledText {
+                            width: Math.max(0, parent.width - allTimeIcon.width - parent.spacing)
                             text: {
                                 var parts = [];
                                 if (root.firstSession && root.firstSession !== "unknown")
