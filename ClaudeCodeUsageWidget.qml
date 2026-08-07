@@ -697,7 +697,11 @@ PluginComponent {
 
     Process {
         id: usageProcess
-        command: ["bash", root.scriptPath].concat(root.customProfiles.filter(p => p && p.name && p.path).map(p => p.name + "=" + p.path))
+        // Wrapped in `timeout` as a watchdog. The refresh timer below skips a tick
+        // while `running` is true, so a single run that never exits (a hung
+        // `claude --version`, a stalled curl/find) freezes the widget on stale
+        // values until the plugin is reloaded. Killing the run lets onExited fire.
+        command: ["timeout", "120", "bash", root.scriptPath].concat(root.customProfiles.filter(p => p && p.name && p.path).map(p => p.name + "=" + p.path))
         running: false
 
         stdout: SplitParser {
