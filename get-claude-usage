@@ -8,7 +8,7 @@ CLAUDE_DIR="${HOME}/.claude"
 STATS_CACHE="${CLAUDE_DIR}/stats-cache.json"
 PRICING_CACHE="${CLAUDE_DIR}/pricing-cache.json"
 USAGE_CACHE="${CLAUDE_DIR}/usage-cache.json"
-USAGE_CACHE_TTL=120  # seconds
+USAGE_CACHE_TTL=90  # seconds, below the 2 min minimum refresh interval
 LITELLM_URL="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
 CLAUDE_VERSION=$(claude --version 2>/dev/null | head -1 | grep -oP '[\d.]+' || echo "2.0.0")
