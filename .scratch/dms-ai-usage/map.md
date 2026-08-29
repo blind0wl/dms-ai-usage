@@ -32,6 +32,7 @@ A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and runni
 - [Fork vs. build fresh](issues/03-fork-and-extend-plugin.md): Fork `dms-claudecode` in place rather than building a new plugin from scratch — reuses its working Claude features, and DMS has no cross-plugin pill-merging, so a combined pill requires living in the same plugin anyway.
 - [Fork and extend plugin](issues/03-fork-and-extend-plugin.md): Fork set up at `/home/dave/dev/dms-ai-usage` (real git fork via `upstream` remote + merge), renamed to `aiUsage`, installed and verified loading on this machine's live DMS toolbar via `dms restart` + journalctl confirmation. No feature changes yet.
 - [Merge icon UI prototype](issues/02-merge-icon-ui-prototype.md): Merged dual-ring pill — Claude and ChatGPT rings side by side in one pill, always both visible, no click-to-cycle. Popout stacks both Sources' cards under their own section headers, no tabs. No merge-vs-split settings toggle needed.
+- [Build Claude source](issues/04-build-claude-source.md): Already satisfied by the inherited `get-claude-usage` script — verified live, no new script needed. Desktop-credential fallback correctly absent (ruled out by ticket 1). The "missing creds vs. genuinely 0%" gap is left to [Claude login action](issues/04-claude-login-action.md), not duplicated here.
 
 ## Not yet specified
 
