@@ -33,6 +33,7 @@ A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and runni
 - [Fork and extend plugin](issues/03-fork-and-extend-plugin.md): Fork set up at `/home/dave/dev/dms-ai-usage` (real git fork via `upstream` remote + merge), renamed to `aiUsage`, installed and verified loading on this machine's live DMS toolbar via `dms restart` + journalctl confirmation. No feature changes yet.
 - [Merge icon UI prototype](issues/02-merge-icon-ui-prototype.md): Merged dual-ring pill — Claude and ChatGPT rings side by side in one pill, always both visible, no click-to-cycle. Popout stacks both Sources' cards under their own section headers, no tabs. No merge-vs-split settings toggle needed.
 - [Build Claude source](issues/04-build-claude-source.md): Already satisfied by the inherited `get-claude-usage` script — verified live, no new script needed. Desktop-credential fallback correctly absent (ruled out by ticket 1). The "missing creds vs. genuinely 0%" gap is left to [Claude login action](issues/04-claude-login-action.md), not duplicated here.
+- [Claude login action](issues/04-claude-login-action.md): Fixed the silent-zeros bug. `get-claude-usage` now emits a per-profile `CREDS_STATUS` (missing/expired/ok); the widget shows a "Log in" card in the popout when a profile's status isn't ok, wired to `claude auth login --claudeai` (with `CLAUDE_CONFIG_DIR` set for non-default profiles) and a re-fetch on exit. Verified live via `dms restart` (no QML errors) and against real credentials (status `ok`, card correctly hidden).
 
 ## Not yet specified
 

@@ -27,6 +27,7 @@ FIVE_HOUR_RESET=""
 SEVEN_DAY_UTIL=0
 SEVEN_DAY_RESET=""
 EXTRA_USAGE_ENABLED="false"
+CREDS_STATUS="missing"
 
 WEEK_TOKENS=0
 WEEK_MESSAGES=0
@@ -238,10 +239,16 @@ fetch_profile_usage() {
     local sub_type="unknown"
     local tier="unknown"
     local five_util=0 five_reset="" seven_util=0 seven_reset="" extra="false"
+    # CREDS_STATUS: "ok" once a usage response is confirmed fresh (live fetch or
+    # matching cache), "expired" when a token exists but the API call and any
+    # cache both failed to produce one, "missing" when there's no credentials
+    # file (or no usable token in it) to even try. Drives the widget's login action.
+    local creds_status="unknown"
 
     if [ ! -f "$creds_file" ]; then
-        printf 'SUBSCRIPTION_TYPE=%s\nRATE_LIMIT_TIER=%s\nFIVE_HOUR_UTIL=%s\nFIVE_HOUR_RESET=%s\nSEVEN_DAY_UTIL=%s\nSEVEN_DAY_RESET=%s\nEXTRA_USAGE_ENABLED=%s\n' \
-            "$sub_type" "$tier" "$five_util" "$five_reset" "$seven_util" "$seven_reset" "$extra" > "$out_file"
+        creds_status="missing"
+        printf 'SUBSCRIPTION_TYPE=%s\nRATE_LIMIT_TIER=%s\nFIVE_HOUR_UTIL=%s\nFIVE_HOUR_RESET=%s\nSEVEN_DAY_UTIL=%s\nSEVEN_DAY_RESET=%s\nEXTRA_USAGE_ENABLED=%s\nCREDS_STATUS=%s\n' \
+            "$sub_type" "$tier" "$five_util" "$five_reset" "$seven_util" "$seven_reset" "$extra" "$creds_status" > "$out_file"
         return
     fi
 
@@ -272,6 +279,7 @@ fetch_profile_usage() {
     else
         local token
         token=$(jq -r '.claudeAiOauth.accessToken // ""' "$creds_file" 2>/dev/null || echo "")
+        [ -z "$token" ] && creds_status="missing"
         if [ -n "$token" ]; then
             api_resp=$(curl -s --max-time 5 \
                 -H "Authorization: Bearer $token" \
@@ -304,8 +312,18 @@ fetch_profile_usage() {
     seven_reset=$(echo "$api_resp" | jq -r '.seven_day.resets_at // ""')
     extra=$(echo "$api_resp" | jq -r '.extra_usage.is_enabled // false')
 
-    printf 'SUBSCRIPTION_TYPE=%s\nRATE_LIMIT_TIER=%s\nFIVE_HOUR_UTIL=%s\nFIVE_HOUR_RESET=%s\nSEVEN_DAY_UTIL=%s\nSEVEN_DAY_RESET=%s\nEXTRA_USAGE_ENABLED=%s\n' \
-        "$sub_type" "$tier" "$five_util" "$five_reset" "$seven_util" "$seven_reset" "$extra" > "$out_file"
+    if echo "$api_resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+        creds_status="ok"
+    elif [ "$creds_status" != "missing" ]; then
+        # A credentials file exists and had a token, but no usage data could be
+        # obtained for it (live fetch failed and no matching cache to fall back
+        # on) — the token is present but no longer good, distinct from no
+        # token at all ("missing", set above).
+        creds_status="expired"
+    fi
+
+    printf 'SUBSCRIPTION_TYPE=%s\nRATE_LIMIT_TIER=%s\nFIVE_HOUR_UTIL=%s\nFIVE_HOUR_RESET=%s\nSEVEN_DAY_UTIL=%s\nSEVEN_DAY_RESET=%s\nEXTRA_USAGE_ENABLED=%s\nCREDS_STATUS=%s\n' \
+        "$sub_type" "$tier" "$five_util" "$five_reset" "$seven_util" "$seven_reset" "$extra" "$creds_status" > "$out_file"
 }
 
 # --- Collect profile list ---
@@ -433,6 +451,7 @@ PROF_SEVEN_DAY_UTIL=""
 PROF_FIVE_HOUR_RESET_LIST=""
 PROF_SEVEN_DAY_RESET_LIST=""
 PROF_EXTRA_USAGE_LIST=""
+PROF_CREDS_STATUS_LIST=""
 
 for idx in "${!TMPFILES[@]}"; do
     tmpf="${TMPFILES[$idx]}"
@@ -454,7 +473,7 @@ for idx in "${!TMPFILES[@]}"; do
 
     # Read per-profile usage/subscription
     p_sub="unknown"; p_tier="unknown"
-    p_5u=0; p_5r=""; p_7u=0; p_7r=""; p_extra="false"
+    p_5u=0; p_5r=""; p_7u=0; p_7r=""; p_extra="false"; p_creds="missing"
     if [ -f "$usage_tmpf" ]; then
         p_sub=$(grep "^SUBSCRIPTION_TYPE=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
         p_tier=$(grep "^RATE_LIMIT_TIER=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
@@ -463,6 +482,7 @@ for idx in "${!TMPFILES[@]}"; do
         p_7u=$(grep "^SEVEN_DAY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
         p_7r=$(grep "^SEVEN_DAY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
         p_extra=$(grep "^EXTRA_USAGE_ENABLED=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "false")
+        p_creds=$(grep "^CREDS_STATUS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "missing")
     fi
 
     # Default profile drives the top-level aggregate fields
@@ -474,6 +494,7 @@ for idx in "${!TMPFILES[@]}"; do
         SEVEN_DAY_UTIL="$p_7u"
         SEVEN_DAY_RESET="$p_7r"
         EXTRA_USAGE_ENABLED="$p_extra"
+        CREDS_STATUS="$p_creds"
     fi
 
     # Aggregate token totals
@@ -521,6 +542,7 @@ for idx in "${!TMPFILES[@]}"; do
     PROF_FIVE_HOUR_RESET_LIST="${PROF_FIVE_HOUR_RESET_LIST:+${PROF_FIVE_HOUR_RESET_LIST},}${pname}:${p_5r}"
     PROF_SEVEN_DAY_RESET_LIST="${PROF_SEVEN_DAY_RESET_LIST:+${PROF_SEVEN_DAY_RESET_LIST},}${pname}:${p_7r}"
     PROF_EXTRA_USAGE_LIST="${PROF_EXTRA_USAGE_LIST:+${PROF_EXTRA_USAGE_LIST},}${pname}:${p_extra}"
+    PROF_CREDS_STATUS_LIST="${PROF_CREDS_STATUS_LIST:+${PROF_CREDS_STATUS_LIST},}${pname}:${p_creds}"
 
     rm -f "$tmpf" "$usage_tmpf"
 done
@@ -548,6 +570,7 @@ echo "FIVE_HOUR_RESET=${FIVE_HOUR_RESET}"
 echo "SEVEN_DAY_UTIL=${SEVEN_DAY_UTIL}"
 echo "SEVEN_DAY_RESET=${SEVEN_DAY_RESET}"
 echo "EXTRA_USAGE_ENABLED=${EXTRA_USAGE_ENABLED}"
+echo "CREDS_STATUS=${CREDS_STATUS}"
 echo "WEEK_MESSAGES=${WEEK_MESSAGES}"
 echo "WEEK_SESSIONS=${WEEK_SESSIONS}"
 echo "WEEK_TOKENS=${WEEK_TOKENS}"
@@ -580,3 +603,4 @@ echo "PROFILE_SEVEN_DAY_UTIL=${PROF_SEVEN_DAY_UTIL}"
 echo "PROFILE_FIVE_HOUR_RESET=${PROF_FIVE_HOUR_RESET_LIST}"
 echo "PROFILE_SEVEN_DAY_RESET=${PROF_SEVEN_DAY_RESET_LIST}"
 echo "PROFILE_EXTRA_USAGE=${PROF_EXTRA_USAGE_LIST}"
+echo "PROFILE_CREDS_STATUS=${PROF_CREDS_STATUS_LIST}"

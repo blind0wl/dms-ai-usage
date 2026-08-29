@@ -92,6 +92,20 @@ var strings = {
         { fr: "Supprimer", es: "Eliminar" },
     "No items added yet":
         { fr: "Aucun élément ajouté pour le moment", es: "Todavía no se ha añadido ningún elemento" },
+    // Login action
+    "Not logged in":
+        { fr: "Non connecté", es: "No has iniciado sesión" },
+    "Session expired":
+        { fr: "Session expirée", es: "Sesión caducada" },
+    "Usage data unavailable until you log in.":
+        {
+            fr: "Données d'utilisation indisponibles tant que vous n'êtes pas connecté.",
+            es: "Los datos de uso no estarán disponibles hasta que inicies sesión."
+        },
+    "Log in":
+        { fr: "Se connecter", es: "Iniciar sesión" },
+    "Logging in…":
+        { fr: "Connexion en cours…", es: "Iniciando sesión…" },
 }
 
 function tr(key, lang) {

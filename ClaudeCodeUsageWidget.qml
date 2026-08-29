@@ -39,6 +39,7 @@ PluginComponent {
     property real sevenDayUtil: 0
     property string sevenDayReset: ""
     property bool extraUsageEnabled: false
+    property string credsStatus: "unknown"
 
     // Weekly state
     property int weekMessages: 0
@@ -100,6 +101,7 @@ PluginComponent {
     property real displayFiveHourUtil: currentPd && currentPd.fiveHourUtil !== undefined ? currentPd.fiveHourUtil : fiveHourUtil
     property string displayFiveHourReset: currentPd && currentPd.fiveHourReset !== undefined ? currentPd.fiveHourReset : fiveHourReset
     property real displaySevenDayUtil: currentPd && currentPd.sevenDayUtil !== undefined ? currentPd.sevenDayUtil : sevenDayUtil
+    property string displayCredsStatus: currentPd && currentPd.credsStatus !== undefined ? currentPd.credsStatus : credsStatus
     property string displaySevenDayReset: currentPd && currentPd.sevenDayReset !== undefined ? currentPd.sevenDayReset : sevenDayReset
     property real displayWeekTokens: currentPd && currentPd.weekTokens !== undefined ? currentPd.weekTokens : weekTokens
     property int displayWeekMessages: currentPd && currentPd.weekMessages !== undefined ? currentPd.weekMessages : weekMessages
@@ -174,6 +176,7 @@ PluginComponent {
     // Derived
     property real maxDaily: Math.max.apply(null, dailyTokens) || 1
     property bool isLoading: true
+    property bool loginInProgress: false
 
     // Live countdown
     property real countdownNow: Date.now()
@@ -371,6 +374,32 @@ PluginComponent {
         });
     }
 
+    // Resolves the CLAUDE_CONFIG_DIR to log into for a given profile name.
+    // "all"/"default" (or unrecognized names, e.g. auto-discovered ccs/ccp
+    // profiles the widget doesn't know the path for) fall back to "" — the
+    // login command's own default (~/.claude).
+    function configDirForProfile(name) {
+        if (!name || name === "all" || name === "default")
+            return "";
+        for (var i = 0; i < root.customProfiles.length; i++) {
+            var p = root.customProfiles[i];
+            if (p && p.name === name && p.path)
+                return p.path;
+        }
+        return "";
+    }
+
+    function startLogin(profileName) {
+        if (loginProcess.running)
+            return;
+        var dir = root.configDirForProfile(profileName);
+        loginProcess.environment = dir ? {
+            "CLAUDE_CONFIG_DIR": dir
+        } : ({});
+        root.loginInProgress = true;
+        loginProcess.running = true;
+    }
+
     function formatSubscription(subType, tier) {
         var tierLabel = formatTier(tier);
         if (!subType || subType === "unknown")
@@ -473,6 +502,9 @@ PluginComponent {
             break;
         case "EXTRA_USAGE_ENABLED":
             extraUsageEnabled = (val === "true");
+            break;
+        case "CREDS_STATUS":
+            credsStatus = val;
             break;
         case "WEEK_MESSAGES":
             weekMessages = parseInt(val) || 0;
@@ -600,6 +632,9 @@ PluginComponent {
             break;
         case "PROFILE_EXTRA_USAGE":
             profileData = parseProfileBool(val, "extraUsageEnabled");
+            break;
+        case "PROFILE_CREDS_STATUS":
+            profileData = parseProfileString(val, "credsStatus");
             break;
         case "PROFILE_DAILY":
             {
@@ -729,6 +764,23 @@ PluginComponent {
         repeat: true
         triggeredOnStart: true
         onTriggered: {
+            if (!usageProcess.running)
+                usageProcess.running = true;
+        }
+    }
+
+    // Shells out to the CLI's own login command — the same mechanism the CLI
+    // uses for itself, confirmed against CodexBar's approach (see map Notes).
+    // No stdout pattern-matching for a "success" marker: the CLI's login flow
+    // exits 0 on success and non-zero on failure/cancel, so exit code alone
+    // is enough to decide whether to re-fetch usage.
+    Process {
+        id: loginProcess
+        command: ["claude", "auth", "login", "--claudeai"]
+        running: false
+
+        onExited: (exitCode, exitStatus) => {
+            root.loginInProgress = false;
             if (!usageProcess.running)
                 usageProcess.running = true;
         }
@@ -995,6 +1047,73 @@ PluginComponent {
                         // Explicit height binding — Loader defaults to 0 without this
                         height: item ? item.implicitHeight : 0
                         sourceComponent: profileListModel.count <= 5 ? profileTabsComponent : profileDropdownComponent
+                    }
+                }
+
+                // --- Credentials unavailable: login action ---
+                // Shown instead of silently sitting at 0% (the bug this ticket fixes)
+                // whenever the selected profile's credentials are missing or expired.
+                StyledRect {
+                    width: parent.width
+                    height: credsWarningContent.implicitHeight + Theme.spacingM * 2
+                    visible: root.displayCredsStatus === "missing" || root.displayCredsStatus === "expired"
+                    color: Theme.surfaceContainerHigh
+                    border.width: 1
+                    border.color: Theme.error || Theme.primary
+
+                    Row {
+                        id: credsWarningContent
+                        anchors.fill: parent
+                        anchors.margins: Theme.spacingM
+                        spacing: Theme.spacingM
+
+                        Column {
+                            width: parent.width - loginButton.width - parent.spacing
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: Theme.spacingXS
+
+                            StyledText {
+                                width: parent.width
+                                text: root.displayCredsStatus === "missing" ? root.tr("Not logged in") : root.tr("Session expired")
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                                wrapMode: Text.WordWrap
+                            }
+                            StyledText {
+                                width: parent.width
+                                text: root.tr("Usage data unavailable until you log in.")
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceVariantText
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        Rectangle {
+                            id: loginButton
+                            width: loginButtonLabel.implicitWidth + Theme.spacingM * 2
+                            height: 32
+                            radius: 16
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: Theme.primary
+                            opacity: root.loginInProgress ? 0.6 : 1
+
+                            StyledText {
+                                id: loginButtonLabel
+                                anchors.centerIn: parent
+                                text: root.loginInProgress ? root.tr("Logging in…") : root.tr("Log in")
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: Font.Medium
+                                color: Theme.primaryText
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: !root.loginInProgress
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.startLogin(root.selectedProfile)
+                            }
+                        }
                     }
                 }
 
