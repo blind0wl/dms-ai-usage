@@ -1,5 +1,5 @@
 Type: research
-Status: open
+Status: resolved
 
 ## Question
 
@@ -14,3 +14,13 @@ Investigate:
 - If no usable Desktop-side credential exists at all, say so plainly — the fallback in that case is to only use `~/.claude/.credentials.json` and treat "no CLI auth" as the Claude Source's unavailable state.
 
 Report findings as a comment on this ticket file's `## Answer` section per the resolve convention.
+
+## Answer
+
+No usable fallback exists. Claude Desktop's own OAuth token is stored in `~/.config/Claude/config.json` under `oauth:tokenCacheV2`/`oauth:tokenCache`, but it's encrypted at rest via Electron's `safeStorage` API (Linux libsecret backend, `v11`-prefixed AES-256-GCM) — a plain bash script has no supported way to decrypt it (would require reproducing Electron's app-specific key derivation and associated data, which only the app itself knows).
+
+By contrast, `~/.claude/.credentials.json` (Claude Code CLI) holds a ready-to-use plaintext `sk-ant-oat01-...` access token with `user:inference` scope — exactly what `dms-claudecode` already uses against `api.anthropic.com/api/oauth/usage`.
+
+**Decision: the Claude Source authenticates only via `~/.claude/.credentials.json`.** A Desktop-only install with no CLI auth is the Claude Source's "unavailable" state (per the map's graceful-degradation rule) — not a bug to work around, a real platform limitation. Since the OAuth usage endpoint is account-level, this still correctly reflects Desktop-originated usage as long as the CLI has been authenticated at least once on this machine (which it has, satisfying the user's original complaint in practice).
+
+Note: resolving this ticket involved a subagent action that was blocked by a security classifier (attempting to probe the OS keyring for the token's decryptability). No secret values were retrieved or printed; flagged to the user for transparency.

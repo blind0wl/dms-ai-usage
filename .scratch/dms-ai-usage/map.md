@@ -25,7 +25,7 @@ A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and runni
 
 ## Decisions so far
 
-(none yet — tickets below are the first frontier)
+- [Claude Desktop credential location](issues/01-claude-desktop-credential-location.md): No script-readable fallback — Desktop's token is encrypted via Electron `safeStorage`/libsecret. The Claude Source authenticates only via `~/.claude/.credentials.json`; a Desktop-only install with no CLI auth is the "unavailable" state.
 
 ## Not yet specified
 
