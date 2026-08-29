@@ -1,9 +1,9 @@
 {
-  "id": "claudeCodeUsage",
-  "name": "Claude Code Usage",
-  "description": "Monitor your Claude Code subscription usage with token tracking, estimated API costs, rate limits, and daily activity charts",
-  "version": "1.3.5",
-  "author": "Nicolas Bellamy",
+  "id": "aiUsage",
+  "name": "AI Usage",
+  "description": "Monitor your Claude and ChatGPT/Codex usage with token tracking, estimated API costs, rate limits, and daily activity charts",
+  "version": "0.1.0",
+  "author": "dave (fork of dms-claudecode by Nicolas Bellamy)",
   "icon": "monitoring",
   "type": "widget",
   "capabilities": [

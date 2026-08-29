@@ -30,6 +30,7 @@ A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and runni
 
 - [Claude Desktop credential location](issues/01-claude-desktop-credential-location.md): No script-readable fallback — Desktop's token is encrypted via Electron `safeStorage`/libsecret. The Claude Source authenticates only via `~/.claude/.credentials.json`; a missing/expired token is fixed via a login action (see ticket 3), not treated as a permanent dead end.
 - [Fork vs. build fresh](issues/03-fork-and-extend-plugin.md): Fork `dms-claudecode` in place rather than building a new plugin from scratch — reuses its working Claude features, and DMS has no cross-plugin pill-merging, so a combined pill requires living in the same plugin anyway.
+- [Fork and extend plugin](issues/03-fork-and-extend-plugin.md): Fork set up at `/home/dave/dev/dms-ai-usage` (real git fork via `upstream` remote + merge), renamed to `aiUsage`, installed and verified loading on this machine's live DMS toolbar via `dms restart` + journalctl confirmation. No feature changes yet.
 
 ## Not yet specified
 
