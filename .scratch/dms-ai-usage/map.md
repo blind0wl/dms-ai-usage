@@ -2,11 +2,14 @@ Type: map
 
 ## Destination
 
-A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and running on this machine (Arch/niri), showing usage meters + reset countdowns for two Sources: **Claude** and **ChatGPT**. Scope matches CodexBar's "basics": a merged bar pill (switchable per Source, splittable into separate pills in settings), a popout with per-Source detail, no cost/spend tracking, no incident/status badges. This is a build effort — the map carries execution, not just decisions (see Notes).
+A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and running on this machine (Arch/niri), showing usage meters + reset countdowns for two Sources: **Claude** and **ChatGPT**, merged into one switchable bar pill. Built as a **fork of the already-installed `dms-claudecode`** (github.com/titeya/dms-claudecode, MIT) rather than a from-scratch plugin — this keeps its existing Claude features (pacing, cost estimates, per-profile breakdown, daily chart) instead of rebuilding a thinner version, fixes its actual dead-end bug (silently shows zeros with no way to log in when `~/.claude/.credentials.json` is missing/expired), and extends it with a ChatGPT/Codex Source merged into the same pill. This is a build effort — the map carries execution, not just decisions (see Notes).
 
 ## Notes
 
 - **This map carries execution.** Tickets include real implementation work (Task type), not only decisions. Resolve build tickets by doing the work and recording what was built/verified.
+- **Architecture pivot (this round):** originally scoped as a from-scratch standalone plugin with cost/spend tracking explicitly excluded. Superseded — forking `dms-claudecode` means its existing pacing/cost/profile features come along for free and are now in scope as inherited functionality, not something being newly built. The one still-true constraint from the original scoping: no *new* incident/status-badge machinery.
+- The fork lives at `/home/dave/dev/dms-ai-usage`, with `upstream` = `github.com/titeya/dms-claudecode` merged in via `--allow-unrelated-histories` (real git fork, not a copy-paste), so upstream changes can still be pulled/diffed later.
+- **Login action**: CodexBar's own login flow, confirmed by research, is just shelling out to `claude auth login --claudeai` (the CLI's real login command, same public OAuth `client_id` the CLI itself uses: `9d1c250a-e61b-44d9-88ed-5944d1962f5e`) and watching for its browser flow to complete — not an independently-registered OAuth client. The fork should do the same for both Sources' missing/expired-credential states: Claude via `claude auth login --claudeai`, ChatGPT/Codex via running `codex` once to trigger its own refresh (per ticket 5's existing plan).
 - Domain (from grilling + domain-modeling this session):
   - **Provider**: a vendor grouping (Anthropic, OpenAI) used only for icon/color/ordering — not itself a unit of data-fetching.
   - **Source**: one local data-fetch mechanism with its own script + parsing. Exactly two in scope: **Claude** (Anthropic OAuth usage API) and **ChatGPT** (Codex CLI's stored OAuth token against the ChatGPT backend). A Source is app-agnostic where possible — Claude's Source should reflect usage regardless of whether it came from CLI or Desktop, since the underlying rate limit is per-account.
@@ -25,7 +28,8 @@ A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and runni
 
 ## Decisions so far
 
-- [Claude Desktop credential location](issues/01-claude-desktop-credential-location.md): No script-readable fallback — Desktop's token is encrypted via Electron `safeStorage`/libsecret. The Claude Source authenticates only via `~/.claude/.credentials.json`; a Desktop-only install with no CLI auth is the "unavailable" state.
+- [Claude Desktop credential location](issues/01-claude-desktop-credential-location.md): No script-readable fallback — Desktop's token is encrypted via Electron `safeStorage`/libsecret. The Claude Source authenticates only via `~/.claude/.credentials.json`; a missing/expired token is fixed via a login action (see ticket 3), not treated as a permanent dead end.
+- [Fork vs. build fresh](issues/03-fork-and-extend-plugin.md): Fork `dms-claudecode` in place rather than building a new plugin from scratch — reuses its working Claude features, and DMS has no cross-plugin pill-merging, so a combined pill requires living in the same plugin anyway.
 
 ## Not yet specified
 
@@ -34,7 +38,7 @@ A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and runni
 
 ## Out of scope
 
-- Cost/spend tracking (CodexBar's Usage & Spend view) — ruled out during destination-naming.
-- Incident/status badges — ruled out during destination-naming.
+- New incident/status-badge machinery — ruled out during destination-naming, still holds under the fork (nothing found in `dms-claudecode` does this today either).
 - GitHub Copilot CLI as a third Source — user declined during scoping.
 - ChatGPT desktop app as a distinct data source — ruled out after research confirmed no local usage data exists there; ChatGPT's Source is satisfied entirely by the Codex CLI's stored auth against `wham/usage`.
+- Cost/spend tracking is no longer out of scope — superseded by the fork-vs-build-fresh decision: `dms-claudecode` already has it, so it's inherited rather than newly built.

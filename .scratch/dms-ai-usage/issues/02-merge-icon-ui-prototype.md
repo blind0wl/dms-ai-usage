@@ -3,11 +3,11 @@ Status: open
 
 ## Question
 
-What should the merged bar pill and popout actually look like for 2 Sources (Claude, ChatGPT)?
+What should the merged bar pill and popout look like once ChatGPT is added alongside Claude in the forked widget (`ClaudeCodeUsageWidget.qml`)?
 
 Covers:
-- The merged pill's default appearance (icon/ring/percent for whichever Source is "active"), and how switching between Sources works (click to cycle? two click targets side by side?).
-- The settings toggle that splits the merged pill into one pill per Source instead.
-- Popout layout per Source: which windows to show (Claude: 5h + 7d; ChatGPT: primary + secondary), reset countdown display, "unavailable" state appearance when a Source's data can't be fetched.
+- How the existing Claude pill (ring + %) becomes a switchable pill between Claude and ChatGPT — click to cycle? Two click targets? A settings toggle to split into separate pills instead (still wanted per the earlier merge-icons decision)?
+- Popout layout when ChatGPT is selected: which of its windows to show (primary/secondary per the `wham/usage` response) alongside Claude's existing 5h/7d cards, reset countdown display, "unavailable" state with the login-action button (ticket 4) when a Source's credentials are missing/expired.
+- Whether/how Claude's existing pacing, cost, profile-breakdown, and daily-chart cards adapt to a second Source, or stay Claude-only for now with ChatGPT getting a simpler initial view.
 
-Build a rough QML/UI mockup (or borrow/adapt `dms-claudecode`'s `ClaudeCodeUsageWidget.qml` pill+popout structure as a starting skeleton) to react to, rather than describing it in prose only.
+Build a rough QML mockup by adapting the existing widget file directly (it's the real starting point now, not a from-scratch skeleton) to react to.
