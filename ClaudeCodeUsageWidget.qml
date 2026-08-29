@@ -222,7 +222,7 @@ PluginComponent {
     }
 
     // Script path via PluginService
-    property string scriptPath: PluginService.pluginDirectory + "/claudeCodeUsage/get-claude-usage"
+    property string scriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-claude-usage"
 
     popoutWidth: 380
     popoutHeight: 740
