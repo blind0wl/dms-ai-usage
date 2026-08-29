@@ -1,5 +1,5 @@
 Type: task
-Status: open
+Status: closed (out of scope)
 
 ## Question
 

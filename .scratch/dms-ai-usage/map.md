@@ -31,14 +31,15 @@ A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and runni
 - [Claude Desktop credential location](issues/01-claude-desktop-credential-location.md): No script-readable fallback — Desktop's token is encrypted via Electron `safeStorage`/libsecret. The Claude Source authenticates only via `~/.claude/.credentials.json`; a missing/expired token is fixed via a login action (see ticket 3), not treated as a permanent dead end.
 - [Fork vs. build fresh](issues/03-fork-and-extend-plugin.md): Fork `dms-claudecode` in place rather than building a new plugin from scratch — reuses its working Claude features, and DMS has no cross-plugin pill-merging, so a combined pill requires living in the same plugin anyway.
 - [Fork and extend plugin](issues/03-fork-and-extend-plugin.md): Fork set up at `/home/dave/dev/dms-ai-usage` (real git fork via `upstream` remote + merge), renamed to `aiUsage`, installed and verified loading on this machine's live DMS toolbar via `dms restart` + journalctl confirmation. No feature changes yet.
+- [Merge icon UI prototype](issues/02-merge-icon-ui-prototype.md): Merged dual-ring pill — Claude and ChatGPT rings side by side in one pill, always both visible, no click-to-cycle. Popout stacks both Sources' cards under their own section headers, no tabs. No merge-vs-split settings toggle needed.
 
 ## Not yet specified
 
-- Exact merge-icon switcher interaction (click to cycle? separate click targets? keyboard shortcut?) once the prototype ticket resolves.
 - Whether to submit to the DMS plugin registry (`plugins.danklinux.com`) or keep this local-only — not decided, revisit once the plugin works.
 
 ## Out of scope
 
+- [Scaffold plugin project from scratch](issues/03-scaffold-plugin-project.md): closed unresolved — superseded by [Fork and extend plugin](issues/03-fork-and-extend-plugin.md), which did the equivalent scaffolding work by forking `dms-claudecode` instead of starting empty. This also unblocks the tickets that cited "03" as a blocker (Claude Source, ChatGPT Source, Claude login action) — the fork ticket satisfies them.
 - New incident/status-badge machinery — ruled out during destination-naming, still holds under the fork (nothing found in `dms-claudecode` does this today either).
 - GitHub Copilot CLI as a third Source — user declined during scoping.
 - ChatGPT desktop app as a distinct data source — ruled out after research confirmed no local usage data exists there; ChatGPT's Source is satisfied entirely by the Codex CLI's stored auth against `wham/usage`.

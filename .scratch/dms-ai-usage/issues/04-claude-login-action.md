@@ -1,5 +1,5 @@
 Type: task
-Blocked by: 03
+Blocked by: 03-fork-and-extend-plugin (resolved)
 Status: open
 
 ## Question
