@@ -254,6 +254,19 @@ PluginComponent {
     // the horizontal and vertical pills so they never diverge.
     readonly property bool pillOverPace: showPacing && (pillFivePace.status === "over" || pillFivePace.status === "over_quota")
 
+    // ChatGPT pacing, mirroring the Claude properties above. Window length
+    // comes from the script's real limit_window_seconds rather than a
+    // hardcoded constant, since primary/secondary windows vary by plan.
+    property var chatgptPrimaryPace: {
+        void (countdownNow);
+        return paceInfo(chatgptPrimaryUtil, chatgptPrimaryResetMs, chatgptPrimaryWindowSeconds * 1000);
+    }
+    property var chatgptSecondaryPace: {
+        void (countdownNow);
+        return paceInfo(chatgptSecondaryUtil, chatgptSecondaryResetMs, chatgptSecondaryWindowSeconds * 1000);
+    }
+    readonly property bool chatgptPillOverPace: showPacing && (chatgptPrimaryPace.status === "over" || chatgptPrimaryPace.status === "over_quota")
+
     // Today's index in the calendar week (0=Monday, 6=Sunday)
     property int todayIndex: {
         void (countdownNow);
@@ -410,7 +423,7 @@ PluginComponent {
     // status: over_quota | over | under | on | unknown
     function paceInfo(util, resetIso, windowMs) {
         util = util || 0;
-        if (!resetIso)
+        if (!resetIso || !windowMs)
             return util >= 100 ? {
                 timeFrac: 1,
                 delta: util,
@@ -1160,9 +1173,9 @@ PluginComponent {
             }
 
             StyledText {
-                text: Math.round(root.chatgptPrimaryUtil) + "%"
+                text: Math.round(root.chatgptPrimaryUtil) + "%" + (root.chatgptPillOverPace ? " ↑" : "")
                 font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                color: Theme.surfaceText
+                color: root.chatgptPillOverPace ? root.paceColor(root.chatgptPrimaryPace.status) : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.chatgptVisible
             }
@@ -1261,9 +1274,9 @@ PluginComponent {
             }
 
             StyledText {
-                text: Math.round(root.chatgptPrimaryUtil) + "%"
+                text: Math.round(root.chatgptPrimaryUtil) + "%" + (root.chatgptPillOverPace ? " ↑" : "")
                 font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                color: Theme.surfaceText
+                color: root.chatgptPillOverPace ? root.paceColor(root.chatgptPrimaryPace.status) : Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
                 visible: root.chatgptVisible
             }
@@ -2279,6 +2292,8 @@ PluginComponent {
 
                                 property real percent: root.chatgptPrimaryUtil
                                 onPercentChanged: requestPaint()
+                                property var pace: root.chatgptPrimaryPace
+                                onPaceChanged: requestPaint()
 
                                 onPaint: {
                                     var ctx = getContext("2d");
@@ -2300,6 +2315,8 @@ PluginComponent {
                                         ctx.lineCap = "round";
                                         ctx.stroke();
                                     }
+
+                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
                                 }
 
                                 StyledText {
@@ -2329,6 +2346,14 @@ PluginComponent {
                                     text: Math.round(root.chatgptPrimaryUtil) + "% " + root.tr("used")
                                     font.pixelSize: Theme.fontSizeMedium
                                     color: root.progressColor(root.chatgptPrimaryUtil)
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.paceLabel(root.chatgptPrimaryPace)
+                                    visible: root.showPacing && text !== ""
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: root.paceColor(root.chatgptPrimaryPace.status)
                                     wrapMode: Text.WordWrap
                                 }
                                 StyledText {
@@ -2364,6 +2389,8 @@ PluginComponent {
 
                                 property real percent: root.chatgptSecondaryUtil
                                 onPercentChanged: requestPaint()
+                                property var pace: root.chatgptSecondaryPace
+                                onPaceChanged: requestPaint()
 
                                 onPaint: {
                                     var ctx = getContext("2d");
@@ -2385,6 +2412,8 @@ PluginComponent {
                                         ctx.lineCap = "round";
                                         ctx.stroke();
                                     }
+
+                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
                                 }
 
                                 StyledText {
@@ -2407,6 +2436,14 @@ PluginComponent {
                                     font.pixelSize: Theme.fontSizeMedium
                                     font.weight: Font.Medium
                                     color: Theme.surfaceText
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.paceLabel(root.chatgptSecondaryPace)
+                                    visible: root.showPacing && text !== ""
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: root.paceColor(root.chatgptSecondaryPace.status)
                                     wrapMode: Text.WordWrap
                                 }
                                 StyledText {
