@@ -45,6 +45,8 @@ var strings = {
         { fr: "Aujourd'hui", es: "Hoy" },
     "Week":
         { fr: "Semaine", es: "Semana" },
+    "This Week":
+        { fr: "Cette semaine", es: "Esta semana" },
     "Month":
         { fr: "Mois", es: "Mes" },
     "Models This Week":
