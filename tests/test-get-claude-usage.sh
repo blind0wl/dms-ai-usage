@@ -35,10 +35,20 @@ echo '{}'
 CURLEOF
 chmod +x "$mock_curl"
 
+# Fake `claude` binary so the script's installed-check passes regardless of
+# whether the real CLI is on the host PATH (it isn't on a clean CI runner).
+# Only its presence on PATH is checked; it's never actually invoked.
+mock_claude="$TMPDIR_ROOT/claude"
+cat > "$mock_claude" << 'CLAUDEEOF'
+#!/usr/bin/env bash
+exit 0
+CLAUDEEOF
+chmod +x "$mock_claude"
+
 run_script() {
     local home_dir="$1"
     shift
-    # Override HOME and prepend mock curl to PATH; remaining args go to the script
+    # Override HOME and prepend mock curl/claude to PATH; remaining args go to the script
     HOME="$home_dir" PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" "$@" 2>/dev/null
 }
 
