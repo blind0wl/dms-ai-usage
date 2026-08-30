@@ -1,6 +1,68 @@
 #!/usr/bin/env bash
 set -eu
 
+# Cheapest possible check, before any temp dirs, network calls, or profile
+# scanning: if the `claude` binary genuinely isn't installed, this Source
+# isn't just logged out, it's not present at all. Distinct from CREDS_STATUS
+# "missing"/"expired" (binary present, bad/no credentials) — drives the
+# widget hiding the ring and login card instead of offering a login button
+# that would spawn a nonexistent binary.
+#
+# `command -v` alone isn't reliable here: this script is spawned by
+# quickshell/DMS, whose PATH is typically a bare `/usr/local/bin:/usr/bin`
+# (no login-shell PATH additions), so a `claude` installed under
+# ~/.local/bin, ~/.npm-global/bin, nvm/volta/asdf shims, etc. would falsely
+# read as "not installed". Widen the search PATH with the common install
+# locations, and treat an existing credentials file as proof of installation
+# regardless of PATH (if it's there, `claude` was run to create it).
+if ! PATH="${PATH}:${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/bin:${HOME}/go/bin:${HOME}/.cargo/bin:${HOME}/.volta/bin:${HOME}/.claude/local" command -v claude >/dev/null 2>&1 \
+    && [ ! -f "${HOME}/.claude/.credentials.json" ]; then
+    cat <<'NOTINSTALLED'
+SUBSCRIPTION_TYPE=unknown
+RATE_LIMIT_TIER=unknown
+FIVE_HOUR_UTIL=0
+FIVE_HOUR_RESET=
+SEVEN_DAY_UTIL=0
+SEVEN_DAY_RESET=
+EXTRA_USAGE_ENABLED=false
+CREDS_STATUS=not_installed
+WEEK_MESSAGES=0
+WEEK_SESSIONS=0
+WEEK_TOKENS=0
+WEEK_MODELS=
+ALLTIME_SESSIONS=0
+ALLTIME_MESSAGES=0
+FIRST_SESSION=unknown
+DAILY=0,0,0,0,0,0,0
+MONTH_TOKENS=0
+TODAY_COST=0.00
+WEEK_COST=0.00
+MONTH_COST=0.00
+DAILY_COSTS=0.00,0.00,0.00,0.00,0.00,0.00,0.00
+USD_EUR_RATE=0
+PROFILES=
+PROFILE_SUBSCRIPTION=
+PROFILE_TIER=
+PROFILE_WEEK_TOKENS=
+PROFILE_MONTH_TOKENS=
+PROFILE_WEEK_MESSAGES=
+PROFILE_WEEK_SESSIONS=
+PROFILE_TODAY_COST=
+PROFILE_WEEK_COST=
+PROFILE_MONTH_COST=
+PROFILE_DAILY=
+PROFILE_DAILY_COSTS=
+PROFILE_WEEK_MODELS=
+PROFILE_FIVE_HOUR_UTIL=
+PROFILE_SEVEN_DAY_UTIL=
+PROFILE_FIVE_HOUR_RESET=
+PROFILE_SEVEN_DAY_RESET=
+PROFILE_EXTRA_USAGE=
+PROFILE_CREDS_STATUS=
+NOTINSTALLED
+    exit 0
+fi
+
 TMPDIR_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 

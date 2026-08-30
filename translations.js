@@ -13,6 +13,12 @@ var strings = {
         { fr: "Fenêtre principale", es: "Ventana principal" },
     "Secondary Window":
         { fr: "Fenêtre secondaire", es: "Ventana secundaria" },
+    "5h Window":
+        { fr: "Fenêtre de 5 h", es: "Ventana de 5 h" },
+    "Weekly Window":
+        { fr: "Fenêtre hebdomadaire", es: "Ventana semanal" },
+    "Window":
+        { fr: "Fenêtre", es: "Ventana" },
     "Claude Code Usage":
         { fr: "Utilisation Claude Code", es: "Uso de Claude Code" },
     "Subscription":
@@ -86,6 +92,20 @@ var strings = {
         {
             fr: "Indique si l'utilisation est en avance ou en retard sur la fenêtre de temps",
             es: "Indica si el consumo está adelantado o retrasado respecto a la ventana de tiempo"
+        },
+    "Enable Claude Source":
+        { fr: "Activer la source Claude", es: "Activar la fuente Claude" },
+    "Show Claude Code usage. Off, or Claude Code not installed, hides its ring entirely.":
+        {
+            fr: "Affiche l'utilisation de Claude Code. Désactivé, ou si Claude Code n'est pas installé, masque entièrement son anneau.",
+            es: "Muestra el uso de Claude Code. Si está desactivado, o Claude Code no está instalado, oculta completamente su anillo."
+        },
+    "Enable ChatGPT Source":
+        { fr: "Activer la source ChatGPT", es: "Activar la fuente ChatGPT" },
+    "Show Codex/ChatGPT usage. Off, or Codex not installed, hides its ring entirely.":
+        {
+            fr: "Affiche l'utilisation de Codex/ChatGPT. Désactivé, ou si Codex n'est pas installé, masque entièrement son anneau.",
+            es: "Muestra el uso de Codex/ChatGPT. Si está desactivado, o Codex no está instalado, oculta completamente su anillo."
         },
     "Custom Profiles":
         { fr: "Profils personnalisés", es: "Perfiles personalizados" },

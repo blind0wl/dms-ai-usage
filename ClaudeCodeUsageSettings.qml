@@ -49,6 +49,20 @@ PluginSettings {
         defaultValue: true
     }
 
+    ToggleSetting {
+        settingKey: "enableClaude"
+        label: root.tr("Enable Claude Source")
+        description: root.tr("Show Claude Code usage. Off, or Claude Code not installed, hides its ring entirely.")
+        defaultValue: true
+    }
+
+    ToggleSetting {
+        settingKey: "enableChatgpt"
+        label: root.tr("Enable ChatGPT Source")
+        description: root.tr("Show Codex/ChatGPT usage. Off, or Codex not installed, hides its ring entirely.")
+        defaultValue: true
+    }
+
     Rectangle {
         width: parent.width
         height: 1

@@ -1,6 +1,57 @@
 #!/usr/bin/env bash
 set -eu
 
+# Cheapest possible check, before any temp dirs, network calls, or account
+# scanning: if the `codex` binary genuinely isn't installed, this Source
+# isn't just logged out, it's not present at all. Distinct from CREDS_STATUS
+# "missing"/"expired" (binary present, bad/no credentials) — drives the
+# widget hiding the ring and login card instead of offering a login button
+# that would spawn a nonexistent binary.
+#
+# `command -v` alone isn't reliable here: this script is spawned by
+# quickshell/DMS, whose PATH is typically a bare `/usr/local/bin:/usr/bin`
+# (no login-shell PATH additions), so a `codex` installed under
+# ~/.npm-global/bin, ~/.local/bin, nvm/volta/asdf shims, etc. would falsely
+# read as "not installed". Widen the search PATH with the common install
+# locations, and treat an existing auth file as proof of installation
+# regardless of PATH (if it's there, `codex` was run to create it).
+if ! PATH="${PATH}:${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/bin:${HOME}/go/bin:${HOME}/.cargo/bin:${HOME}/.volta/bin" command -v codex >/dev/null 2>&1 \
+    && [ ! -f "${CODEX_HOME:-${HOME}/.codex}/auth.json" ]; then
+    cat <<'NOTINSTALLED'
+PLAN_TYPE=unknown
+PRIMARY_UTIL=0
+PRIMARY_RESET=
+PRIMARY_WINDOW_SECONDS=0
+SECONDARY_UTIL=0
+SECONDARY_RESET=
+SECONDARY_WINDOW_SECONDS=0
+CREDITS_BALANCE=0
+CREDITS_HAS=false
+CREDS_STATUS=not_installed
+WEEK_TOKENS=0
+WEEK_MESSAGES=0
+WEEK_SESSIONS=0
+MONTH_TOKENS=0
+DAILY=0,0,0,0,0,0,0
+WEEK_MODELS=
+ACCOUNTS=
+ACCOUNT_PLAN=
+ACCOUNT_PRIMARY_UTIL=
+ACCOUNT_PRIMARY_RESET=
+ACCOUNT_SECONDARY_UTIL=
+ACCOUNT_SECONDARY_RESET=
+ACCOUNT_CREDITS_BALANCE=
+ACCOUNT_CREDS_STATUS=
+ACCOUNT_WEEK_TOKENS=
+ACCOUNT_MONTH_TOKENS=
+ACCOUNT_WEEK_MESSAGES=
+ACCOUNT_WEEK_SESSIONS=
+ACCOUNT_DAILY=
+ACCOUNT_WEEK_MODELS=
+NOTINSTALLED
+    exit 0
+fi
+
 STALE_REFRESH_DAYS=8
 STALE_EXP_SECONDS=300  # 5 minutes, mirrors CodexBar's own staleness rule
 

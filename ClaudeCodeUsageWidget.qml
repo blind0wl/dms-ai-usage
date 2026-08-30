@@ -31,6 +31,56 @@ PluginComponent {
     property var customProfiles: pluginData.customProfiles || []
     property bool customProfilesRefreshPending: false
 
+    // Source enable/disable — manual override on top of not_installed detection
+    // (see get-claude-usage/get-chatgpt-usage), both on by default so existing
+    // dms-claudecode users upgrade with no config changes required.
+    property bool enableClaude: pluginData.enableClaude !== false
+    property bool enableChatgpt: pluginData.enableChatgpt !== false
+
+    // A Source is actually shown only when enabled AND its script confirms the
+    // binary is present. credsStatus/chatgptCredsStatus default to "unknown"
+    // before the first fetch completes, so claudeVisible/chatgptVisible start
+    // true and correct themselves once CREDS_STATUS arrives.
+    readonly property bool claudeVisible: enableClaude && credsStatus !== "not_installed"
+    readonly property bool chatgptVisible: enableChatgpt && chatgptCredsStatus !== "not_installed"
+
+    onClaudeVisibleChanged: {
+        root.updatePillVisibility();
+        if (!root.claudeVisible && root.popoutSourceTab === "claude")
+            root.popoutSourceTab = "chatgpt";
+    }
+    onChatgptVisibleChanged: {
+        root.updatePillVisibility();
+        if (!root.chatgptVisible && root.popoutSourceTab === "chatgpt")
+            root.popoutSourceTab = "claude";
+    }
+
+    // Toggling a Source back on should fetch immediately rather than waiting
+    // for the next refresh tick. Toggling off needs no action here — the
+    // Timer/onCustomProfilesChanged/onCustomChatgptAccountsChanged guards
+    // above already skip spawning that Source's Process from this point on.
+    onEnableClaudeChanged: {
+        if (root.enableClaude && !usageProcess.running)
+            usageProcess.running = true;
+    }
+    onEnableChatgptChanged: {
+        if (root.enableChatgpt && !chatgptProcess.running)
+            chatgptProcess.running = true;
+    }
+
+    function updatePillVisibility() {
+        if (!root.claudeVisible && !root.chatgptVisible)
+            root.setVisibilityOverride(false);
+        else
+            root.clearVisibilityOverride();
+    }
+
+    Component.onCompleted: {
+        root.updatePillVisibility();
+        if (!root.claudeVisible && root.chatgptVisible)
+            root.popoutSourceTab = "chatgpt";
+    }
+
     // API usage data
     property string subscriptionType: ""
     property string rateLimitTier: ""
@@ -50,8 +100,10 @@ PluginComponent {
     property string chatgptPlanType: "unknown"
     property real chatgptPrimaryUtil: 0
     property real chatgptPrimaryResetMs: 0
+    property real chatgptPrimaryWindowSeconds: 0
     property real chatgptSecondaryUtil: 0
     property real chatgptSecondaryResetMs: 0
+    property real chatgptSecondaryWindowSeconds: 0
     property real chatgptCreditsBalance: 0
     property bool chatgptCreditsHas: false
     property string chatgptCredsStatus: "unknown"
@@ -277,6 +329,31 @@ PluginComponent {
     property string chatgptPrimaryCountdown: root.formatCountdown(root.chatgptPrimaryResetMs)
     property string chatgptSecondaryCountdown: root.formatCountdown(root.chatgptSecondaryResetMs)
 
+    // `wham/usage` names its windows "primary"/"secondary" with no fixed
+    // duration in the field name itself (unlike Claude's five_hour/seven_day),
+    // but does carry each window's actual length in limit_window_seconds.
+    // Label with that real duration instead of the generic primary/secondary
+    // names — known values today are 5h and 7d (weekly), called out with
+    // dedicated translated strings; anything else falls back to a plain
+    // duration built the same non-translated-abbreviation way formatCountdown
+    // already does elsewhere in this file. genericKey is used only while
+    // WINDOW_SECONDS hasn't arrived yet (0 = not fetched, not "unknown length").
+    function formatWindowLabel(seconds, genericKey) {
+        if (!seconds || seconds <= 0)
+            return root.tr(genericKey);
+        if (seconds === 604800)
+            return root.tr("Weekly Window");
+        if (seconds === 18000)
+            return root.tr("5h Window");
+        if (seconds % 86400 === 0)
+            return (seconds / 86400) + "d " + root.tr("Window");
+        var hours = Math.round(seconds / 3600);
+        return hours + "h " + root.tr("Window");
+    }
+
+    property string chatgptPrimaryWindowLabel: root.formatWindowLabel(root.chatgptPrimaryWindowSeconds, "Primary Window")
+    property string chatgptSecondaryWindowLabel: root.formatWindowLabel(root.chatgptSecondaryWindowSeconds, "Secondary Window")
+
     Timer {
         interval: 60000
         running: true
@@ -288,9 +365,9 @@ PluginComponent {
             root.countdownNow = now;
             // Large gap (>2min) indicates wake from sleep — force immediate refresh
             if (elapsed > 120000) {
-                if (!usageProcess.running)
+                if (root.enableClaude && !usageProcess.running)
                     usageProcess.running = true;
-                if (!chatgptProcess.running)
+                if (root.enableChatgpt && !chatgptProcess.running)
                     chatgptProcess.running = true;
             }
         }
@@ -810,11 +887,17 @@ PluginComponent {
         case "PRIMARY_RESET":
             chatgptPrimaryResetMs = root.parseResetMs(val);
             break;
+        case "PRIMARY_WINDOW_SECONDS":
+            chatgptPrimaryWindowSeconds = parseFloat(val) || 0;
+            break;
         case "SECONDARY_UTIL":
             chatgptSecondaryUtil = parseFloat(val) || 0;
             break;
         case "SECONDARY_RESET":
             chatgptSecondaryResetMs = root.parseResetMs(val);
+            break;
+        case "SECONDARY_WINDOW_SECONDS":
+            chatgptSecondaryWindowSeconds = parseFloat(val) || 0;
             break;
         case "CREDITS_BALANCE":
             chatgptCreditsBalance = parseFloat(val) || 0;
@@ -865,6 +948,8 @@ PluginComponent {
 
     // Pick up an added/removed profile now instead of waiting for the refresh timer
     onCustomProfilesChanged: {
+        if (!root.enableClaude)
+            return;
         if (usageProcess.running)
             customProfilesRefreshPending = true;
         else
@@ -872,6 +957,8 @@ PluginComponent {
     }
 
     onCustomChatgptAccountsChanged: {
+        if (!root.enableChatgpt)
+            return;
         if (chatgptProcess.running)
             chatgptAccountsRefreshPending = true;
         else
@@ -932,9 +1019,9 @@ PluginComponent {
         repeat: true
         triggeredOnStart: true
         onTriggered: {
-            if (!usageProcess.running)
+            if (root.enableClaude && !usageProcess.running)
                 usageProcess.running = true;
-            if (!chatgptProcess.running)
+            if (root.enableChatgpt && !chatgptProcess.running)
                 chatgptProcess.running = true;
         }
     }
@@ -991,6 +1078,7 @@ PluginComponent {
                 height: root.iconSize
                 anchors.verticalCenter: parent.verticalCenter
                 renderStrategy: Canvas.Cooperative
+                visible: root.claudeVisible
 
                 property real percent: root.fiveHourUtil
                 onPercentChanged: requestPaint()
@@ -1024,6 +1112,7 @@ PluginComponent {
                 font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                 color: root.pillOverPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
+                visible: root.claudeVisible
             }
 
             Rectangle {
@@ -1032,6 +1121,7 @@ PluginComponent {
                 anchors.verticalCenter: parent.verticalCenter
                 color: Theme.outline
                 opacity: 0.5
+                visible: root.claudeVisible && root.chatgptVisible
             }
 
             Canvas {
@@ -1040,6 +1130,7 @@ PluginComponent {
                 height: root.iconSize
                 anchors.verticalCenter: parent.verticalCenter
                 renderStrategy: Canvas.Cooperative
+                visible: root.chatgptVisible
 
                 property real percent: root.chatgptPrimaryUtil
                 onPercentChanged: requestPaint()
@@ -1073,6 +1164,7 @@ PluginComponent {
                 font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                 color: Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
+                visible: root.chatgptVisible
             }
         }
     }
@@ -1087,6 +1179,7 @@ PluginComponent {
                 height: root.iconSize
                 anchors.horizontalCenter: parent.horizontalCenter
                 renderStrategy: Canvas.Cooperative
+                visible: root.claudeVisible
 
                 property real percent: root.fiveHourUtil
                 onPercentChanged: requestPaint()
@@ -1120,6 +1213,7 @@ PluginComponent {
                 font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                 color: root.pillOverPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.claudeVisible
             }
 
             Rectangle {
@@ -1128,6 +1222,7 @@ PluginComponent {
                 anchors.horizontalCenter: parent.horizontalCenter
                 color: Theme.outline
                 opacity: 0.5
+                visible: root.claudeVisible && root.chatgptVisible
             }
 
             Canvas {
@@ -1136,6 +1231,7 @@ PluginComponent {
                 height: root.iconSize
                 anchors.horizontalCenter: parent.horizontalCenter
                 renderStrategy: Canvas.Cooperative
+                visible: root.chatgptVisible
 
                 property real percent: root.chatgptPrimaryUtil
                 onPercentChanged: requestPaint()
@@ -1169,6 +1265,7 @@ PluginComponent {
                 font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                 color: Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.chatgptVisible
             }
         }
     }
@@ -1323,9 +1420,12 @@ PluginComponent {
                 // --- Source tab strip ---
                 // Only one Source's cards render at a time, keeping the popout
                 // short on small screens (both stacked visible was too tall).
+                // Hidden entirely when only one Source is visible — nothing to
+                // switch between (both-hidden already hides the whole pill).
                 Row {
                     width: parent.width
                     spacing: Theme.spacingXS
+                    visible: root.claudeVisible && root.chatgptVisible
 
                     Repeater {
                         model: [
@@ -2218,7 +2318,7 @@ PluginComponent {
 
                                 StyledText {
                                     width: parent.width
-                                    text: root.tr("Primary Window")
+                                    text: root.chatgptPrimaryWindowLabel
                                     font.pixelSize: Theme.fontSizeMedium
                                     font.weight: Font.Medium
                                     color: Theme.surfaceText
@@ -2303,7 +2403,7 @@ PluginComponent {
 
                                 StyledText {
                                     width: parent.width
-                                    text: root.tr("Secondary Window") + " · " + Math.round(root.chatgptSecondaryUtil) + "%"
+                                    text: root.chatgptSecondaryWindowLabel + " · " + Math.round(root.chatgptSecondaryUtil) + "%"
                                     font.pixelSize: Theme.fontSizeMedium
                                     font.weight: Font.Medium
                                     color: Theme.surfaceText

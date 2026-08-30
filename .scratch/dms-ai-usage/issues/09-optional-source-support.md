@@ -1,0 +1,38 @@
+Type: task
+Blocked by: 06, 08 (resolved)
+Status: closed
+
+## Question
+
+The fork is intended to go back upstream as a PR to `dms-claudecode` (github.com/titeya/dms-claudecode), so it can't assume every installer has both Claude Code and Codex/ChatGPT configured the way this dev machine does. Today, a genuinely-uninstalled Source (no `claude`/`codex` binary at all, not just missing credentials) still renders a permanent ring + "Log in" card whose button shells out to a binary that doesn't exist (`chatgptProcess`/`loginProcess` have no presence check anywhere in `get-claude-usage`, `get-chatgpt-usage`, or the widget).
+
+Build, symmetrically for **both** Sources (per this round's grilling — Claude is not assumed mandatory; someone may install this for Codex usage alone):
+
+- A new `CREDS_STATUS=not_installed` value in both scripts, decided via a cheap `command -v claude` / `command -v codex` check, distinct from `missing` (binary present, no/bad credentials) and `expired`.
+- `not_installed` suppresses the login card entirely for that Source (no button that spawns a nonexistent binary) — the ring itself should also hide rather than show a permanent 0%/unavailable state.
+- Two new settings toggles in `ClaudeCodeUsageSettings.qml` — "Enable Claude Source" / "Enable ChatGPT Source" — persisted via `pluginData`, **both on by default** (preserves the zero-config upgrade path for existing `dms-claudecode` users). The toggle is a manual override on top of `not_installed` detection, not a replacement for it.
+- When a Source is toggled off, the widget must skip running its `Process` entirely on refresh (no wasted subprocess cost), not just hide its UI.
+- If **both** Sources end up hidden (toggled off or `not_installed`), the whole plugin pill should hide itself rather than show an empty/greyed placeholder.
+
+Verify: simulate "Codex never installed" (e.g. a `PATH` without `codex`) and confirm no login card/button appears and the ChatGPT ring disappears from the pill; same for Claude; confirm toggling a Source off stops its `Process` from running (check via `journalctl`/process inspection, not just UI); confirm the both-off case hides the pill with no QML errors (`dms restart` + `qmllint` clean, as prior tickets have verified).
+
+## Answer
+
+Built symmetrically for both scripts and the widget:
+
+- **`get-claude-usage` / `get-chatgpt-usage`**: a `command -v claude` / `command -v codex` check right after `set -eu`, before any temp dir, network call, or profile/account scan. When absent, the script immediately prints the full KEY=VALUE schema with `CREDS_STATUS=not_installed` and all other fields zeroed/empty, then `exit 0` — cheapest possible path, no wasted subprocess work.
+- **Widget** (`ClaudeCodeUsageWidget.qml`): added `enableClaude`/`enableChatgpt` properties (from `pluginData`, both default `true`) and computed `claudeVisible`/`chatgptVisible` (`enable* && credsStatus !== "not_installed"`). Both Process-spawning sites (the `refreshInterval` Timer, the 60s sleep-detection Timer, and `onCustomProfilesChanged`/`onCustomChatgptAccountsChanged`) now gate on `enableClaude`/`enableChatgpt` so a disabled Source's script never runs. New `onEnableClaudeChanged`/`onEnableChatgptChanged` handlers fetch immediately when a Source is turned back on rather than waiting for the next tick.
+- **Ring hiding**: `hRing`/`vRing` (Claude) and `hRingGpt`/`vRingGpt` (ChatGPT) plus their percentage labels now carry `visible: root.claudeVisible` / `root.chatgptVisible`; the divider between them is `visible: root.claudeVisible && root.chatgptVisible`. Row/Column positioners exclude invisible children from layout automatically, so a hidden ring doesn't leave a gap.
+- **Login card**: no change needed — its existing `visible: credsStatus === "missing" || credsStatus === "expired"` condition already excludes `not_installed` by construction, so it was already correct once the script emits the new status.
+- **Popout tab strip**: hidden entirely (`visible: claudeVisible && chatgptVisible`) when only one Source is visible — nothing to switch between. `popoutSourceTab` auto-corrects to the other Source if the active tab's Source becomes hidden (both on an `onXVisibleChanged` handler and in `Component.onCompleted` for the initial-state case).
+- **Both-hidden case**: `updatePillVisibility()` calls the DMS `PluginComponent` base's own `setVisibilityOverride(false)` / `clearVisibilityOverride()` (discovered in `/usr/share/quickshell/dms/Modules/Plugins/PluginComponent.qml` — an existing hook, not new machinery) so the whole pill collapses via the framework's own visibility mechanism rather than a homegrown one.
+- **Settings**: two new `ToggleSetting` rows in `ClaudeCodeUsageSettings.qml` ("Enable Claude Source" / "Enable ChatGPT Source"), both defaulting to `true`, using the same `pluginData`-backed pattern as the existing `showPacing` toggle — confirmed live (that toggle already works this way) rather than re-derived. Added matching fr/es entries to `translations.js` (verified via `tests/test-translations.sh`).
+
+Verified:
+- Both scripts: simulated absence via a filtered `PATH` (no `claude`/`codex` on it) — each independently prints `CREDS_STATUS=not_installed` with the full field set and exits 0; normal run with both installed still returns `CREDS_STATUS=ok`.
+- Full existing test suite green: `test-get-claude-usage.sh` (95/95), `test-qml-syntax.sh` (6/6), `test-qml-functions.sh` (61/61), `test-plugin-json.sh` (8/8), `test-translations.sh` clean for all newly-added keys (one pre-existing unrelated failure for "This Week" predates this ticket, confirmed via `git stash`).
+- Live `dms restart`: journalctl shows three clean "DankBar: Plugin loaded: aiUsage" lines, no QML errors. The `qmllint` warning on line 1079 (`barConfig?.` optional chaining) is a standalone-linter false positive pre-existing on unrelated lines, not something this change introduced — confirmed unaffected at runtime.
+- Toggle mechanism verified correct by code reading `ToggleSetting.qml`: `saveValue` → `pluginData` reload → reactive `enableClaude`/`enableChatgpt` update, the identical mechanism already proven live by the existing `showPacing` toggle.
+
+**Post-resolution regression, caught and fixed same session:** the initial `command -v claude`/`command -v codex` check used the script's inherited `PATH` unmodified. DMS/quickshell (`dms run --session` → `qs -p ...`) runs with a bare `PATH=/usr/local/bin:/usr/bin` — no login-shell additions — so on this dev machine, where `claude` lives at `~/.local/bin/claude` and `codex` at `~/.npm-global/bin/codex`, both were invisible to `command -v` from inside the widget's Process, and the whole pill vanished despite both Sources being fully logged in. Confirmed via `/proc/<pid>/environ` on the live `dms`/`qs` processes. Fixed by widening the search PATH with common install locations (`~/.local/bin`, `~/.npm-global/bin`, `~/bin`, `~/go/bin`, `~/.cargo/bin`, `~/.volta/bin`, plus `~/.claude/local` for Claude) and, more robustly, treating an existing credentials file (`~/.claude/.credentials.json` / `$CODEX_HOME/auth.json`) as proof of installation regardless of PATH — if the file is there, the binary was run at least once to create it. Re-verified: real credentials under a bare `PATH=/usr/local/bin:/usr/bin` now correctly yields `CREDS_STATUS=ok`; a bare PATH with no credentials and an empty `HOME` still correctly yields `not_installed`. Full test suite re-run clean (95/95). This is the more general lesson for ticket 10's PR body: a from-scratch installer's DMS/quickshell PATH should never be assumed to match their login shell's.
+
