@@ -1,6 +1,18 @@
 .pragma library
 
 var strings = {
+    "AI Usage":
+        { fr: "Utilisation de l'IA", es: "Uso de IA" },
+    "Claude":
+        { fr: "Claude", es: "Claude" },
+    "ChatGPT":
+        { fr: "ChatGPT", es: "ChatGPT" },
+    "Plan":
+        { fr: "Forfait", es: "Plan" },
+    "Primary Window":
+        { fr: "Fenêtre principale", es: "Ventana principal" },
+    "Secondary Window":
+        { fr: "Fenêtre secondaire", es: "Ventana secundaria" },
     "Claude Code Usage":
         { fr: "Utilisation Claude Code", es: "Uso de Claude Code" },
     "Subscription":
@@ -77,6 +89,13 @@ var strings = {
         },
     "Custom Profiles":
         { fr: "Profils personnalisés", es: "Perfiles personalizados" },
+    "Custom ChatGPT Accounts":
+        { fr: "Comptes ChatGPT personnalisés", es: "Cuentas de ChatGPT personalizadas" },
+    "Track extra Codex accounts. Point at a CODEX_HOME (the folder containing auth.json). ~/.codex is detected automatically as \"default\".":
+        {
+            fr: "Suivez d'autres comptes Codex. Indiquez un CODEX_HOME (le dossier contenant auth.json). ~/.codex est détecté automatiquement comme « default ».",
+            es: "Haz seguimiento de otras cuentas de Codex. Indica un CODEX_HOME (la carpeta que contiene auth.json). ~/.codex se detecta automáticamente como «default»."
+        },
     "Name":
         { fr: "Nom", es: "Nombre" },
     "Config directory":

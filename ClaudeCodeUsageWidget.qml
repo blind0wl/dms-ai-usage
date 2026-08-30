@@ -41,6 +41,22 @@ PluginComponent {
     property bool extraUsageEnabled: false
     property string credsStatus: "unknown"
 
+    // ChatGPT (Codex) Source — default account's aggregate values, per the
+    // script's own default-account convention. No per-account switching UI
+    // yet (ticket 2 scoped ChatGPT to window cards only), but customChatgptAccounts
+    // still feeds the script so multi-account fetching is reachable.
+    property var customChatgptAccounts: pluginData.customChatgptAccounts || []
+    property bool chatgptAccountsRefreshPending: false
+    property string chatgptPlanType: "unknown"
+    property real chatgptPrimaryUtil: 0
+    property real chatgptPrimaryResetMs: 0
+    property real chatgptSecondaryUtil: 0
+    property real chatgptSecondaryResetMs: 0
+    property real chatgptCreditsBalance: 0
+    property bool chatgptCreditsHas: false
+    property string chatgptCredsStatus: "unknown"
+    property bool chatgptLoginInProgress: false
+
     // Weekly state
     property int weekMessages: 0
     property int weekSessions: 0
@@ -208,6 +224,38 @@ PluginComponent {
         return hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
     }
 
+    // Generic countdown formatter for a resolved epoch-ms reset time (used by
+    // ChatGPT's windows, which arrive as unix seconds rather than Claude's ISO
+    // strings — see parseResetMs, which normalizes both to ms at parse time).
+    function formatCountdown(resetMs) {
+        void (countdownNow);
+        if (!resetMs)
+            return "";
+        var remaining = Math.max(0, resetMs - countdownNow);
+        if (remaining <= 0)
+            return tr("Resetting...");
+        var days = Math.floor(remaining / 86400000);
+        var hours = Math.floor((remaining % 86400000) / 3600000);
+        var mins = Math.floor((remaining % 3600000) / 60000);
+        if (days > 0)
+            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
+        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
+    }
+
+    // Unix-seconds strings are all-digit; ISO-8601 strings always contain a
+    // non-digit (dashes, "T", colons), so a digit-only test tells them apart.
+    function parseResetMs(val) {
+        if (!val)
+            return 0;
+        if (/^[0-9]+$/.test(val))
+            return parseFloat(val) * 1000;
+        var ms = new Date(val).getTime();
+        return isNaN(ms) ? 0 : ms;
+    }
+
+    property string chatgptPrimaryCountdown: root.formatCountdown(root.chatgptPrimaryResetMs)
+    property string chatgptSecondaryCountdown: root.formatCountdown(root.chatgptSecondaryResetMs)
+
     Timer {
         interval: 60000
         running: true
@@ -218,14 +266,18 @@ PluginComponent {
             var elapsed = now - root.countdownNow;
             root.countdownNow = now;
             // Large gap (>2min) indicates wake from sleep — force immediate refresh
-            if (elapsed > 120000 && !usageProcess.running) {
-                usageProcess.running = true;
+            if (elapsed > 120000) {
+                if (!usageProcess.running)
+                    usageProcess.running = true;
+                if (!chatgptProcess.running)
+                    chatgptProcess.running = true;
             }
         }
     }
 
-    // Script path via PluginService
+    // Script paths via PluginService
     property string scriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-claude-usage"
+    property string chatgptScriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-chatgpt-usage"
 
     popoutWidth: 380
     popoutHeight: 740
@@ -720,6 +772,41 @@ PluginComponent {
         }
     }
 
+    function parseChatgptLine(line) {
+        var idx = line.indexOf("=");
+        if (idx < 0)
+            return;
+        var key = line.substring(0, idx);
+        var val = line.substring(idx + 1);
+
+        switch (key) {
+        case "PLAN_TYPE":
+            chatgptPlanType = val;
+            break;
+        case "PRIMARY_UTIL":
+            chatgptPrimaryUtil = parseFloat(val) || 0;
+            break;
+        case "PRIMARY_RESET":
+            chatgptPrimaryResetMs = root.parseResetMs(val);
+            break;
+        case "SECONDARY_UTIL":
+            chatgptSecondaryUtil = parseFloat(val) || 0;
+            break;
+        case "SECONDARY_RESET":
+            chatgptSecondaryResetMs = root.parseResetMs(val);
+            break;
+        case "CREDITS_BALANCE":
+            chatgptCreditsBalance = parseFloat(val) || 0;
+            break;
+        case "CREDITS_HAS":
+            chatgptCreditsHas = (val === "true");
+            break;
+        case "CREDS_STATUS":
+            chatgptCredsStatus = val;
+            break;
+        }
+    }
+
     // --- Data fetching ---
 
     // Pick up an added/removed profile now instead of waiting for the refresh timer
@@ -728,6 +815,13 @@ PluginComponent {
             customProfilesRefreshPending = true;
         else
             usageProcess.running = true;
+    }
+
+    onCustomChatgptAccountsChanged: {
+        if (chatgptProcess.running)
+            chatgptAccountsRefreshPending = true;
+        else
+            chatgptProcess.running = true;
     }
 
     Process {
@@ -758,6 +852,26 @@ PluginComponent {
         }
     }
 
+    Process {
+        id: chatgptProcess
+        command: ["timeout", "120", "bash", root.chatgptScriptPath].concat(root.customChatgptAccounts.filter(a => a && a.name && a.path).map(a => a.name + "=" + a.path))
+        running: false
+
+        stdout: SplitParser {
+            onRead: data => root.parseChatgptLine(data.trim())
+        }
+
+        onExited: (exitCode, exitStatus) => {
+            if (root.chatgptAccountsRefreshPending) {
+                root.chatgptAccountsRefreshPending = false;
+                Qt.callLater(function() {
+                    if (!chatgptProcess.running)
+                        chatgptProcess.running = true;
+                });
+            }
+        }
+    }
+
     Timer {
         interval: root.refreshInterval
         running: true
@@ -766,6 +880,8 @@ PluginComponent {
         onTriggered: {
             if (!usageProcess.running)
                 usageProcess.running = true;
+            if (!chatgptProcess.running)
+                chatgptProcess.running = true;
         }
     }
 
@@ -783,6 +899,29 @@ PluginComponent {
             root.loginInProgress = false;
             if (!usageProcess.running)
                 usageProcess.running = true;
+        }
+    }
+
+    function startChatgptLogin() {
+        if (chatgptLoginProcess.running)
+            return;
+        root.chatgptLoginInProgress = true;
+        chatgptLoginProcess.running = true;
+    }
+
+    // Same spirit as loginProcess above: `codex login` is the CLI's own
+    // OAuth flow (starts a local callback server, prints/opens the browser
+    // URL) — confirmed it doesn't block on a tty when run headless. Exit
+    // code alone drives the re-fetch, same as Claude's login action.
+    Process {
+        id: chatgptLoginProcess
+        command: ["codex", "login"]
+        running: false
+
+        onExited: (exitCode, exitStatus) => {
+            root.chatgptLoginInProgress = false;
+            if (!chatgptProcess.running)
+                chatgptProcess.running = true;
         }
     }
 
@@ -832,6 +971,55 @@ PluginComponent {
                 color: root.pillOverPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
                 anchors.verticalCenter: parent.verticalCenter
             }
+
+            Rectangle {
+                width: 1
+                height: root.iconSize * 0.7
+                anchors.verticalCenter: parent.verticalCenter
+                color: Theme.outline
+                opacity: 0.5
+            }
+
+            Canvas {
+                id: hRingGpt
+                width: root.iconSize
+                height: root.iconSize
+                anchors.verticalCenter: parent.verticalCenter
+                renderStrategy: Canvas.Cooperative
+
+                property real percent: root.chatgptPrimaryUtil
+                onPercentChanged: requestPaint()
+                onWidthChanged: requestPaint()
+
+                onPaint: {
+                    var ctx = getContext("2d");
+                    ctx.reset();
+                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
+
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                    ctx.lineWidth = lw;
+                    ctx.strokeStyle = Theme.surfaceVariant;
+                    ctx.stroke();
+
+                    var pct = percent / 100;
+                    if (pct > 0) {
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
+                        ctx.lineWidth = lw;
+                        ctx.strokeStyle = root.progressColor(percent);
+                        ctx.lineCap = "round";
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            StyledText {
+                text: Math.round(root.chatgptPrimaryUtil) + "%"
+                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
+                color: Theme.surfaceText
+                anchors.verticalCenter: parent.verticalCenter
+            }
         }
     }
 
@@ -877,6 +1065,55 @@ PluginComponent {
                 text: Math.round(root.fiveHourUtil) + "%" + (root.pillOverPace ? " ↑" : "")
                 font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                 color: root.pillOverPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Rectangle {
+                width: root.iconSize * 0.7
+                height: 1
+                anchors.horizontalCenter: parent.horizontalCenter
+                color: Theme.outline
+                opacity: 0.5
+            }
+
+            Canvas {
+                id: vRingGpt
+                width: root.iconSize
+                height: root.iconSize
+                anchors.horizontalCenter: parent.horizontalCenter
+                renderStrategy: Canvas.Cooperative
+
+                property real percent: root.chatgptPrimaryUtil
+                onPercentChanged: requestPaint()
+                onWidthChanged: requestPaint()
+
+                onPaint: {
+                    var ctx = getContext("2d");
+                    ctx.reset();
+                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
+
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                    ctx.lineWidth = lw;
+                    ctx.strokeStyle = Theme.surfaceVariant;
+                    ctx.stroke();
+
+                    var pct = percent / 100;
+                    if (pct > 0) {
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
+                        ctx.lineWidth = lw;
+                        ctx.strokeStyle = root.progressColor(percent);
+                        ctx.lineCap = "round";
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            StyledText {
+                text: Math.round(root.chatgptPrimaryUtil) + "%"
+                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
+                color: Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
             }
         }
@@ -1021,17 +1258,37 @@ PluginComponent {
 
     popoutContent: Component {
         PopoutComponent {
-            headerText: root.tr("Claude Code Usage")
-            detailsText: {
-                var label = root.formatSubscription(root.displaySubscriptionType, root.displayRateLimitTier);
-                return label ? root.tr("Subscription") + ": " + label : "";
-            }
+            headerText: root.tr("AI Usage")
             showCloseButton: true
 
             Column {
                 width: parent.width - Theme.spacingM * 2
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Theme.spacingL
+
+                // --- Claude section ---
+                Column {
+                    width: parent.width
+                    spacing: 2
+
+                    StyledText {
+                        text: root.tr("Claude")
+                        font.pixelSize: Theme.fontSizeLarge
+                        font.weight: Font.Bold
+                        color: Theme.surfaceText
+                    }
+                    StyledText {
+                        width: parent.width
+                        text: {
+                            var label = root.formatSubscription(root.displaySubscriptionType, root.displayRateLimitTier);
+                            return label ? root.tr("Subscription") + ": " + label : "";
+                        }
+                        visible: text !== ""
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+                }
 
                 // --- Profile selector (tabs ≤5 entries, dropdown >5) ---
                 // Hidden when only one real profile (e.g. default only, no CCS instances)
@@ -1703,6 +1960,262 @@ PluginComponent {
                             color: Theme.surfaceVariantText
                             wrapMode: Text.WordWrap
                             anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                }
+
+                // --- ChatGPT section ---
+                Column {
+                    width: parent.width
+                    spacing: Theme.spacingL
+
+                    Column {
+                        width: parent.width
+                        spacing: 2
+
+                        StyledText {
+                            text: root.tr("ChatGPT")
+                            font.pixelSize: Theme.fontSizeLarge
+                            font.weight: Font.Bold
+                            color: Theme.surfaceText
+                        }
+                        StyledText {
+                            width: parent.width
+                            text: root.chatgptPlanType && root.chatgptPlanType !== "unknown" ? root.tr("Plan") + ": " + root.chatgptPlanType.replace(/\b\w/g, function (c) {
+                                return c.toUpperCase();
+                            }) : ""
+                            visible: text !== ""
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    // --- Credentials unavailable: login action ---
+                    StyledRect {
+                        width: parent.width
+                        height: chatgptCredsWarningContent.implicitHeight + Theme.spacingM * 2
+                        visible: root.chatgptCredsStatus === "missing" || root.chatgptCredsStatus === "expired"
+                        color: Theme.surfaceContainerHigh
+                        border.width: 1
+                        border.color: Theme.error || Theme.primary
+
+                        Row {
+                            id: chatgptCredsWarningContent
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingM
+
+                            Column {
+                                width: parent.width - chatgptLoginButton.width - parent.spacing
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingXS
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.chatgptCredsStatus === "missing" ? root.tr("Not logged in") : root.tr("Session expired")
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.tr("Usage data unavailable until you log in.")
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+
+                            Rectangle {
+                                id: chatgptLoginButton
+                                width: chatgptLoginButtonLabel.implicitWidth + Theme.spacingM * 2
+                                height: 32
+                                radius: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: Theme.primary
+                                opacity: root.chatgptLoginInProgress ? 0.6 : 1
+
+                                StyledText {
+                                    id: chatgptLoginButtonLabel
+                                    anchors.centerIn: parent
+                                    text: root.chatgptLoginInProgress ? root.tr("Logging in…") : root.tr("Log in")
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    font.weight: Font.Medium
+                                    color: Theme.primaryText
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: !root.chatgptLoginInProgress
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.startChatgptLogin()
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Primary window card ---
+                    StyledRect {
+                        width: parent.width
+                        height: chatgptPrimaryContent.implicitHeight + Theme.spacingS * 2
+                        color: Theme.surfaceContainerHigh
+
+                        Row {
+                            id: chatgptPrimaryContent
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingS
+                            spacing: Theme.spacingM
+
+                            Canvas {
+                                id: chatgptPrimaryRing
+                                width: 100
+                                height: 100
+                                anchors.verticalCenter: parent.verticalCenter
+                                renderStrategy: Canvas.Cooperative
+
+                                property real percent: root.chatgptPrimaryUtil
+                                onPercentChanged: requestPaint()
+
+                                onPaint: {
+                                    var ctx = getContext("2d");
+                                    ctx.reset();
+                                    var cx = width / 2, cy = height / 2, r = 38, lw = 8;
+
+                                    ctx.beginPath();
+                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                                    ctx.lineWidth = lw;
+                                    ctx.strokeStyle = Theme.surfaceVariant;
+                                    ctx.stroke();
+
+                                    var pct = percent / 100;
+                                    if (pct > 0) {
+                                        ctx.beginPath();
+                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
+                                        ctx.lineWidth = lw;
+                                        ctx.strokeStyle = root.progressColor(percent);
+                                        ctx.lineCap = "round";
+                                        ctx.stroke();
+                                    }
+                                }
+
+                                StyledText {
+                                    anchors.centerIn: parent
+                                    text: Math.round(root.chatgptPrimaryUtil) + "%"
+                                    font.pixelSize: Theme.fontSizeXLarge
+                                    font.weight: Font.DemiBold
+                                    color: Theme.surfaceText
+                                }
+                            }
+
+                            Column {
+                                width: Math.max(0, parent.width - chatgptPrimaryRing.width - parent.spacing)
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingS
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.tr("Primary Window")
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: Math.round(root.chatgptPrimaryUtil) + "% " + root.tr("used")
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: root.progressColor(root.chatgptPrimaryUtil)
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.chatgptPrimaryCountdown ? root.tr("Resets in") + " " + root.chatgptPrimaryCountdown : ""
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: Theme.surfaceVariantText
+                                    visible: root.chatgptPrimaryCountdown !== ""
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Secondary window card ---
+                    StyledRect {
+                        width: parent.width
+                        height: chatgptSecondaryContent.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+
+                        Row {
+                            id: chatgptSecondaryContent
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingM
+
+                            Canvas {
+                                id: chatgptSecondaryRing
+                                width: 72
+                                height: 72
+                                anchors.verticalCenter: parent.verticalCenter
+                                renderStrategy: Canvas.Cooperative
+
+                                property real percent: root.chatgptSecondaryUtil
+                                onPercentChanged: requestPaint()
+
+                                onPaint: {
+                                    var ctx = getContext("2d");
+                                    ctx.reset();
+                                    var cx = width / 2, cy = height / 2, r = 28, lw = 6;
+
+                                    ctx.beginPath();
+                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                                    ctx.lineWidth = lw;
+                                    ctx.strokeStyle = Theme.surfaceVariant;
+                                    ctx.stroke();
+
+                                    var pct = percent / 100;
+                                    if (pct > 0) {
+                                        ctx.beginPath();
+                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
+                                        ctx.lineWidth = lw;
+                                        ctx.strokeStyle = root.progressColor(percent);
+                                        ctx.lineCap = "round";
+                                        ctx.stroke();
+                                    }
+                                }
+
+                                StyledText {
+                                    anchors.centerIn: parent
+                                    text: Math.round(root.chatgptSecondaryUtil) + "%"
+                                    font.pixelSize: 14
+                                    font.weight: Font.DemiBold
+                                    color: Theme.surfaceText
+                                }
+                            }
+
+                            Column {
+                                width: Math.max(0, parent.width - chatgptSecondaryRing.width - parent.spacing)
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingXS
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.tr("Secondary Window") + " · " + Math.round(root.chatgptSecondaryUtil) + "%"
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.chatgptSecondaryCountdown ? root.tr("Resets in") + " " + root.chatgptSecondaryCountdown : ""
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    visible: root.chatgptSecondaryCountdown !== ""
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
                         }
                     }
                 }
