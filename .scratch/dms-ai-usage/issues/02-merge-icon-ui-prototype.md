@@ -30,3 +30,7 @@ Design implications for [Build widget](06-build-widget.md):
 - Popout: two stacked sections, each with its own header (`Claude`, `ChatGPT`) and its own set of window cards (5h/7d for Claude, primary/secondary for ChatGPT) — both always rendered, no tab/profile-style switching between Sources.
 - Existing Claude-only cards (pacing, cost, profile breakdown, daily chart) stay under the Claude section, unchanged; ChatGPT's section only needs its window cards for now (no equivalent pacing/cost UI exists for it).
 - Unavailable-Source state (ticket 4's login action) renders as its own card within that Source's section, not a separate global state — matches the "unavailable" card style prototyped in variant B/C.
+
+## Amendment (post-ticket-7)
+
+After using the real widget on this machine's actual screen, variant B's "always both sections stacked" popout proved too tall. **Pill stays B** (dual-ring, both always visible, no change), but the **popout adopts A's tab-strip idea**: a Claude/ChatGPT tab row at the top of the popout, only the selected Source's cards render below it. Implemented directly in `ClaudeCodeUsageWidget.qml` (`popoutSourceTab` property, defaults to "claude"; each section's existing Column got a `visible: root.popoutSourceTab === "..."` binding rather than a redesign of the cards themselves). Verified via `qmllint` (clean) and a live `dms restart` (plugin loads with no QML errors). No settings persistence for the tab choice — matches how `selectedProfile` already resets per session.
