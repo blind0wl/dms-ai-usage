@@ -102,18 +102,26 @@ count_account_tokens() {
         day_dates="${day_dates:+${day_dates},}${d}"
     done
 
+    # -R + fromjson? (rather than -n's default structured `inputs`, which
+    # aborts the entire batch of files on the first unparseable line, e.g.
+    # a rollout truncated mid-write) so one bad line only drops that line.
     find "$sessions_dir" -name "*.jsonl" -mtime -31 -print0 2>/dev/null \
-        | xargs -0 -r jq -n -r "
-            foreach inputs as \$item (
+        | xargs -0 -r jq -n -R -r "
+            foreach inputs as \$line (
                 {model:\"unknown\", file:null};
-                (input_filename) as \$f
-                | (if \$f != .file then {model:\"unknown\", file:\$f} else {model:.model, file:.file} end) as \$carry
-                | if \$item.type == \"turn_context\" then
-                    \$carry + {model: (\$item.payload.model // \$carry.model), emit: {k:\"turn\", ts:\$item.timestamp, model:(\$item.payload.model // \$carry.model), file:\$carry.file}}
-                  elif \$item.type == \"event_msg\" and \$item.payload.type == \"token_count\" then
-                    \$carry + {emit: {k:\"tok\", ts:\$item.timestamp, model:\$carry.model, tokens:(\$item.payload.info.last_token_usage.total_tokens // 0), file:\$carry.file}}
+                (try (\$line | fromjson) catch null) as \$item
+                | if \$item == null then
+                    . + {emit:null}
                   else
-                    \$carry + {emit:null}
+                    (input_filename) as \$f
+                    | (if \$f != .file then {model:\"unknown\", file:\$f} else {model:.model, file:.file} end) as \$carry
+                    | if \$item.type == \"turn_context\" then
+                        \$carry + {model: (\$item.payload.model // \$carry.model), emit: {k:\"turn\", ts:\$item.timestamp, model:(\$item.payload.model // \$carry.model), file:\$carry.file}}
+                      elif \$item.type == \"event_msg\" and \$item.payload.type == \"token_count\" then
+                        \$carry + {emit: {k:\"tok\", ts:\$item.timestamp, model:\$carry.model, tokens:(\$item.payload.info.last_token_usage.total_tokens // 0), file:\$carry.file}}
+                      else
+                        \$carry + {emit:null}
+                      end
                   end;
                 .emit
             )
