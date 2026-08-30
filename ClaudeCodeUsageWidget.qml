@@ -57,6 +57,22 @@ PluginComponent {
     property string chatgptCredsStatus: "unknown"
     property bool chatgptLoginInProgress: false
 
+    // ChatGPT token/model stats — from local ~/.codex/sessions/**/*.jsonl
+    // rollout files (get-chatgpt-usage's count_account_tokens), mirroring
+    // Claude's JSONL-derived stats below. No cost estimate: unlike Claude's
+    // LiteLLM-backed pricing cache, there's no reliable public price list for
+    // Codex/OpenAI models to build one from.
+    property int chatgptWeekMessages: 0
+    property int chatgptWeekSessions: 0
+    property real chatgptWeekTokens: 0
+    property real chatgptMonthTokens: 0
+    property var chatgptDailyTokens: [0, 0, 0, 0, 0, 0, 0]
+    property int chatgptHoveredDay: -1
+
+    ListModel {
+        id: chatgptModelListData
+    }
+
     // Weekly state
     property int weekMessages: 0
     property int weekSessions: 0
@@ -195,6 +211,7 @@ PluginComponent {
 
     // Derived
     property real maxDaily: Math.max.apply(null, dailyTokens) || 1
+    property real chatgptMaxDaily: Math.max.apply(null, chatgptDailyTokens) || 1
     property bool isLoading: true
     property bool loginInProgress: false
 
@@ -807,6 +824,39 @@ PluginComponent {
             break;
         case "CREDS_STATUS":
             chatgptCredsStatus = val;
+            break;
+        case "WEEK_TOKENS":
+            chatgptWeekTokens = parseFloat(val) || 0;
+            break;
+        case "WEEK_MESSAGES":
+            chatgptWeekMessages = parseInt(val) || 0;
+            break;
+        case "WEEK_SESSIONS":
+            chatgptWeekSessions = parseInt(val) || 0;
+            break;
+        case "MONTH_TOKENS":
+            chatgptMonthTokens = parseFloat(val) || 0;
+            break;
+        case "DAILY":
+            var cgParts = val.split(",");
+            var cgArr = [];
+            for (var cgi = 0; cgi < 7; cgi++)
+                cgArr.push(cgi < cgParts.length ? (parseFloat(cgParts[cgi]) || 0) : 0);
+            chatgptDailyTokens = cgArr;
+            break;
+        case "WEEK_MODELS":
+            chatgptModelListData.clear();
+            if (val.length > 0) {
+                var cgwmpairs = val.split(",");
+                for (var cgwmi = 0; cgwmi < cgwmpairs.length; cgwmi++) {
+                    var cgwmeq = cgwmpairs[cgwmi].indexOf("=");
+                    if (cgwmeq >= 0)
+                        chatgptModelListData.append({
+                            modelName: cgwmpairs[cgwmi].substring(0, cgwmeq),
+                            modelTokens: parseInt(cgwmpairs[cgwmi].substring(cgwmeq + 1)) || 0
+                        });
+                }
+            }
             break;
         }
     }
@@ -2266,6 +2316,270 @@ PluginComponent {
                                     color: Theme.surfaceVariantText
                                     visible: root.chatgptSecondaryCountdown !== ""
                                     wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Token Consumption card (from local session files) ---
+                    StyledRect {
+                        width: parent.width
+                        height: chatgptConsumptionCol.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+
+                        Column {
+                            id: chatgptConsumptionCol
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingM
+
+                            StyledText {
+                                text: root.tr("Token Consumption")
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                            }
+
+                            Row {
+                                width: parent.width
+
+                                Column {
+                                    width: parent.width / 3
+                                    spacing: 4
+
+                                    StyledText {
+                                        text: root.tr("Week")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                    StyledText {
+                                        text: root.formatTokens(root.chatgptWeekTokens)
+                                        font.pixelSize: Theme.fontSizeLarge
+                                        font.weight: Font.DemiBold
+                                        color: Theme.primary
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                }
+
+                                Column {
+                                    width: parent.width / 3
+                                    spacing: 4
+
+                                    StyledText {
+                                        text: root.tr("Month")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                    StyledText {
+                                        text: root.formatTokens(root.chatgptMonthTokens)
+                                        font.pixelSize: Theme.fontSizeLarge
+                                        font.weight: Font.DemiBold
+                                        color: Theme.surfaceText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                }
+
+                                Column {
+                                    width: parent.width / 3
+                                    spacing: 4
+
+                                    StyledText {
+                                        text: root.tr("This Week")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                    StyledText {
+                                        text: root.chatgptWeekSessions + " " + root.tr("sessions")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.weight: Font.DemiBold
+                                        color: Theme.surfaceText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                    StyledText {
+                                        text: root.chatgptWeekMessages + " " + root.tr("msgs")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Daily activity card ---
+                    StyledRect {
+                        width: parent.width
+                        height: chatgptDailyCol.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+
+                        Column {
+                            id: chatgptDailyCol
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingS
+
+                            StyledText {
+                                text: root.tr("Daily Activity")
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                            }
+
+                            Item {
+                                width: parent.width
+                                height: 70
+
+                                Row {
+                                    id: chatgptChartRow
+                                    anchors.fill: parent
+                                    spacing: 4
+
+                                    Repeater {
+                                        model: 7
+                                        delegate: Column {
+                                            width: (chatgptChartRow.width - 6 * 4) / 7
+                                            height: chatgptChartRow.height
+                                            spacing: 2
+
+                                            Item {
+                                                width: parent.width
+                                                height: parent.height - chatgptDayLabel.height - 2
+
+                                                Rectangle {
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.horizontalCenter: parent.horizontalCenter
+                                                    width: Math.max(parent.width - 4, 4)
+                                                    height: root.chatgptMaxDaily > 0 ? Math.max(root.chatgptDailyTokens[index] / root.chatgptMaxDaily * parent.height, root.chatgptDailyTokens[index] > 0 ? 3 : 0) : 0
+                                                    radius: 2
+                                                    color: index === root.todayIndex ? Theme.primary : Theme.surfaceVariant
+                                                    opacity: root.chatgptHoveredDay >= 0 && index !== root.chatgptHoveredDay ? 0.4 : 1.0
+
+                                                    Behavior on opacity {
+                                                        NumberAnimation {
+                                                            duration: 120
+                                                        }
+                                                    }
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    enabled: root.chatgptDailyTokens[index] > 0
+                                                    onEntered: root.chatgptHoveredDay = index
+                                                    onExited: root.chatgptHoveredDay = -1
+                                                }
+                                            }
+
+                                            StyledText {
+                                                id: chatgptDayLabel
+                                                text: root.dayLabels[index]
+                                                font.pixelSize: 11
+                                                color: index === root.chatgptHoveredDay ? Theme.primary : index === root.todayIndex ? Theme.primary : Theme.surfaceVariantText
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            id: chatgptChartTooltip
+                            visible: root.chatgptHoveredDay >= 0 && root.chatgptDailyTokens[root.chatgptHoveredDay] > 0
+                            z: 10
+
+                            x: {
+                                var colW = (chatgptChartRow.width - 6 * 4) / 7;
+                                var cx = root.chatgptHoveredDay * (colW + 4) + colW / 2 - width / 2;
+                                var chartX = chatgptChartRow.mapToItem(chatgptChartTooltip.parent, 0, 0).x;
+                                var raw = chartX + cx;
+                                return Math.max(Theme.spacingM, Math.min(raw, parent.width - width - Theme.spacingM));
+                            }
+                            y: {
+                                var chartY = chatgptChartRow.mapToItem(chatgptChartTooltip.parent, 0, 0).y;
+                                return chartY - height - 2;
+                            }
+
+                            width: chatgptTooltipText.implicitWidth + Theme.spacingS * 2
+                            height: chatgptTooltipText.implicitHeight + Theme.spacingXS * 2
+                            radius: 4
+                            color: Theme.surfaceContainer
+
+                            StyledText {
+                                id: chatgptTooltipText
+                                anchors.centerIn: parent
+                                text: root.chatgptHoveredDay >= 0 ? root.formatTokens(root.chatgptDailyTokens[root.chatgptHoveredDay]) : ""
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                                color: Theme.surfaceText
+                            }
+                        }
+                    }
+
+                    // --- Model breakdown card ---
+                    StyledRect {
+                        width: parent.width
+                        height: chatgptModelCardCol.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+                        visible: chatgptModelListData.count > 0
+
+                        Column {
+                            id: chatgptModelCardCol
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingS
+
+                            StyledText {
+                                text: root.tr("Models This Week")
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                            }
+
+                            Column {
+                                id: chatgptModelCol
+                                width: parent.width
+                                spacing: Theme.spacingS
+
+                                Repeater {
+                                    model: chatgptModelListData
+                                    delegate: Column {
+                                        width: chatgptModelCol.width
+                                        spacing: 3
+
+                                        Row {
+                                            width: parent.width
+                                            spacing: Theme.spacingXS
+
+                                            StyledText {
+                                                text: root.shortModelName(modelName)
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceText
+                                            }
+                                            StyledText {
+                                                text: root.formatTokens(modelTokens)
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceVariantText
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width
+                                            height: 4
+                                            radius: 2
+                                            color: Theme.surfaceVariant
+
+                                            Rectangle {
+                                                width: root.chatgptWeekTokens > 0 ? parent.width * Math.min(modelTokens / root.chatgptWeekTokens, 1) : 0
+                                                height: parent.height
+                                                radius: 2
+                                                color: Theme.primary
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
