@@ -1511,8 +1511,10 @@ PluginComponent {
 
                                     // When model is a ListModel, role names are direct properties.
                                     // When model is a JS array, values are accessed via modelData.
+                                    // `real`, not `int`: a weekly per-model total passes the signed
+                                    // 32-bit range (2.1B tokens), and `int` wraps it negative.
                                     property string _modelName: modelListData === modelRepeater.model ? modelName : (modelData ? modelData.modelName : "")
-                                    property int _modelTokens: modelListData === modelRepeater.model ? modelTokens : (modelData ? (modelData.modelTokens || 0) : 0)
+                                    property real _modelTokens: modelListData === modelRepeater.model ? modelTokens : (modelData ? (modelData.modelTokens || 0) : 0)
 
                                     Row {
                                         width: parent.width
