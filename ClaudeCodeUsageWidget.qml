@@ -552,13 +552,25 @@ PluginComponent {
         return "";
     }
 
+    // Common install locations for CLIs installed via nvm/npm/cargo/etc, not
+    // covered by Quickshell's own (bare `/usr/local/bin:/usr/bin`) PATH — the
+    // same set the get-claude-usage/get-chatgpt-usage scripts already widen
+    // PATH with. The login commands below run via `bash -c` with this same
+    // widening so `claude`/`codex` resolve regardless of where they're
+    // installed, instead of relying on Quickshell's minimal inherited PATH.
+    readonly property string cliSearchPathAdditions: "$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/bin:$HOME/go/bin:$HOME/.cargo/bin:$HOME/.volta/bin:$HOME/.claude/local"
+
+    // Single-quotes a string for safe use inside a `bash -c '...'` argument.
+    function shellQuote(s) {
+        return "'" + String(s).replace(/'/g, "'\\''") + "'";
+    }
+
     function startLogin(profileName) {
         if (loginProcess.running)
             return;
         var dir = root.configDirForProfile(profileName);
-        loginProcess.environment = dir ? {
-            "CLAUDE_CONFIG_DIR": dir
-        } : ({});
+        var envPrefix = dir ? "CLAUDE_CONFIG_DIR=" + root.shellQuote(dir) + " " : "";
+        loginProcess.command = ["bash", "-c", envPrefix + "PATH=\"$PATH:" + root.cliSearchPathAdditions + "\" exec claude auth login --claudeai"];
         root.loginInProgress = true;
         loginProcess.running = true;
     }
@@ -1044,9 +1056,13 @@ PluginComponent {
     // No stdout pattern-matching for a "success" marker: the CLI's login flow
     // exits 0 on success and non-zero on failure/cancel, so exit code alone
     // is enough to decide whether to re-fetch usage.
+    // `command` is set (with PATH widened) by startLogin() below, not here —
+    // Quickshell's own PATH is a bare `/usr/local/bin:/usr/bin` and won't
+    // find a `claude` installed under ~/.local/bin, ~/.npm-global/bin, etc,
+    // which left this Process failing to spawn and the button stuck on
+    // "Logging in…" forever (no exit ever fires to clear loginInProgress).
     Process {
         id: loginProcess
-        command: ["claude", "auth", "login", "--claudeai"]
         running: false
 
         onExited: (exitCode, exitStatus) => {
@@ -1067,9 +1083,12 @@ PluginComponent {
     // OAuth flow (starts a local callback server, prints/opens the browser
     // URL) — confirmed it doesn't block on a tty when run headless. Exit
     // code alone drives the re-fetch, same as Claude's login action.
+    // Routed through `bash -c` with PATH widened for the same reason as
+    // loginProcess above — `codex` is typically under ~/.npm-global/bin,
+    // which isn't on Quickshell's own PATH.
     Process {
         id: chatgptLoginProcess
-        command: ["codex", "login"]
+        command: ["bash", "-c", "PATH=\"$PATH:" + root.cliSearchPathAdditions + "\" exec codex login"]
         running: false
 
         onExited: (exitCode, exitStatus) => {
