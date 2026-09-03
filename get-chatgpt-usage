@@ -34,6 +34,9 @@ WEEK_SESSIONS=0
 MONTH_TOKENS=0
 DAILY=0,0,0,0,0,0,0
 WEEK_MODELS=
+ALLTIME_SESSIONS=0
+ALLTIME_MESSAGES=0
+FIRST_SESSION=unknown
 ACCOUNTS=
 ACCOUNT_PLAN=
 ACCOUNT_PRIMARY_UTIL=
@@ -173,6 +176,46 @@ count_account_tokens() {
 
     # Defaults if the pipeline produced nothing (no session files, jq/awk failure)
     [ -s "$out_file" ] || printf 'WEEK_TOKENS=0\nWEEK_MESSAGES=0\nWEEK_SESSIONS=0\nMONTH_TOKENS=0\nDAILY=0,0,0,0,0,0,0\nWEEK_MODELS=\n' > "$out_file"
+}
+
+# --- Per-account all-time stats from local rollout session files ---
+# Usage: count_account_alltime <sessions_dir> <out_tmpfile>
+# Writes ALLTIME_SESSIONS, ALLTIME_MESSAGES, FIRST_SESSION to out_tmpfile.
+# Mirrors get-claude-usage's ALLTIME_SESSIONS/ALLTIME_MESSAGES/FIRST_SESSION,
+# which there come cheaply from the CLI's own stats-cache.json — Codex has no
+# equivalent pre-computed cache, so this scans every rollout file (unlike
+# count_account_tokens above, which caps its scan at 31 days for the
+# weekly/monthly figures).
+count_account_alltime() {
+    local sessions_dir="$1"
+    local out_file="$2"
+
+    local alltime_sessions=0 alltime_messages=0 first_session="unknown"
+
+    # Rollout filenames embed the session's start time
+    # (rollout-YYYY-MM-DDTHH-MM-SS-<uuid>.jsonl), so the lexicographically
+    # earliest filename is also the earliest session — no need to open any
+    # file just to find the first date.
+    local earliest_file
+    earliest_file=$(find "$sessions_dir" -name "rollout-*.jsonl" 2>/dev/null | sort | head -1)
+    if [ -n "$earliest_file" ]; then
+        local base="${earliest_file##*/}"
+        case "$base" in
+            rollout-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) first_session="${base#rollout-}"; first_session="${first_session%%T*}" ;;
+        esac
+    fi
+
+    alltime_sessions=$(find "$sessions_dir" -name "*.jsonl" 2>/dev/null | wc -l | tr -d ' ')
+
+    # One `turn_context` event per turn, same definition WEEK_MESSAGES above
+    # uses — a plain grep (rather than jq) is enough since rollout lines are
+    # written compact/unspaced, and it's far cheaper across full history.
+    alltime_messages=$(find "$sessions_dir" -name "*.jsonl" -print0 2>/dev/null \
+        | xargs -0 -r grep -c '"type":"turn_context"' 2>/dev/null \
+        | awk -F: '{sum += $NF} END {print sum+0}')
+
+    printf 'ALLTIME_SESSIONS=%s\nALLTIME_MESSAGES=%s\nFIRST_SESSION=%s\n' \
+        "$alltime_sessions" "${alltime_messages:-0}" "$first_session" > "$out_file"
 }
 
 # --- Per-account credentials + usage fetcher ---
@@ -315,16 +358,21 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 
 USAGE_TMPFILES=()
 TOKENS_TMPFILES=()
+ALLTIME_TMPFILES=()
 PIDS=()
 
 for idx in "${!ACCOUNT_DIRS[@]}"; do
     usage_tmpf=$(mktemp "$TMPDIR_ROOT/account_XXXXXX")
     tokens_tmpf=$(mktemp "$TMPDIR_ROOT/tokens_XXXXXX")
+    alltime_tmpf=$(mktemp "$TMPDIR_ROOT/alltime_XXXXXX")
     USAGE_TMPFILES+=("$usage_tmpf")
     TOKENS_TMPFILES+=("$tokens_tmpf")
+    ALLTIME_TMPFILES+=("$alltime_tmpf")
     fetch_account_usage "${ACCOUNT_DIRS[$idx]}" "$usage_tmpf" &
     PIDS+=("$!")
     count_account_tokens "${ACCOUNT_DIRS[$idx]}/sessions" "$tokens_tmpf" &
+    PIDS+=("$!")
+    count_account_alltime "${ACCOUNT_DIRS[$idx]}/sessions" "$alltime_tmpf" &
     PIDS+=("$!")
 done
 
@@ -349,6 +397,9 @@ WEEK_SESSIONS=0
 MONTH_TOKENS=0
 DAILY="0,0,0,0,0,0,0"
 WEEK_MODELS=""
+ALLTIME_SESSIONS=0
+ALLTIME_MESSAGES=0
+FIRST_SESSION="unknown"
 
 ACCOUNT_PLAN_LIST=""
 ACCOUNT_PRIMARY_UTIL_LIST=""
@@ -369,6 +420,7 @@ DAILY_ARR=(0 0 0 0 0 0 0)
 for idx in "${!USAGE_TMPFILES[@]}"; do
     usage_tmpf="${USAGE_TMPFILES[$idx]}"
     tokens_tmpf="${TOKENS_TMPFILES[$idx]}"
+    alltime_tmpf="${ALLTIME_TMPFILES[$idx]}"
     aname="${ACCOUNT_NAMES[$idx]}"
     [ -f "$usage_tmpf" ] || continue
 
@@ -398,6 +450,13 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
         a_models=$(grep "^WEEK_MODELS=" "$tokens_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
     fi
 
+    a_as=0; a_am=0; a_fs="unknown"
+    if [ -f "$alltime_tmpf" ]; then
+        a_as=$(grep "^ALLTIME_SESSIONS=" "$alltime_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+        a_am=$(grep "^ALLTIME_MESSAGES=" "$alltime_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+        a_fs=$(grep "^FIRST_SESSION=" "$alltime_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
+    fi
+
     if [ "$aname" = "default" ]; then
         PLAN_TYPE="$a_plan"
         PRIMARY_UTIL="$a_pu"
@@ -416,6 +475,11 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     WEEK_MESSAGES=$(( WEEK_MESSAGES + a_wm ))
     WEEK_SESSIONS=$(( WEEK_SESSIONS + a_ws ))
     MONTH_TOKENS=$(( MONTH_TOKENS + a_mt ))
+    ALLTIME_SESSIONS=$(( ALLTIME_SESSIONS + a_as ))
+    ALLTIME_MESSAGES=$(( ALLTIME_MESSAGES + a_am ))
+    if [ "$a_fs" != "unknown" ] && { [ "$FIRST_SESSION" = "unknown" ] || [[ "$a_fs" < "$FIRST_SESSION" ]]; }; then
+        FIRST_SESSION="$a_fs"
+    fi
 
     DAILY=$(echo "$a_daily" | awk -v cur="$(IFS=,; echo "${DAILY_ARR[*]}")" '
         BEGIN { split(cur, a, ",") }
@@ -438,7 +502,7 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     ACCOUNT_DAILY_LIST="${ACCOUNT_DAILY_LIST:+${ACCOUNT_DAILY_LIST}|}${aname}:${a_daily}"
     ACCOUNT_WEEK_MODELS_LIST="${ACCOUNT_WEEK_MODELS_LIST:+${ACCOUNT_WEEK_MODELS_LIST}|}${aname}:${a_models}"
 
-    rm -f "$usage_tmpf" "$tokens_tmpf"
+    rm -f "$usage_tmpf" "$tokens_tmpf" "$alltime_tmpf"
 done
 
 ACCOUNTS=$(IFS=,; echo "${ACCOUNT_NAMES[*]}")
@@ -462,6 +526,9 @@ echo "WEEK_SESSIONS=${WEEK_SESSIONS}"
 echo "MONTH_TOKENS=${MONTH_TOKENS}"
 echo "DAILY=${DAILY}"
 echo "WEEK_MODELS=${WEEK_MODELS}"
+echo "ALLTIME_SESSIONS=${ALLTIME_SESSIONS}"
+echo "ALLTIME_MESSAGES=${ALLTIME_MESSAGES}"
+echo "FIRST_SESSION=${FIRST_SESSION}"
 echo "ACCOUNTS=${ACCOUNTS}"
 echo "ACCOUNT_PLAN=${ACCOUNT_PLAN_LIST}"
 echo "ACCOUNT_PRIMARY_UTIL=${ACCOUNT_PRIMARY_UTIL_LIST}"

@@ -120,6 +120,9 @@ PluginComponent {
     property real chatgptMonthTokens: 0
     property var chatgptDailyTokens: [0, 0, 0, 0, 0, 0, 0]
     property int chatgptHoveredDay: -1
+    property int chatgptAlltimeSessions: 0
+    property int chatgptAlltimeMessages: 0
+    property string chatgptFirstSession: ""
 
     ListModel {
         id: chatgptModelListData
@@ -965,6 +968,15 @@ PluginComponent {
                         });
                 }
             }
+            break;
+        case "ALLTIME_SESSIONS":
+            chatgptAlltimeSessions = parseInt(val) || 0;
+            break;
+        case "ALLTIME_MESSAGES":
+            chatgptAlltimeMessages = parseInt(val) || 0;
+            break;
+        case "FIRST_SESSION":
+            chatgptFirstSession = val;
             break;
         }
     }
@@ -2739,6 +2751,45 @@ PluginComponent {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // --- All-time footer card ---
+                    StyledRect {
+                        width: parent.width
+                        height: chatgptAllTimeRow.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+                        visible: root.chatgptAlltimeSessions > 0 || root.chatgptAlltimeMessages > 0
+
+                        Row {
+                            id: chatgptAllTimeRow
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingS
+
+                            DankIcon {
+                                id: chatgptAllTimeIcon
+                                name: "calendar_today"
+                                size: 14
+                                color: Theme.surfaceVariantText
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+
+                            StyledText {
+                                width: Math.max(0, parent.width - chatgptAllTimeIcon.width - parent.spacing)
+                                text: {
+                                    var parts = [];
+                                    if (root.chatgptFirstSession && root.chatgptFirstSession !== "unknown")
+                                        parts.push(root.tr("Since") + " " + root.chatgptFirstSession);
+                                    parts.push(root.chatgptAlltimeSessions + " " + root.tr("sessions"));
+                                    parts.push(root.chatgptAlltimeMessages.toLocaleString() + " " + root.tr("msgs"));
+                                    return parts.join("  ·  ");
+                                }
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceVariantText
+                                wrapMode: Text.WordWrap
+                                anchors.verticalCenter: parent.verticalCenter
                             }
                         }
                     }
