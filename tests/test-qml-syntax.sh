@@ -47,6 +47,19 @@ for f in $QML_FILES; do
     fi
 done
 
+echo "=== Test 4: Token counts are not declared as 32-bit int ==="
+for f in $QML_FILES; do
+    name=$(basename "$f")
+    # QML `int` is signed 32-bit, so it wraps negative past 2147483647. A weekly
+    # per-model token total passes that, so token properties must be `real`.
+    if grep -qE '^[[:space:]]*property[[:space:]]+int[[:space:]]+[A-Za-z_]*[Tt]okens' "$f"; then
+        grep -nE '^[[:space:]]*property[[:space:]]+int[[:space:]]+[A-Za-z_]*[Tt]okens' "$f" >&2
+        fail "$name declares a token count as int (wraps negative past 2.1B)"
+    else
+        pass "$name declares token counts as real"
+    fi
+done
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
