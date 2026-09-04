@@ -55,7 +55,6 @@ fi
 STALE_REFRESH_DAYS=8
 STALE_EXP_SECONDS=300  # 5 minutes, mirrors CodexBar's own staleness rule
 
-TODAY=$(date +%Y-%m-%d)
 # Calendar week: Monday to Sunday
 DOW=$(date +%u)  # 1=Monday, 7=Sunday
 WEEK_START=$(date -d "$((DOW - 1)) days ago" +%Y-%m-%d)
