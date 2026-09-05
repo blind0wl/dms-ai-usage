@@ -385,6 +385,22 @@ PluginComponent {
                     usageProcess.running = true;
                 if (root.enableChatgpt && !chatgptProcess.running)
                     chatgptProcess.running = true;
+            } else {
+                // A window's reset time has just passed locally — don't sit on
+                // "Resetting..." until the next scheduled poll, fetch the new
+                // resets_at right away.
+                if (root.enableClaude && !usageProcess.running) {
+                    var fiveExpired = root.fiveHourReset && new Date(root.fiveHourReset).getTime() <= now;
+                    var sevenExpired = root.sevenDayReset && new Date(root.sevenDayReset).getTime() <= now;
+                    if (fiveExpired || sevenExpired)
+                        usageProcess.running = true;
+                }
+                if (root.enableChatgpt && !chatgptProcess.running) {
+                    var primaryExpired = root.chatgptPrimaryResetMs && root.chatgptPrimaryResetMs <= now;
+                    var secondaryExpired = root.chatgptSecondaryResetMs && root.chatgptSecondaryResetMs <= now;
+                    if (primaryExpired || secondaryExpired)
+                        chatgptProcess.running = true;
+                }
             }
         }
     }
