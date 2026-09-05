@@ -254,8 +254,9 @@ fetch_profile_usage() {
     # Check cache freshness
     local api_resp="{}"
     local use_cache=false cache_matches=false
+    local rate_limited_until=0 now_ts age=999999999
     if [ -f "$cache_file" ]; then
-        local cache_identity cache_ts now_ts age
+        local cache_identity cache_ts
         cache_identity=$(jq -r '.identity // ""' "$cache_file" 2>/dev/null | head -1)
         [ "$cache_identity" = "$creds_file" ] && cache_matches=true
 
@@ -268,9 +269,27 @@ fetch_profile_usage() {
         now_ts=$(date +%s)
         age=$(( now_ts - cache_ts ))
         [ "$cache_matches" = true ] && [ "$age" -lt "$USAGE_CACHE_TTL" ] && use_cache=true
+
+        # The oauth/usage endpoint hands out a Retry-After on 429 that can run
+        # well past our own poll interval (observed anywhere from ~15min to
+        # over an hour). Respect it: skip the live call entirely until it
+        # elapses, instead of re-hitting an endpoint that's already asked for
+        # backoff on every single refresh.
+        if [ "$cache_matches" = true ]; then
+            local ru
+            ru=$(jq -r '.rate_limited_until // 0' "$cache_file" 2>/dev/null | head -1)
+            [[ "$ru" =~ ^[0-9]+$ ]] || ru=0
+            rate_limited_until="$ru"
+        fi
     fi
+    now_ts="${now_ts:-$(date +%s)}"
 
     if [ "$use_cache" = true ]; then
+        api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
+    elif [ "$cache_matches" = true ] && [ "$now_ts" -lt "$rate_limited_until" ] && [ "$age" -lt "$USAGE_CACHE_STALE_FALLBACK_TTL" ]; then
+        # Still inside the endpoint's requested backoff window — serve the
+        # cache (subject to the same staleness cap as the failure path below)
+        # rather than retry a call we already know will be refused.
         api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
     else
         local token
@@ -295,7 +314,8 @@ fetch_profile_usage() {
                 timeout 15 claude doctor >/dev/null 2>&1 || true
                 token=$(jq -r '.claudeAiOauth.accessToken // ""' "$creds_file" 2>/dev/null || echo "$token")
             fi
-            api_resp=$(curl -s --max-time 5 \
+            local header_tmp="${TMPDIR_ROOT}/usage-headers.$$.tmp"
+            api_resp=$(curl -s --max-time 5 -D "$header_tmp" \
                 -H "Authorization: Bearer $token" \
                 -H "Accept: application/json" \
                 -H "Content-Type: application/json" \
@@ -309,18 +329,42 @@ fetch_profile_usage() {
                 # output into corrupt JSON. Write to a per-PID temp then rename.
                 local cache_tmp="${cache_file}.$$.tmp"
                 if jq -n --arg identity "$creds_file" --argjson data "$api_resp" \
-                    '{cached_at: (now | floor), identity: $identity, data: $data}' > "$cache_tmp" 2>/dev/null; then
+                    '{cached_at: (now | floor), identity: $identity, data: $data, rate_limited_until: 0}' > "$cache_tmp" 2>/dev/null; then
                     mv -f "$cache_tmp" "$cache_file" 2>/dev/null || rm -f "$cache_tmp"
                 else
                     rm -f "$cache_tmp"
                 fi
-            elif [ "$cache_matches" = true ] && [ "${age:-$USAGE_CACHE_STALE_FALLBACK_TTL}" -lt "$USAGE_CACHE_STALE_FALLBACK_TTL" ]; then
-                # Only fall back to the cache if it's still plausibly current —
-                # otherwise a single failed live fetch (e.g. a network blip right
-                # after boot) would keep re-serving arbitrarily old data as "ok"
-                # on every refresh until a live call finally succeeds again.
-                api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
+            else
+                # Live call failed (rate limited, network blip, etc). Only fall
+                # back to the cache if it's still plausibly current — otherwise
+                # a single failed live fetch (e.g. a network blip right after
+                # boot) would keep re-serving arbitrarily old data as "ok" on
+                # every refresh until a live call finally succeeds again.
+                if [ "$cache_matches" = true ] && [ "$age" -lt "$USAGE_CACHE_STALE_FALLBACK_TTL" ]; then
+                    api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
+                fi
+
+                # If the response carried a Retry-After, remember it so
+                # subsequent refreshes don't retry the endpoint until it's
+                # actually allowed to succeed again.
+                local retry_after=0
+                if [ -f "$header_tmp" ]; then
+                    retry_after=$(grep -i '^retry-after:' "$header_tmp" 2>/dev/null | tail -1 | tr -dc '0-9')
+                fi
+                [[ "$retry_after" =~ ^[0-9]+$ ]] || retry_after=0
+                if [ "$retry_after" -gt 0 ] && [ "$cache_matches" = true ]; then
+                    local existing_data cache_tmp="${cache_file}.$$.tmp"
+                    existing_data=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
+                    if jq -n --arg identity "$creds_file" --argjson data "$existing_data" \
+                        --argjson rlu "$(( now_ts + retry_after ))" --argjson ts "${cache_ts:-0}" \
+                        '{cached_at: $ts, identity: $identity, data: $data, rate_limited_until: $rlu}' > "$cache_tmp" 2>/dev/null; then
+                        mv -f "$cache_tmp" "$cache_file" 2>/dev/null || rm -f "$cache_tmp"
+                    else
+                        rm -f "$cache_tmp"
+                    fi
+                fi
             fi
+            rm -f "$header_tmp"
         fi
     fi
 
