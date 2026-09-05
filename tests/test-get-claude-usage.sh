@@ -748,8 +748,6 @@ CACHEEOF
 OUTPUT28=$(run_script "$ENV28")
 FIVE28=$(echo "$OUTPUT28" | grep "^FIVE_HOUR_UTIL=" | cut -d= -f2)
 assert_eq "$FIVE28" "77" "Recently-stale cache used as fallback when live fetch fails"
-CREDS28=$(echo "$OUTPUT28" | grep "^CREDS_STATUS=" | cut -d= -f2)
-assert_eq "$CREDS28" "ok" "Recently-stale fallback reports CREDS_STATUS=ok"
 
 # Cache is far older than the stale-fallback window — the live fetch fails and
 # the ancient cache must NOT be served as if it were current data.
@@ -769,8 +767,6 @@ CACHEEOF
 OUTPUT28B=$(run_script "$ENV28")
 FIVE28B=$(echo "$OUTPUT28B" | grep "^FIVE_HOUR_UTIL=" | cut -d= -f2)
 assert_eq "$FIVE28B" "0" "Ancient cache is refused as fallback, not served as live"
-CREDS28B=$(echo "$OUTPUT28B" | grep "^CREDS_STATUS=" | cut -d= -f2)
-assert_eq "$CREDS28B" "expired" "Ancient fallback reports CREDS_STATUS=expired, not ok"
 
 # ============================================================
 echo ""

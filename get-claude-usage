@@ -11,6 +11,7 @@ USAGE_CACHE="${CLAUDE_DIR}/usage-cache.json"
 USAGE_CACHE_TTL=90  # seconds, below the 2 min minimum refresh interval
 USAGE_CACHE_STALE_FALLBACK_TTL=1800  # seconds; how old a cache entry may be before
                                       # it's refused as a fallback when a live fetch fails
+STALE_EXP_SECONDS=300  # 5 minutes; mirrors get-chatgpt-usage's own staleness rule
 LITELLM_URL="https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 
 CLAUDE_VERSION=$(claude --version 2>/dev/null | head -1 | grep -oP '[\d.]+' || echo "2.0.0")
@@ -275,6 +276,25 @@ fetch_profile_usage() {
         local token
         token=$(jq -r '.claudeAiOauth.accessToken // ""' "$creds_file" 2>/dev/null || echo "")
         if [ -n "$token" ]; then
+            # The stored access token is short-lived and the CLI itself refreshes
+            # it in the background as needed, but that refresh only fires from a
+            # live `claude` invocation — a token that expired since the user's
+            # last interactive command sits stale in this file even though the
+            # user is actively using Claude elsewhere (e.g. a long-running
+            # session that isn't re-reading its own credentials file). Detect an
+            # expired/near-expiry access token from the plaintext `expiresAt`
+            # and nudge the CLI to refresh it before giving up. Never refresh it
+            # ourselves here (races the CLI's own writer) — shell out to
+            # `claude doctor`, a fast non-interactive command confirmed to
+            # trigger the CLI's normal startup refresh, then reread the token.
+            local exp_ms now_ms
+            exp_ms=$(jq -r '.claudeAiOauth.expiresAt // 0' "$creds_file" 2>/dev/null || echo 0)
+            [[ "$exp_ms" =~ ^[0-9]+$ ]] || exp_ms=0
+            now_ms=$(( $(date +%s) * 1000 ))
+            if [ "$exp_ms" -gt 0 ] && [ $(( (exp_ms - now_ms) / 1000 )) -le "$STALE_EXP_SECONDS" ]; then
+                timeout 15 claude doctor >/dev/null 2>&1 || true
+                token=$(jq -r '.claudeAiOauth.accessToken // ""' "$creds_file" 2>/dev/null || echo "$token")
+            fi
             api_resp=$(curl -s --max-time 5 \
                 -H "Authorization: Bearer $token" \
                 -H "Accept: application/json" \
