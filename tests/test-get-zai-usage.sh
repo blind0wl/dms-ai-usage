@@ -22,7 +22,6 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 DOW=$(date +%u)
 WEEK_START=$(date -d "$((DOW - 1)) days ago" +%Y-%m-%d)
 MONTH_START=$(date +%Y-%m-01)
-TODAY=$(date +%Y-%m-%d)
 
 MOCK_DIR="$TMPDIR_ROOT/mocks"
 mkdir -p "$MOCK_DIR"
@@ -77,10 +76,14 @@ write_pi_key() {
 
 val() { echo "$1" | grep "^$2=" | cut -d= -f2-; }
 
-# --- Fixtures ---
-cp /tmp/zai-fixtures/quota-limit.json "$MOCK_DIR/k1.quota.json"
-cp /tmp/zai-fixtures/model-usage-week.json "$MOCK_DIR/k1.week.json"
-jq '.data.totalUsage.totalTokensUsage = 99000000' /tmp/zai-fixtures/model-usage-week.json > "$MOCK_DIR/k1.month.json"
+# --- Fixtures (captured from api.z.ai; inline so the suite needs nothing outside the repo) ---
+cat > "$MOCK_DIR/k1.quota.json" << 'EOF'
+{"code":200,"msg":"Operation successful","data":{"limits":[{"type":"CREDIT_LIMIT","unit":3,"number":5,"usage":2000,"currentValue":693,"remaining":1306,"percentage":34,"nextResetTime":1789279094313},{"type":"CREDIT_LIMIT","unit":6,"number":1,"usage":10000,"currentValue":693,"remaining":9306,"percentage":6,"nextResetTime":1789865116984}],"level":"lite"},"success":true}
+EOF
+cat > "$MOCK_DIR/k1.week.json" << 'EOF'
+{"code":200,"msg":"Operation successful","success":true,"data":{"granularity":"hourly","totalUsage":{"totalModelCallCount":244,"totalTokensUsage":16797051},"modelSummaryList":[{"modelName":"GLM-5.3","totalTokens":68248,"sortOrder":1},{"modelName":"GLM-5.3-Flash","totalTokens":16728803,"sortOrder":2}],"x_time":["2026-09-07 01:00","2026-09-07 02:00"],"tokensUsage":[68248,16728803]}}
+EOF
+jq '.data.totalUsage.totalTokensUsage = 99000000' "$MOCK_DIR/k1.week.json" > "$MOCK_DIR/k1.month.json"
 
 # ============================================================
 echo "=== Test 1: Quota + model-usage fixtures drive every key ==="
