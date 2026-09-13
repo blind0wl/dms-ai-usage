@@ -281,7 +281,7 @@ PluginComponent {
             return tr("Resetting...");
         var hours = Math.floor(remaining / 3600000);
         var mins = Math.floor((remaining % 3600000) / 60000);
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
+        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
     }
 
     property string displaySevenDayCountdown: {
@@ -295,8 +295,8 @@ PluginComponent {
         var hours = Math.floor((remaining % 86400000) / 3600000);
         var mins = Math.floor((remaining % 3600000) / 60000);
         if (days > 0)
-            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
+            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
     }
 
     // Pacing: whether usage is ahead of (over) or behind (under) a linear burn
@@ -362,31 +362,16 @@ PluginComponent {
     // Live countdown
     property real countdownNow: Date.now()
 
-    property string fiveHourCountdown: {
-        if (!fiveHourReset)
-            return "";
-        var resetMs = new Date(fiveHourReset).getTime();
-        var remaining = Math.max(0, resetMs - countdownNow);
-        if (remaining <= 0)
-            return tr("Resetting...");
-        var hours = Math.floor(remaining / 3600000);
-        var mins = Math.floor((remaining % 3600000) / 60000);
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
-    }
-
-    property string sevenDayCountdown: {
-        if (!sevenDayReset)
-            return "";
-        var resetMs = new Date(sevenDayReset).getTime();
-        var remaining = Math.max(0, resetMs - countdownNow);
-        if (remaining <= 0)
-            return tr("Resetting...");
-        var days = Math.floor(remaining / 86400000);
-        var hours = Math.floor((remaining % 86400000) / 3600000);
-        var mins = Math.floor((remaining % 3600000) / 60000);
-        if (days > 0)
-            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
+    // Local wall clock of a reset instant, appended to countdowns so they can
+    // be reconciled against provider dashboards that render resets in their
+    // own timezone (Z.ai's shows Asia/Shanghai). The date appears only when
+    // the reset falls on another calendar day.
+    function resetClockLabel(resetMs) {
+        var resetDate = new Date(resetMs);
+        var sameDay = Qt.formatDateTime(resetDate, "yyyy-MM-dd") === Qt.formatDateTime(new Date(), "yyyy-MM-dd");
+        if (!sameDay)
+            return " (" + Qt.formatDateTime(resetDate, "ddd HH:mm") + ")";
+        return " (" + Qt.formatDateTime(resetDate, "HH:mm") + ")";
     }
 
     // Generic countdown formatter for a resolved epoch-ms reset time (used by
@@ -403,8 +388,8 @@ PluginComponent {
         var hours = Math.floor((remaining % 86400000) / 3600000);
         var mins = Math.floor((remaining % 3600000) / 60000);
         if (days > 0)
-            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m";
+            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
     }
 
     // Unix-seconds strings are all-digit; ISO-8601 strings always contain a
