@@ -7,14 +7,14 @@ A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) 
 ## Features
 
 - **Taskbar pill** with a circular progress ring per enabled Source (Claude, ChatGPT, Z.ai), each showing its nearest-to-reset rate window
-- **Pacing indicator** on both Sources, showing whether you're over or under a linear burn rate for each window (e.g. "6% over pace", "25% under pace")
+- **Pacing indicator** on every Source, showing whether you're over or under a linear burn rate for each window (e.g. "6% over pace", "25% under pace")
 - **Detailed popout**, one tab per Source:
   - **Claude**: 5-hour and 7-day rate window utilization with countdown timers and pacing
   - **ChatGPT**: primary and secondary rate windows (lengths reported by the API) with countdown timers and pacing
   - **Z.ai**: 5-hour and weekly rate windows with countdown timers and pacing, plus weekly model-call count
-  - Token consumption breakdown (today, calendar week, calendar month) for both Sources
-  - Weekly activity bar chart (Monday–Sunday) with interactive hover tooltips, for both Sources
-  - Per-model token usage for the current calendar week with dynamic model family detection, for both Sources
+  - Token consumption breakdown for every Source (today, calendar week, calendar month for Claude and ChatGPT; calendar week and month plus model-call count for Z.ai)
+  - Weekly activity bar chart (Monday–Sunday) with interactive hover tooltips, for every Source
+  - Per-model token usage for the current calendar week, for every Source
   - Estimated API cost per period (Claude only, automatic pricing from [LiteLLM](https://github.com/BerriAI/litellm) — no equivalent public price list exists for Codex/ChatGPT)
   - All-time session and message statistics (Claude)
 - **Account breakdown**, per Source:
