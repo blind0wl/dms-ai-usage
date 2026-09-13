@@ -1,8 +1,8 @@
 {
   "id": "aiUsage",
   "name": "AI Usage",
-  "description": "Monitor your Claude and ChatGPT/Codex usage with token tracking, estimated API costs, rate limits, and daily activity charts",
-  "version": "0.1.2",
+  "description": "Monitor your Claude, ChatGPT/Codex and Z.ai usage with token tracking, estimated API costs, rate limits, and daily activity charts",
+  "version": "0.2.0",
   "author": "dave (fork of dms-claudecode by Nicolas Bellamy)",
   "icon": "monitoring",
   "type": "widget",

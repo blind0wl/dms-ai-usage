@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+set -eu
+
+# Calendar week: Monday to Sunday, and month-to-date from the 1st. The API
+# takes date strings, so both windows are expressed as local calendar dates.
+DOW=$(date +%u)  # 1=Monday, 7=Sunday
+WEEK_START=$(date -d "$((DOW - 1)) days ago" +%Y-%m-%d)
+MONTH_START=$(date +%Y-%m-01)
+TODAY=$(date +%Y-%m-%d)
+
+API_BASE="https://api.z.ai/api/monitor/usage"
+
+# --- Account list: name + api key ---
+ACCOUNT_NAMES=()
+ACCOUNT_KEYS=()
+
+# add_account <name> <api-key>
+# First registration of a name (or of a key) wins, so the argv entries added
+# before the pi/env fallbacks take priority over them.
+add_account() {
+    local name="$1" key="$2"
+
+    # , | : are output delimiters, they cannot survive in an account name
+    name="${name//[,|:]/}"
+    [ -n "$name" ] || return 0
+    [ -n "$key" ] || return 0
+
+    local existing
+    for existing in "${ACCOUNT_NAMES[@]:-}"; do
+        [ "$existing" = "$name" ] && return 0
+    done
+    for existing in "${ACCOUNT_KEYS[@]:-}"; do
+        [ "$existing" = "$key" ] && return 0
+    done
+
+    ACCOUNT_NAMES+=("$name")
+    ACCOUNT_KEYS+=("$key")
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        *=*) add_account "${arg%%=*}" "${arg#*=}" ;;
+    esac
+done
+
+PI_MODELS="${HOME}/.pi/agent/models.json"
+if [ -f "$PI_MODELS" ]; then
+    pi_key=$(jq -r '.providers.zai.apiKey // ""' "$PI_MODELS" 2>/dev/null || echo "")
+    [ -n "$pi_key" ] && add_account "default" "$pi_key"
+fi
+[ -n "${ZAI_API_KEY:-}" ] && add_account "default" "$ZAI_API_KEY"
+
+# Z.ai is an API-key service with no local binary or config of its own, so
+# "no credentials anywhere" is the equivalent of the other Sources' missing
+# binary: the Source isn't logged out, it isn't in use at all, and the widget
+# hides it entirely rather than offering a login card.
+if [ "${#ACCOUNT_NAMES[@]}" -eq 0 ]; then
+    cat <<'NOTINSTALLED'
+PLAN_TYPE=unknown
+PRIMARY_UTIL=0
+PRIMARY_RESET=
+PRIMARY_WINDOW_SECONDS=0
+SECONDARY_UTIL=0
+SECONDARY_RESET=
+SECONDARY_WINDOW_SECONDS=0
+CREDS_STATUS=not_installed
+WEEK_TOKENS=0
+WEEK_CALLS=0
+MONTH_TOKENS=0
+DAILY=0,0,0,0,0,0,0
+WEEK_MODELS=
+ACCOUNTS=
+NOTINSTALLED
+    exit 0
+fi
+
+# --- Per-account quota + server-side usage fetcher ---
+# Usage: fetch_account_usage <api-key> <out_tmpfile>
+# Writes PLAN_TYPE, PRIMARY_*, SECONDARY_*, CREDS_STATUS, WEEK_TOKENS,
+# WEEK_CALLS, MONTH_TOKENS, DAILY, WEEK_MODELS to out_tmpfile.
+fetch_account_usage() {
+    local key="$1"
+    local out_file="$2"
+
+    local plan_type="unknown"
+    local primary_util=0 primary_reset="" primary_window=0
+    local secondary_util=0 secondary_reset="" secondary_window=0
+    local creds_status="missing"
+    local week_tokens=0 week_calls=0 month_tokens=0
+    local daily="0,0,0,0,0,0,0" week_models=""
+
+    write_out() {
+        printf 'PLAN_TYPE=%s\nPRIMARY_UTIL=%s\nPRIMARY_RESET=%s\nPRIMARY_WINDOW_SECONDS=%s\nSECONDARY_UTIL=%s\nSECONDARY_RESET=%s\nSECONDARY_WINDOW_SECONDS=%s\nCREDS_STATUS=%s\nWEEK_TOKENS=%s\nWEEK_CALLS=%s\nMONTH_TOKENS=%s\nDAILY=%s\nWEEK_MODELS=%s\n' \
+            "$plan_type" "$primary_util" "$primary_reset" "$primary_window" \
+            "$secondary_util" "$secondary_reset" "$secondary_window" \
+            "$creds_status" "$week_tokens" "$week_calls" "$month_tokens" \
+            "$daily" "$week_models" > "$out_file"
+    }
+
+    # api_get <url> -> "<http_code>\n<body>". The key goes in Authorization
+    # raw, with no "Bearer " prefix: z.ai rejects the prefixed form.
+    api_get() {
+        local url="$1" raw http body
+        raw=$(curl -s --max-time 10 -w $'\n%{http_code}' \
+            -H "Authorization: $key" \
+            -H "Content-Type: application/json" \
+            "$url" 2>/dev/null || echo "")
+        http="${raw##*$'\n'}"
+        body="${raw%$'\n'*}"
+        [ "$raw" = "$http" ] && body=""
+        printf '%s\n%s' "${http:-000}" "$body"
+    }
+
+    local quota_resp quota_http quota_body
+    quota_resp=$(api_get "${API_BASE}/quota/limit")
+    quota_http="${quota_resp%%$'\n'*}"
+    quota_body="${quota_resp#*$'\n'}"
+
+    # A rejected key comes back as HTTP 200 carrying {"code":401,
+    # "success":false}, so the body is the authority, not the status line.
+    local body_code body_success
+    body_code=$(echo "$quota_body" | jq -r '.code // 0' 2>/dev/null || echo 0)
+    body_success=$(echo "$quota_body" | jq -r 'if has("success") then (.success|tostring) else "true" end' 2>/dev/null || echo "true")
+
+    if [ "$quota_http" = "401" ] || [ "$quota_http" = "403" ] \
+        || [ "$body_code" = "401" ] || [ "$body_code" = "403" ] || [ "$body_success" = "false" ]; then
+        creds_status="missing"
+        write_out
+        return
+    fi
+
+    if ! echo "$quota_body" | jq -e '.data.limits' >/dev/null 2>&1; then
+        # Network/timeout/garbage: nothing is known about the key, so report
+        # no usage rather than inventing zeros as a confirmed reading.
+        creds_status="missing"
+        write_out
+        return
+    fi
+
+    creds_status="ok"
+    plan_type=$(echo "$quota_body" | jq -r '.data.level // "unknown"')
+    [ -n "$plan_type" ] || plan_type="unknown"
+
+    # unit identifies the window kind (3 = rolling 5h, 6 = weekly); array
+    # order and the type string (CREDIT_LIMIT vs TOKENS_LIMIT, which differs
+    # by plan generation) carry no meaning. nextResetTime is epoch ms and the
+    # widget reads digit-only resets as seconds.
+    local win
+    for win in 3 6; do
+        local util reset
+        util=$(echo "$quota_body" | jq -r --argjson u "$win" \
+            '[.data.limits[]? | select(.unit == $u)] | if length == 0 then "" else (.[0].percentage // 0 | tostring) end' 2>/dev/null || echo "")
+        reset=$(echo "$quota_body" | jq -r --argjson u "$win" \
+            '[.data.limits[]? | select(.unit == $u)] | if length == 0 or (.[0].nextResetTime | not) then "" else (.[0].nextResetTime / 1000 | floor | tostring) end' 2>/dev/null || echo "")
+        # A window the API omits stays at UTIL=0 with an empty reset and a
+        # zero length, which disables the countdown and pacing for it.
+        if [ "$win" = 3 ]; then
+            [ -n "$util" ] && { primary_util="$util"; primary_reset="$reset"; primary_window=18000; }
+        else
+            [ -n "$util" ] && { secondary_util="$util"; secondary_reset="$reset"; secondary_window=604800; }
+        fi
+    done
+
+    local week_body month_body
+    week_body=$(api_get "${API_BASE}/model-usage?startTime=${WEEK_START}+00:00:00&endTime=${TODAY}+23:59:59")
+    week_body="${week_body#*$'\n'}"
+    month_body=$(api_get "${API_BASE}/model-usage?startTime=${MONTH_START}+00:00:00&endTime=${TODAY}+23:59:59")
+    month_body="${month_body#*$'\n'}"
+
+    week_tokens=$(echo "$week_body" | jq -r '.data.totalUsage.totalTokensUsage // 0' 2>/dev/null || echo 0)
+    week_calls=$(echo "$week_body" | jq -r '.data.totalUsage.totalModelCallCount // 0' 2>/dev/null || echo 0)
+    month_tokens=$(echo "$month_body" | jq -r '.data.totalUsage.totalTokensUsage // 0' 2>/dev/null || echo 0)
+    week_models=$(echo "$week_body" | jq -r '
+        [.data.modelSummaryList[]? | select((.totalTokens // 0) > 0)]
+        | sort_by(.sortOrder // 0)
+        | map("\(.modelName)=\(.totalTokens)") | join(",")' 2>/dev/null || echo "")
+
+    for var in week_tokens week_calls month_tokens; do
+        case "${!var}" in
+            ''|*[!0-9]*) printf -v "$var" '%s' 0 ;;
+        esac
+    done
+
+    local day_dates="" i d
+    for i in $(seq 0 6); do
+        d=$(date -d "$WEEK_START + ${i} days" +%Y-%m-%d)
+        day_dates="${day_dates:+${day_dates},}${d}"
+    done
+
+    # x_time labels are hourly ("YYYY-MM-DD HH:00") and index-aligned with
+    # tokensUsage; the date prefix is taken as a local date.
+    local bucketed
+    bucketed=$(echo "$week_body" | jq -r '
+        (.data.x_time // []) as $t | (.data.tokensUsage // []) as $v
+        | range(0; ($t | length))
+        | "\($t[.][0:10])\t\($v[.] // 0)"' 2>/dev/null \
+        | awk -F'\t' -v day_dates="$day_dates" '
+            BEGIN { split(day_dates, dates, ",") }
+            { day[$1] += $2 + 0 }
+            END {
+                out = ""
+                for (i = 1; i <= 7; i++) {
+                    val = (dates[i] in day) ? day[dates[i]] : 0
+                    out = out (i > 1 ? "," : "") val + 0
+                }
+                print out
+            }' 2>/dev/null || echo "")
+    [ -n "$bucketed" ] && daily="$bucketed"
+
+    write_out
+}
+
+# --- Fetch per account in parallel ---
+TMPDIR_ROOT=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_ROOT"' EXIT
+
+USAGE_TMPFILES=()
+PIDS=()
+
+for idx in "${!ACCOUNT_KEYS[@]}"; do
+    usage_tmpf=$(mktemp "$TMPDIR_ROOT/account_XXXXXX")
+    USAGE_TMPFILES+=("$usage_tmpf")
+    fetch_account_usage "${ACCOUNT_KEYS[$idx]}" "$usage_tmpf" &
+    PIDS+=("$!")
+done
+
+for pid in "${PIDS[@]:-}"; do
+    [ -n "$pid" ] && wait "$pid" || true
+done
+
+# --- Aggregate ---
+PLAN_TYPE="unknown"
+PRIMARY_UTIL=0
+PRIMARY_RESET=""
+PRIMARY_WINDOW_SECONDS=0
+SECONDARY_UTIL=0
+SECONDARY_RESET=""
+SECONDARY_WINDOW_SECONDS=0
+CREDS_STATUS="missing"
+WEEK_TOKENS=0
+WEEK_CALLS=0
+MONTH_TOKENS=0
+DAILY="0,0,0,0,0,0,0"
+WEEK_MODELS=""
+
+MODELS_ACC=""
+DAILY_ARR=(0 0 0 0 0 0 0)
+
+for idx in "${!USAGE_TMPFILES[@]}"; do
+    usage_tmpf="${USAGE_TMPFILES[$idx]}"
+    aname="${ACCOUNT_NAMES[$idx]}"
+    [ -f "$usage_tmpf" ] || continue
+
+    a_plan=$(grep "^PLAN_TYPE=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
+    a_pu=$(grep "^PRIMARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_pr=$(grep "^PRIMARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
+    a_pw=$(grep "^PRIMARY_WINDOW_SECONDS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_su=$(grep "^SECONDARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_sr=$(grep "^SECONDARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
+    a_sw=$(grep "^SECONDARY_WINDOW_SECONDS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_cs=$(grep "^CREDS_STATUS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "missing")
+    a_wt=$(grep "^WEEK_TOKENS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_wc=$(grep "^WEEK_CALLS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_mt=$(grep "^MONTH_TOKENS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_daily=$(grep "^DAILY=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "0,0,0,0,0,0,0")
+    a_models=$(grep "^WEEK_MODELS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
+
+    # Plan/status come from the "default" account, falling back to the first
+    # account when the user only configured named ones.
+    if [ "$aname" = "default" ] || [ "$idx" -eq 0 ]; then
+        PLAN_TYPE="$a_plan"
+        CREDS_STATUS="$a_cs"
+    fi
+
+    # Windows: the highest utilisation is the binding constraint, so its
+    # reset is the one the countdown must show.
+    if [ "$a_pw" -gt 0 ] && { [ "$PRIMARY_WINDOW_SECONDS" -eq 0 ] || [ "$a_pu" -gt "$PRIMARY_UTIL" ]; }; then
+        PRIMARY_UTIL="$a_pu"
+        PRIMARY_RESET="$a_pr"
+        PRIMARY_WINDOW_SECONDS="$a_pw"
+    fi
+    if [ "$a_sw" -gt 0 ] && { [ "$SECONDARY_WINDOW_SECONDS" -eq 0 ] || [ "$a_su" -gt "$SECONDARY_UTIL" ]; }; then
+        SECONDARY_UTIL="$a_su"
+        SECONDARY_RESET="$a_sr"
+        SECONDARY_WINDOW_SECONDS="$a_sw"
+    fi
+
+    WEEK_TOKENS=$(( WEEK_TOKENS + a_wt ))
+    WEEK_CALLS=$(( WEEK_CALLS + a_wc ))
+    MONTH_TOKENS=$(( MONTH_TOKENS + a_mt ))
+
+    DAILY=$(echo "$a_daily" | awk -v cur="$(IFS=,; echo "${DAILY_ARR[*]}")" '
+        BEGIN { split(cur, a, ",") }
+        { split($0, b, ","); for(i=1;i<=7;i++) a[i]+=b[i]+0 }
+        END { for(i=1;i<=7;i++) printf "%s%s", (i>1?",":""), a[i]+0; print "" }
+    ')
+    IFS=',' read -ra DAILY_ARR <<< "$DAILY"
+
+    MODELS_ACC="${MODELS_ACC:+${MODELS_ACC},}${a_models}"
+
+    rm -f "$usage_tmpf"
+done
+
+ACCOUNTS=$(IFS=,; echo "${ACCOUNT_NAMES[*]}")
+
+# Sum per-model tokens across accounts, keeping the first-seen order (which
+# is the API's sortOrder within each account).
+WEEK_MODELS=$(echo "$MODELS_ACC" | tr ',' '\n' | grep '=' | awk -F= '
+    { if (!($1 in acc)) order[++n] = $1; acc[$1] += $2 + 0 }
+    END { for (i = 1; i <= n; i++) printf "%s%s=%d", (i > 1 ? "," : ""), order[i], acc[order[i]]; print "" }
+' || echo "")
+
+echo "PLAN_TYPE=${PLAN_TYPE}"
+echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
+echo "PRIMARY_RESET=${PRIMARY_RESET}"
+echo "PRIMARY_WINDOW_SECONDS=${PRIMARY_WINDOW_SECONDS}"
+echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
+echo "SECONDARY_RESET=${SECONDARY_RESET}"
+echo "SECONDARY_WINDOW_SECONDS=${SECONDARY_WINDOW_SECONDS}"
+echo "CREDS_STATUS=${CREDS_STATUS}"
+echo "WEEK_TOKENS=${WEEK_TOKENS}"
+echo "WEEK_CALLS=${WEEK_CALLS}"
+echo "MONTH_TOKENS=${MONTH_TOKENS}"
+echo "DAILY=${DAILY}"
+echo "WEEK_MODELS=${WEEK_MODELS}"
+echo "ACCOUNTS=${ACCOUNTS}"

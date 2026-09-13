@@ -7,6 +7,10 @@ var strings = {
         { fr: "Claude", es: "Claude" },
     "ChatGPT":
         { fr: "ChatGPT", es: "ChatGPT" },
+    "Z.ai":
+        { fr: "Z.ai", es: "Z.ai" },
+    "Model calls":
+        { fr: "appels de modèle", es: "llamadas al modelo" },
     "Plan":
         { fr: "Forfait", es: "Plan" },
     "Primary Window":
@@ -109,6 +113,13 @@ var strings = {
             fr: "Affiche l'utilisation de Codex/ChatGPT. Désactivé, ou si Codex n'est pas installé, masque entièrement son anneau.",
             es: "Muestra el uso de Codex/ChatGPT. Si está desactivado, o Codex no está instalado, oculta completamente su anillo."
         },
+    "Enable Z.ai Source":
+        { fr: "Activer la source Z.ai", es: "Activar la fuente Z.ai" },
+    "Show Z.ai GLM Coding Plan usage. Off, or no API key found, hides its ring entirely.":
+        {
+            fr: "Affiche l'utilisation du forfait GLM Coding de Z.ai. Désactivé, ou si aucune clé d'API n'est trouvée, masque entièrement son anneau.",
+            es: "Muestra el uso del plan GLM Coding de Z.ai. Si está desactivado, o no se encuentra ninguna clave de API, oculta completamente su anillo."
+        },
     "Custom Profiles":
         { fr: "Profils personnalisés", es: "Perfiles personalizados" },
     "Custom ChatGPT Accounts":
@@ -118,6 +129,15 @@ var strings = {
             fr: "Suivez d'autres comptes Codex. Indiquez un CODEX_HOME (le dossier contenant auth.json). ~/.codex est détecté automatiquement comme « default ».",
             es: "Haz seguimiento de otras cuentas de Codex. Indica un CODEX_HOME (la carpeta que contiene auth.json). ~/.codex se detecta automáticamente como «default»."
         },
+    "Custom Z.ai Accounts":
+        { fr: "Comptes Z.ai personnalisés", es: "Cuentas de Z.ai personalizadas" },
+    "Track extra Z.ai accounts by API key. A key from the pi coding agent config (~/.pi/agent/models.json) is detected automatically as \"default\".":
+        {
+            fr: "Suivez d'autres comptes Z.ai par clé d'API. Une clé présente dans la configuration de l'agent pi (~/.pi/agent/models.json) est détectée automatiquement comme « default ».",
+            es: "Haz seguimiento de otras cuentas de Z.ai mediante su clave de API. Una clave presente en la configuración del agente pi (~/.pi/agent/models.json) se detecta automáticamente como «default»."
+        },
+    "API key":
+        { fr: "Clé d'API", es: "Clave de API" },
     "Name":
         { fr: "Nom", es: "Nombre" },
     "Config directory":
@@ -142,6 +162,13 @@ var strings = {
         {
             fr: "Données d'utilisation indisponibles tant que vous n'êtes pas connecté.",
             es: "Los datos de uso no estarán disponibles hasta que inicies sesión."
+        },
+    "API key rejected":
+        { fr: "Clé d'API refusée", es: "Clave de API rechazada" },
+    "Check your Z.ai API key in the plugin settings.":
+        {
+            fr: "Vérifiez votre clé d'API Z.ai dans les paramètres du plugin.",
+            es: "Comprueba tu clave de API de Z.ai en los ajustes del plugin."
         },
     "Log in":
         { fr: "Se connecter", es: "Iniciar sesión" },
