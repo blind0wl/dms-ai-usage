@@ -214,6 +214,43 @@ function paceInfo(util, resetIso, windowMs) {
     else status = "on"
     return { timeFrac: timeFrac, delta: delta, status: status }
 }
+
+// Minimal Qt shim for the countdown clock label
+var Qt = {
+    formatDateTime: function (date, fmt) {
+        var pad = function (n) { return (n < 10 ? "0" : "") + n }
+        var days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        if (fmt === "ddd HH:mm")
+            return days[date.getDay()] + " " + pad(date.getHours()) + ":" + pad(date.getMinutes())
+        if (fmt === "yyyy-MM-dd")
+            return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate())
+        return pad(date.getHours()) + ":" + pad(date.getMinutes())
+    }
+}
+
+// resetClockLabel: local wall clock appended to countdowns
+function resetClockLabel(resetMs) {
+    var resetDate = new Date(resetMs)
+    var sameDay = Qt.formatDateTime(resetDate, "yyyy-MM-dd") === Qt.formatDateTime(new Date(), "yyyy-MM-dd")
+    if (!sameDay)
+        return " (" + Qt.formatDateTime(resetDate, "ddd HH:mm") + ")"
+    return " (" + Qt.formatDateTime(resetDate, "HH:mm") + ")"
+}
+
+// formatCountdown: mirrors the QML body including the clock label
+function formatCountdown(resetMs) {
+    if (!resetMs)
+        return "";
+    var remaining = Math.max(0, resetMs - countdownNow);
+    if (remaining <= 0)
+        return tr("Resetting...");
+    var days = Math.floor(remaining / 86400000);
+    var hours = Math.floor((remaining % 86400000) / 3600000);
+    var mins = Math.floor((remaining % 3600000) / 60000);
+    if (days > 0)
+        return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+    return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+}
 '
 
 # ============================================================
@@ -619,6 +656,37 @@ RESULT_ZAI_IGNORED=$(run_js "${JS_HARNESS}
 assert_eq "$RESULT_ZAI_IGNORED" "{}" "parseZaiLine ignores keys Z.ai never emits"
 
 # ============================================================
+# ============================================================
+echo "=== Test 9: countdown clock labels ==="
+# ============================================================
+
+# A sub-24h reset appends the local wall clock of the reset instant
+RESULT_SUB=$(run_js "${JS_HARNESS} countdownNow = Date.UTC(2026, 8, 13, 3, 35, 0); console.log(formatCountdown(countdownNow + 139 * 60000))")
+echo "$RESULT_SUB" | grep -qE '^2h 19m \(([A-Za-z]{3} )?[0-9]{2}:[0-9]{2}\)$' && pass "formatCountdown appends a clock label under 24h" || fail "formatCountdown sub-24h label got '$RESULT_SUB'"
+
+# The appended clock is the reset instant rendered in local time
+CLOCK=$(run_js "${JS_HARNESS} countdownNow = Date.UTC(2026, 8, 13, 3, 35, 0); var r = countdownNow + 139 * 60000; console.log(Qt.formatDateTime(new Date(r), 'HH:mm'))")
+EXPECT=$(echo "$RESULT_SUB" | grep -oE '[0-9]{2}:[0-9]{2}' | tail -1)
+[ "$CLOCK" = "$EXPECT" ] && pass "appended clock matches the reset instant" || fail "clock mismatch: $CLOCK vs $EXPECT"
+
+# A multi-day reset includes the weekday
+RESULT_MULTI=$(run_js "${JS_HARNESS} countdownNow = Date.UTC(2026, 8, 13, 3, 35, 0); console.log(formatCountdown(countdownNow + 5 * 86400000 + 3 * 3600000))")
+echo "$RESULT_MULTI" | grep -qE '^5d 3h 00m \(([A-Za-z]{3} )?[0-9]{2}:[0-9]{2}\)$' && pass "formatCountdown appends a clock label past 24h" || fail "formatCountdown multi-day label got '$RESULT_MULTI'"
+
+# A reset later today carries no date; a reset on another calendar day does.
+# Anchored to the real clock (23:59 today, now + 48h) so the branch taken is
+# the same whatever time or timezone the suite runs in.
+RESULT_TODAY=$(run_js "${JS_HARNESS} var d = new Date(); d.setHours(23, 59, 0, 0); console.log(resetClockLabel(d.getTime()))")
+RESULT_OTHERDAY=$(run_js "${JS_HARNESS} console.log(resetClockLabel(Date.now() + 48 * 3600000))")
+echo "$RESULT_TODAY" | grep -qE '^ \([0-9]{2}:[0-9]{2}\)$' && pass "same-calendar-day reset shows time only" || fail "same-day label got '$RESULT_TODAY'"
+echo "$RESULT_OTHERDAY" | grep -qE '^ \([A-Za-z]{3} [0-9]{2}:[0-9]{2}\)$' && pass "other-calendar-day reset includes the weekday" || fail "other-day label got '$RESULT_OTHERDAY'"
+
+# Past and zero resets keep their previous shape
+R_PAST=$(run_js "${JS_HARNESS} countdownNow = Date.UTC(2026, 8, 13, 3, 35, 0); console.log(formatCountdown(countdownNow - 1000))")
+[ "$R_PAST" = "Resetting..." ] && pass "past reset still Resetting... without a label" || fail "past reset got '$R_PAST'"
+R_ZERO=$(run_js "${JS_HARNESS} console.log(formatCountdown(0))")
+[ "$R_ZERO" = "" ] && pass "zero reset still empty" || fail "zero reset got '$R_ZERO'"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
