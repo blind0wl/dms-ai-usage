@@ -143,6 +143,55 @@ function parseLine(line, state) {
     return state
 }
 
+function parseResetMs(val) {
+    if (!val) return 0
+    if (/^[0-9]+$/.test(val)) return parseFloat(val) * 1000
+    var ms = new Date(val).getTime()
+    return isNaN(ms) ? 0 : ms
+}
+
+// parseZaiLine: simulates the QML property-setting logic for the Z.ai Source
+function parseZaiLine(line, state) {
+    var idx = line.indexOf("=")
+    if (idx < 0) return state
+    var key = line.substring(0, idx)
+    var val = line.substring(idx + 1)
+
+    switch (key) {
+    case "PLAN_TYPE": state.planType = val; break
+    case "PRIMARY_UTIL": state.primaryUtil = parseFloat(val) || 0; break
+    case "PRIMARY_RESET": state.primaryResetMs = parseResetMs(val); break
+    case "PRIMARY_WINDOW_SECONDS": state.primaryWindowSeconds = parseFloat(val) || 0; break
+    case "SECONDARY_UTIL": state.secondaryUtil = parseFloat(val) || 0; break
+    case "SECONDARY_RESET": state.secondaryResetMs = parseResetMs(val); break
+    case "SECONDARY_WINDOW_SECONDS": state.secondaryWindowSeconds = parseFloat(val) || 0; break
+    case "CREDS_STATUS": state.credsStatus = val; break
+    case "WEEK_TOKENS": state.weekTokens = parseFloat(val) || 0; break
+    case "WEEK_CALLS": state.weekCalls = parseInt(val) || 0; break
+    case "MONTH_TOKENS": state.monthTokens = parseFloat(val) || 0; break
+    case "DAILY":
+        var zparts = val.split(",")
+        var zarr = []
+        for (var zi = 0; zi < 7; zi++)
+            zarr.push(zi < zparts.length ? (parseFloat(zparts[zi]) || 0) : 0)
+        state.dailyTokens = zarr
+        break
+    case "WEEK_MODELS":
+        state.models = []
+        if (val.length > 0) {
+            var zpairs = val.split(",")
+            for (var zp = 0; zp < zpairs.length; zp++) {
+                var zeq = zpairs[zp].indexOf("=")
+                if (zeq >= 0)
+                    state.models.push({ modelName: zpairs[zp].substring(0, zeq), modelTokens: parseInt(zpairs[zp].substring(zeq + 1)) || 0 })
+            }
+        }
+        break
+    case "ACCOUNTS": state.accounts = val.length > 0 ? val.split(",") : []; break
+    }
+    return state
+}
+
 var countdownNow = 0
 
 function paceInfo(util, resetIso, windowMs) {
@@ -498,6 +547,76 @@ RESULT_PACE_ZEROWINDOW_FULL=$(run_js "${JS_HARNESS}
     console.log(paceInfo(100, new Date(9000000).toISOString(), 0).status)
 ")
 assert_eq "$RESULT_PACE_ZEROWINDOW_FULL" "over_quota" "paceInfo: zero window length still reports over_quota at util=100"
+
+# ============================================================
+echo "=== Test 8: parseZaiLine ==="
+# ============================================================
+
+test_parse_zai() {
+    local input="$1" field="$2" expected="$3" label="$4"
+    local result
+    result=$(run_js "${JS_HARNESS}
+        var s = {};
+        parseZaiLine('$input', s);
+        console.log(typeof s.$field === 'undefined' ? 'UNDEFINED' : JSON.stringify(s.$field));
+    ")
+    if [ "$result" = "$expected" ]; then
+        pass "$label"
+    else
+        fail "$label (expected '$expected', got '$result')"
+    fi
+}
+
+test_parse_zai "PLAN_TYPE=lite" "planType" '"lite"' "parseZaiLine PLAN_TYPE"
+test_parse_zai "PRIMARY_UTIL=34" "primaryUtil" '34' "parseZaiLine PRIMARY_UTIL"
+test_parse_zai "PRIMARY_WINDOW_SECONDS=18000" "primaryWindowSeconds" '18000' "parseZaiLine PRIMARY_WINDOW_SECONDS"
+test_parse_zai "SECONDARY_UTIL=6" "secondaryUtil" '6' "parseZaiLine SECONDARY_UTIL"
+test_parse_zai "SECONDARY_WINDOW_SECONDS=604800" "secondaryWindowSeconds" '604800' "parseZaiLine SECONDARY_WINDOW_SECONDS"
+test_parse_zai "CREDS_STATUS=ok" "credsStatus" '"ok"' "parseZaiLine CREDS_STATUS"
+test_parse_zai "WEEK_TOKENS=1234567" "weekTokens" '1234567' "parseZaiLine WEEK_TOKENS"
+test_parse_zai "WEEK_CALLS=482" "weekCalls" '482' "parseZaiLine WEEK_CALLS"
+test_parse_zai "MONTH_TOKENS=98765432" "monthTokens" '98765432' "parseZaiLine MONTH_TOKENS"
+test_parse_zai "ACCOUNTS=default,work" "accounts" '["default","work"]' "parseZaiLine ACCOUNTS"
+test_parse_zai "ACCOUNTS=" "accounts" '[]' "parseZaiLine ACCOUNTS empty"
+
+# The script emits resets as unix SECONDS; the widget stores milliseconds.
+test_parse_zai "PRIMARY_RESET=1789279094" "primaryResetMs" '1789279094000' "parseZaiLine PRIMARY_RESET seconds to ms"
+test_parse_zai "SECONDARY_RESET=1789865116" "secondaryResetMs" '1789865116000' "parseZaiLine SECONDARY_RESET seconds to ms"
+
+# A window the API omits arrives with an empty RESET — no countdown, no pacing.
+test_parse_zai "PRIMARY_RESET=" "primaryResetMs" '0' "parseZaiLine empty PRIMARY_RESET disables countdown"
+
+RESULT_ZAI_DAILY=$(run_js "${JS_HARNESS}
+    var s = {};
+    parseZaiLine('DAILY=1,2,3', s);
+    console.log(JSON.stringify(s.dailyTokens));
+")
+assert_eq "$RESULT_ZAI_DAILY" "[1,2,3,0,0,0,0]" "parseZaiLine DAILY short array padded to 7"
+
+# Z.ai model names keep API casing and contain dots/dashes, so the pair
+# separator must be the first "=" only.
+RESULT_ZAI_MODELS=$(run_js "${JS_HARNESS}
+    var s = {};
+    parseZaiLine('WEEK_MODELS=GLM-4.6=5000,GLM-4.5-Air=3000', s);
+    console.log(JSON.stringify(s.models));
+")
+assert_eq "$RESULT_ZAI_MODELS" '[{"modelName":"GLM-4.6","modelTokens":5000},{"modelName":"GLM-4.5-Air","modelTokens":3000}]' "parseZaiLine WEEK_MODELS keeps API model casing"
+
+RESULT_ZAI_MODELS_EMPTY=$(run_js "${JS_HARNESS}
+    var s = {};
+    parseZaiLine('WEEK_MODELS=', s);
+    console.log(JSON.stringify(s.models));
+")
+assert_eq "$RESULT_ZAI_MODELS_EMPTY" "[]" "parseZaiLine WEEK_MODELS empty = empty array"
+
+# Claude/ChatGPT-only keys must not leak into Z.ai state.
+RESULT_ZAI_IGNORED=$(run_js "${JS_HARNESS}
+    var s = {};
+    parseZaiLine('ALLTIME_SESSIONS=42', s);
+    parseZaiLine('WEEK_MESSAGES=10', s);
+    console.log(JSON.stringify(s));
+")
+assert_eq "$RESULT_ZAI_IGNORED" "{}" "parseZaiLine ignores keys Z.ai never emits"
 
 # ============================================================
 echo ""

@@ -36,23 +36,31 @@ PluginComponent {
     // dms-claudecode users upgrade with no config changes required.
     property bool enableClaude: pluginData.enableClaude !== false
     property bool enableChatgpt: pluginData.enableChatgpt !== false
+    property bool enableZai: pluginData.enableZai !== false
 
     // A Source is actually shown only when enabled AND its script confirms the
-    // binary is present. credsStatus/chatgptCredsStatus default to "unknown"
-    // before the first fetch completes, so claudeVisible/chatgptVisible start
-    // true and correct themselves once CREDS_STATUS arrives.
+    // binary (or, for Z.ai, a usable API key) is present. The *CredsStatus
+    // properties default to "unknown" before the first fetch completes, so the
+    // *Visible properties start true and correct themselves once CREDS_STATUS
+    // arrives.
     readonly property bool claudeVisible: enableClaude && credsStatus !== "not_installed"
     readonly property bool chatgptVisible: enableChatgpt && chatgptCredsStatus !== "not_installed"
+    readonly property bool zaiVisible: enableZai && zaiCredsStatus !== "not_installed"
 
     onClaudeVisibleChanged: {
         root.updatePillVisibility();
         if (!root.claudeVisible && root.popoutSourceTab === "claude")
-            root.popoutSourceTab = "chatgpt";
+            root.popoutSourceTab = root.chatgptVisible ? "chatgpt" : "zai";
     }
     onChatgptVisibleChanged: {
         root.updatePillVisibility();
         if (!root.chatgptVisible && root.popoutSourceTab === "chatgpt")
-            root.popoutSourceTab = "claude";
+            root.popoutSourceTab = root.claudeVisible ? "claude" : "zai";
+    }
+    onZaiVisibleChanged: {
+        root.updatePillVisibility();
+        if (!root.zaiVisible && root.popoutSourceTab === "zai")
+            root.popoutSourceTab = root.claudeVisible ? "claude" : "chatgpt";
     }
 
     // Toggling a Source back on should fetch immediately rather than waiting
@@ -67,9 +75,13 @@ PluginComponent {
         if (root.enableChatgpt && !chatgptProcess.running)
             chatgptProcess.running = true;
     }
+    onEnableZaiChanged: {
+        if (root.enableZai && !zaiProcess.running)
+            zaiProcess.running = true;
+    }
 
     function updatePillVisibility() {
-        if (!root.claudeVisible && !root.chatgptVisible)
+        if (!root.claudeVisible && !root.chatgptVisible && !root.zaiVisible)
             root.setVisibilityOverride(false);
         else
             root.clearVisibilityOverride();
@@ -77,8 +89,8 @@ PluginComponent {
 
     Component.onCompleted: {
         root.updatePillVisibility();
-        if (!root.claudeVisible && root.chatgptVisible)
-            root.popoutSourceTab = "chatgpt";
+        if (!root.claudeVisible)
+            root.popoutSourceTab = root.chatgptVisible ? "chatgpt" : "zai";
     }
 
     // API usage data
@@ -128,6 +140,34 @@ PluginComponent {
         id: chatgptModelListData
     }
 
+    // Z.ai (GLM Coding Plan) Source — aggregated across every discovered API
+    // key by get-zai-usage, same default-account convention as ChatGPT above.
+    property var customZaiAccounts: pluginData.customZaiAccounts || []
+    property bool zaiAccountsRefreshPending: false
+    property string zaiPlanType: "unknown"
+    property real zaiPrimaryUtil: 0
+    property real zaiPrimaryResetMs: 0
+    property real zaiPrimaryWindowSeconds: 0
+    property real zaiSecondaryUtil: 0
+    property real zaiSecondaryResetMs: 0
+    property real zaiSecondaryWindowSeconds: 0
+    property string zaiCredsStatus: "unknown"
+    property var zaiAccounts: []
+
+    // Z.ai token/model stats come from the server-side model-usage endpoint
+    // rather than local session files, so there's no session/message count to
+    // report — the API counts model calls instead, and no all-time history is
+    // exposed at all.
+    property real zaiWeekTokens: 0
+    property int zaiWeekCalls: 0
+    property real zaiMonthTokens: 0
+    property var zaiDailyTokens: [0, 0, 0, 0, 0, 0, 0]
+    property int zaiHoveredDay: -1
+
+    ListModel {
+        id: zaiModelListData
+    }
+
     // Weekly state
     property int weekMessages: 0
     property int weekSessions: 0
@@ -159,9 +199,31 @@ PluginComponent {
         id: modelListData
     }
 
-    // Popout source tab (Claude / ChatGPT) — only one Source's cards render
-    // at a time, keeping the popout short on small screens.
+    // Popout source tab (Claude / ChatGPT / Z.ai) — only one Source's cards
+    // render at a time, keeping the popout short on small screens.
     property string popoutSourceTab: "claude"
+
+    // Hidden Sources are dropped from the strip rather than shown disabled, so
+    // the remaining tabs always split the full popout width between them.
+    readonly property var popoutSourceTabs: {
+        var tabs = [];
+        if (claudeVisible)
+            tabs.push({
+                key: "claude",
+                label: tr("Claude")
+            });
+        if (chatgptVisible)
+            tabs.push({
+                key: "chatgpt",
+                label: tr("ChatGPT")
+            });
+        if (zaiVisible)
+            tabs.push({
+                key: "zai",
+                label: tr("Z.ai")
+            });
+        return tabs;
+    }
 
     // Profile selector state
     property string selectedProfile: "all"
@@ -270,6 +332,19 @@ PluginComponent {
     }
     readonly property bool chatgptPillOverPace: showPacing && (chatgptPrimaryPace.status === "over" || chatgptPrimaryPace.status === "over_quota")
 
+    // Z.ai pacing, same shape as ChatGPT's — window lengths are fixed by the
+    // plan (5h / 7d) but still arrive as WINDOW_SECONDS so a window the API
+    // omits degrades to "unknown" instead of a false over-pace.
+    property var zaiPrimaryPace: {
+        void (countdownNow);
+        return paceInfo(zaiPrimaryUtil, zaiPrimaryResetMs, zaiPrimaryWindowSeconds * 1000);
+    }
+    property var zaiSecondaryPace: {
+        void (countdownNow);
+        return paceInfo(zaiSecondaryUtil, zaiSecondaryResetMs, zaiSecondaryWindowSeconds * 1000);
+    }
+    readonly property bool zaiPillOverPace: showPacing && (zaiPrimaryPace.status === "over" || zaiPrimaryPace.status === "over_quota")
+
     // Today's index in the calendar week (0=Monday, 6=Sunday)
     property int todayIndex: {
         void (countdownNow);
@@ -280,6 +355,7 @@ PluginComponent {
     // Derived
     property real maxDaily: Math.max.apply(null, dailyTokens) || 1
     property real chatgptMaxDaily: Math.max.apply(null, chatgptDailyTokens) || 1
+    property real zaiMaxDaily: Math.max.apply(null, zaiDailyTokens) || 1
     property bool isLoading: true
     property bool loginInProgress: false
 
@@ -344,6 +420,8 @@ PluginComponent {
 
     property string chatgptPrimaryCountdown: root.formatCountdown(root.chatgptPrimaryResetMs)
     property string chatgptSecondaryCountdown: root.formatCountdown(root.chatgptSecondaryResetMs)
+    property string zaiPrimaryCountdown: root.formatCountdown(root.zaiPrimaryResetMs)
+    property string zaiSecondaryCountdown: root.formatCountdown(root.zaiSecondaryResetMs)
 
     // `wham/usage` names its windows "primary"/"secondary" with no fixed
     // duration in the field name itself (unlike Claude's five_hour/seven_day),
@@ -369,6 +447,8 @@ PluginComponent {
 
     property string chatgptPrimaryWindowLabel: root.formatWindowLabel(root.chatgptPrimaryWindowSeconds, "Primary Window")
     property string chatgptSecondaryWindowLabel: root.formatWindowLabel(root.chatgptSecondaryWindowSeconds, "Secondary Window")
+    property string zaiPrimaryWindowLabel: root.formatWindowLabel(root.zaiPrimaryWindowSeconds, "Primary Window")
+    property string zaiSecondaryWindowLabel: root.formatWindowLabel(root.zaiSecondaryWindowSeconds, "Secondary Window")
 
     Timer {
         interval: 60000
@@ -385,6 +465,8 @@ PluginComponent {
                     usageProcess.running = true;
                 if (root.enableChatgpt && !chatgptProcess.running)
                     chatgptProcess.running = true;
+                if (root.enableZai && !zaiProcess.running)
+                    zaiProcess.running = true;
             } else {
                 // A window's reset time has just passed locally — don't sit on
                 // "Resetting..." until the next scheduled poll, fetch the new
@@ -401,6 +483,12 @@ PluginComponent {
                     if (primaryExpired || secondaryExpired)
                         chatgptProcess.running = true;
                 }
+                if (root.enableZai && !zaiProcess.running) {
+                    var zaiPrimaryExpired = root.zaiPrimaryResetMs && root.zaiPrimaryResetMs <= now;
+                    var zaiSecondaryExpired = root.zaiSecondaryResetMs && root.zaiSecondaryResetMs <= now;
+                    if (zaiPrimaryExpired || zaiSecondaryExpired)
+                        zaiProcess.running = true;
+                }
             }
         }
     }
@@ -408,6 +496,7 @@ PluginComponent {
     // Script paths via PluginService
     property string scriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-claude-usage"
     property string chatgptScriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-chatgpt-usage"
+    property string zaiScriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-zai-usage"
 
     popoutWidth: 380
     popoutHeight: 740
@@ -997,6 +1086,74 @@ PluginComponent {
         }
     }
 
+    function parseZaiLine(line) {
+        var idx = line.indexOf("=");
+        if (idx < 0)
+            return;
+        var key = line.substring(0, idx);
+        var val = line.substring(idx + 1);
+
+        switch (key) {
+        case "PLAN_TYPE":
+            zaiPlanType = val;
+            break;
+        case "PRIMARY_UTIL":
+            zaiPrimaryUtil = parseFloat(val) || 0;
+            break;
+        case "PRIMARY_RESET":
+            zaiPrimaryResetMs = root.parseResetMs(val);
+            break;
+        case "PRIMARY_WINDOW_SECONDS":
+            zaiPrimaryWindowSeconds = parseFloat(val) || 0;
+            break;
+        case "SECONDARY_UTIL":
+            zaiSecondaryUtil = parseFloat(val) || 0;
+            break;
+        case "SECONDARY_RESET":
+            zaiSecondaryResetMs = root.parseResetMs(val);
+            break;
+        case "SECONDARY_WINDOW_SECONDS":
+            zaiSecondaryWindowSeconds = parseFloat(val) || 0;
+            break;
+        case "CREDS_STATUS":
+            zaiCredsStatus = val;
+            break;
+        case "WEEK_TOKENS":
+            zaiWeekTokens = parseFloat(val) || 0;
+            break;
+        case "WEEK_CALLS":
+            zaiWeekCalls = parseInt(val) || 0;
+            break;
+        case "MONTH_TOKENS":
+            zaiMonthTokens = parseFloat(val) || 0;
+            break;
+        case "DAILY":
+            var zaiParts = val.split(",");
+            var zaiArr = [];
+            for (var zi = 0; zi < 7; zi++)
+                zaiArr.push(zi < zaiParts.length ? (parseFloat(zaiParts[zi]) || 0) : 0);
+            zaiDailyTokens = zaiArr;
+            break;
+        case "WEEK_MODELS":
+            zaiModelListData.clear();
+            if (val.length > 0) {
+                var zwmpairs = val.split(",");
+                for (var zwmi = 0; zwmi < zwmpairs.length; zwmi++) {
+                    var zwmeq = zwmpairs[zwmi].indexOf("=");
+                    if (zwmeq >= 0)
+                        zaiModelListData.append({
+                            modelName: zwmpairs[zwmi].substring(0, zwmeq),
+                            modelTokens: parseInt(zwmpairs[zwmi].substring(zwmeq + 1)) || 0
+                        });
+                }
+            }
+            break;
+        case "ACCOUNTS":
+            zaiAccounts = val.length > 0 ? val.split(",") : [];
+            break;
+        }
+    }
+
     // --- Data fetching ---
 
     // Pick up an added/removed profile now instead of waiting for the refresh timer
@@ -1016,6 +1173,15 @@ PluginComponent {
             chatgptAccountsRefreshPending = true;
         else
             chatgptProcess.running = true;
+    }
+
+    onCustomZaiAccountsChanged: {
+        if (!root.enableZai)
+            return;
+        if (zaiProcess.running)
+            zaiAccountsRefreshPending = true;
+        else
+            zaiProcess.running = true;
     }
 
     Process {
@@ -1066,6 +1232,28 @@ PluginComponent {
         }
     }
 
+    // Accounts are passed as `name=api-key` rather than `name=path`: Z.ai has
+    // no local config directory to point at, the key is the credential.
+    Process {
+        id: zaiProcess
+        command: ["timeout", "120", "bash", root.zaiScriptPath].concat(root.customZaiAccounts.filter(a => a && a.name && a.key).map(a => a.name + "=" + a.key))
+        running: false
+
+        stdout: SplitParser {
+            onRead: data => root.parseZaiLine(data.trim())
+        }
+
+        onExited: (exitCode, exitStatus) => {
+            if (root.zaiAccountsRefreshPending) {
+                root.zaiAccountsRefreshPending = false;
+                Qt.callLater(function() {
+                    if (!zaiProcess.running)
+                        zaiProcess.running = true;
+                });
+            }
+        }
+    }
+
     Timer {
         interval: root.refreshInterval
         running: true
@@ -1076,6 +1264,8 @@ PluginComponent {
                 usageProcess.running = true;
             if (root.enableChatgpt && !chatgptProcess.running)
                 chatgptProcess.running = true;
+            if (root.enableZai && !zaiProcess.running)
+                zaiProcess.running = true;
         }
     }
 
@@ -1226,6 +1416,58 @@ PluginComponent {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.chatgptVisible
             }
+
+            Rectangle {
+                width: 1
+                height: root.iconSize * 0.7
+                anchors.verticalCenter: parent.verticalCenter
+                color: Theme.outline
+                opacity: 0.5
+                visible: (root.claudeVisible || root.chatgptVisible) && root.zaiVisible
+            }
+
+            Canvas {
+                id: hRingZai
+                width: root.iconSize
+                height: root.iconSize
+                anchors.verticalCenter: parent.verticalCenter
+                renderStrategy: Canvas.Cooperative
+                visible: root.zaiVisible
+
+                property real percent: root.zaiPrimaryUtil
+                onPercentChanged: requestPaint()
+                onWidthChanged: requestPaint()
+
+                onPaint: {
+                    var ctx = getContext("2d");
+                    ctx.reset();
+                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
+
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                    ctx.lineWidth = lw;
+                    ctx.strokeStyle = Theme.surfaceVariant;
+                    ctx.stroke();
+
+                    var pct = percent / 100;
+                    if (pct > 0) {
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
+                        ctx.lineWidth = lw;
+                        ctx.strokeStyle = root.progressColor(percent);
+                        ctx.lineCap = "round";
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            StyledText {
+                text: Math.round(root.zaiPrimaryUtil) + "%" + (root.zaiPillOverPace ? " ↑" : "")
+                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
+                color: root.zaiPillOverPace ? root.paceColor(root.zaiPrimaryPace.status) : Theme.surfaceText
+                anchors.verticalCenter: parent.verticalCenter
+                visible: root.zaiVisible
+            }
         }
     }
 
@@ -1326,6 +1568,58 @@ PluginComponent {
                 color: root.chatgptPillOverPace ? root.paceColor(root.chatgptPrimaryPace.status) : Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
                 visible: root.chatgptVisible
+            }
+
+            Rectangle {
+                width: root.iconSize * 0.7
+                height: 1
+                anchors.horizontalCenter: parent.horizontalCenter
+                color: Theme.outline
+                opacity: 0.5
+                visible: (root.claudeVisible || root.chatgptVisible) && root.zaiVisible
+            }
+
+            Canvas {
+                id: vRingZai
+                width: root.iconSize
+                height: root.iconSize
+                anchors.horizontalCenter: parent.horizontalCenter
+                renderStrategy: Canvas.Cooperative
+                visible: root.zaiVisible
+
+                property real percent: root.zaiPrimaryUtil
+                onPercentChanged: requestPaint()
+                onWidthChanged: requestPaint()
+
+                onPaint: {
+                    var ctx = getContext("2d");
+                    ctx.reset();
+                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
+
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                    ctx.lineWidth = lw;
+                    ctx.strokeStyle = Theme.surfaceVariant;
+                    ctx.stroke();
+
+                    var pct = percent / 100;
+                    if (pct > 0) {
+                        ctx.beginPath();
+                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
+                        ctx.lineWidth = lw;
+                        ctx.strokeStyle = root.progressColor(percent);
+                        ctx.lineCap = "round";
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            StyledText {
+                text: Math.round(root.zaiPrimaryUtil) + "%" + (root.zaiPillOverPace ? " ↑" : "")
+                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
+                color: root.zaiPillOverPace ? root.paceColor(root.zaiPrimaryPace.status) : Theme.surfaceText
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: root.zaiVisible
             }
         }
     }
@@ -1485,15 +1779,12 @@ PluginComponent {
                 Row {
                     width: parent.width
                     spacing: Theme.spacingXS
-                    visible: root.claudeVisible && root.chatgptVisible
+                    visible: root.popoutSourceTabs.length > 1
 
                     Repeater {
-                        model: [
-                            { key: "claude", label: root.tr("Claude") },
-                            { key: "chatgpt", label: root.tr("ChatGPT") }
-                        ]
+                        model: root.popoutSourceTabs
                         delegate: Rectangle {
-                            width: (parent.width - Theme.spacingXS) / 2
+                            width: (parent.width - Theme.spacingXS * (root.popoutSourceTabs.length - 1)) / root.popoutSourceTabs.length
                             height: 32
                             radius: 16
                             color: root.popoutSourceTab === modelData.key ? Theme.primary : Theme.surfaceVariant
@@ -2806,6 +3097,518 @@ PluginComponent {
                                 color: Theme.surfaceVariantText
                                 wrapMode: Text.WordWrap
                                 anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+                }
+
+                // --- Z.ai section ---
+                Column {
+                    width: parent.width
+                    spacing: Theme.spacingL
+                    visible: root.popoutSourceTab === "zai"
+
+                    Column {
+                        width: parent.width
+                        spacing: 2
+
+                        StyledText {
+                            text: root.tr("Z.ai")
+                            font.pixelSize: Theme.fontSizeLarge
+                            font.weight: Font.Bold
+                            color: Theme.surfaceText
+                        }
+                        StyledText {
+                            width: parent.width
+                            text: root.zaiPlanType && root.zaiPlanType !== "unknown" ? root.tr("Plan") + ": " + root.zaiPlanType.replace(/\b\w/g, function (c) {
+                                return c.toUpperCase();
+                            }) : ""
+                            visible: text !== ""
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+
+                    // --- Credentials unavailable ---
+                    // Text-only, unlike the other two Sources: Z.ai has no CLI
+                    // login flow to shell out to, the fix is an API key in the
+                    // plugin settings.
+                    StyledRect {
+                        width: parent.width
+                        height: zaiCredsWarningContent.implicitHeight + Theme.spacingM * 2
+                        visible: root.zaiCredsStatus === "missing" || root.zaiCredsStatus === "expired"
+                        color: Theme.surfaceContainerHigh
+                        border.width: 1
+                        border.color: Theme.error || Theme.primary
+
+                        Column {
+                            id: zaiCredsWarningContent
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingXS
+
+                            StyledText {
+                                width: parent.width
+                                text: root.zaiCredsStatus === "missing" ? root.tr("API key rejected") : root.tr("Session expired")
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                                wrapMode: Text.WordWrap
+                            }
+                            StyledText {
+                                width: parent.width
+                                text: root.zaiCredsStatus === "missing" ? root.tr("Check your Z.ai API key in the plugin settings.") : root.tr("Usage data unavailable until you log in.")
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceVariantText
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    // --- Primary window card ---
+                    StyledRect {
+                        width: parent.width
+                        height: zaiPrimaryContent.implicitHeight + Theme.spacingS * 2
+                        color: Theme.surfaceContainerHigh
+
+                        Row {
+                            id: zaiPrimaryContent
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingS
+                            spacing: Theme.spacingM
+
+                            Canvas {
+                                id: zaiPrimaryRing
+                                width: 100
+                                height: 100
+                                anchors.verticalCenter: parent.verticalCenter
+                                renderStrategy: Canvas.Cooperative
+
+                                property real percent: root.zaiPrimaryUtil
+                                onPercentChanged: requestPaint()
+                                property var pace: root.zaiPrimaryPace
+                                onPaceChanged: requestPaint()
+
+                                onPaint: {
+                                    var ctx = getContext("2d");
+                                    ctx.reset();
+                                    var cx = width / 2, cy = height / 2, r = 38, lw = 8;
+
+                                    ctx.beginPath();
+                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                                    ctx.lineWidth = lw;
+                                    ctx.strokeStyle = Theme.surfaceVariant;
+                                    ctx.stroke();
+
+                                    var pct = percent / 100;
+                                    if (pct > 0) {
+                                        ctx.beginPath();
+                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
+                                        ctx.lineWidth = lw;
+                                        ctx.strokeStyle = root.progressColor(percent);
+                                        ctx.lineCap = "round";
+                                        ctx.stroke();
+                                    }
+
+                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
+                                }
+
+                                StyledText {
+                                    anchors.centerIn: parent
+                                    text: Math.round(root.zaiPrimaryUtil) + "%"
+                                    font.pixelSize: Theme.fontSizeXLarge
+                                    font.weight: Font.DemiBold
+                                    color: Theme.surfaceText
+                                }
+                            }
+
+                            Column {
+                                width: Math.max(0, parent.width - zaiPrimaryRing.width - parent.spacing)
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingS
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.zaiPrimaryWindowLabel
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: Math.round(root.zaiPrimaryUtil) + "% " + root.tr("used")
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: root.progressColor(root.zaiPrimaryUtil)
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.paceLabel(root.zaiPrimaryPace)
+                                    visible: root.showPacing && text !== ""
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: root.paceColor(root.zaiPrimaryPace.status)
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.zaiPrimaryCountdown ? root.tr("Resets in") + " " + root.zaiPrimaryCountdown : ""
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    color: Theme.surfaceVariantText
+                                    visible: root.zaiPrimaryCountdown !== ""
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Secondary window card ---
+                    StyledRect {
+                        width: parent.width
+                        height: zaiSecondaryContent.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+
+                        Row {
+                            id: zaiSecondaryContent
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingM
+
+                            Canvas {
+                                id: zaiSecondaryRing
+                                width: 72
+                                height: 72
+                                anchors.verticalCenter: parent.verticalCenter
+                                renderStrategy: Canvas.Cooperative
+
+                                property real percent: root.zaiSecondaryUtil
+                                onPercentChanged: requestPaint()
+                                property var pace: root.zaiSecondaryPace
+                                onPaceChanged: requestPaint()
+
+                                onPaint: {
+                                    var ctx = getContext("2d");
+                                    ctx.reset();
+                                    var cx = width / 2, cy = height / 2, r = 28, lw = 6;
+
+                                    ctx.beginPath();
+                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+                                    ctx.lineWidth = lw;
+                                    ctx.strokeStyle = Theme.surfaceVariant;
+                                    ctx.stroke();
+
+                                    var pct = percent / 100;
+                                    if (pct > 0) {
+                                        ctx.beginPath();
+                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
+                                        ctx.lineWidth = lw;
+                                        ctx.strokeStyle = root.progressColor(percent);
+                                        ctx.lineCap = "round";
+                                        ctx.stroke();
+                                    }
+
+                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
+                                }
+
+                                StyledText {
+                                    anchors.centerIn: parent
+                                    text: Math.round(root.zaiSecondaryUtil) + "%"
+                                    font.pixelSize: 14
+                                    font.weight: Font.DemiBold
+                                    color: Theme.surfaceText
+                                }
+                            }
+
+                            Column {
+                                width: Math.max(0, parent.width - zaiSecondaryRing.width - parent.spacing)
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: Theme.spacingXS
+
+                                StyledText {
+                                    width: parent.width
+                                    text: root.zaiSecondaryWindowLabel + " · " + Math.round(root.zaiSecondaryUtil) + "%"
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    font.weight: Font.Medium
+                                    color: Theme.surfaceText
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.paceLabel(root.zaiSecondaryPace)
+                                    visible: root.showPacing && text !== ""
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: root.paceColor(root.zaiSecondaryPace.status)
+                                    wrapMode: Text.WordWrap
+                                }
+                                StyledText {
+                                    width: parent.width
+                                    text: root.zaiSecondaryCountdown ? root.tr("Resets in") + " " + root.zaiSecondaryCountdown : ""
+                                    font.pixelSize: Theme.fontSizeSmall
+                                    color: Theme.surfaceVariantText
+                                    visible: root.zaiSecondaryCountdown !== ""
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Token Consumption card (from the model-usage API) ---
+                    StyledRect {
+                        width: parent.width
+                        height: zaiConsumptionCol.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+
+                        Column {
+                            id: zaiConsumptionCol
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingM
+
+                            StyledText {
+                                text: root.tr("Token Consumption")
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                            }
+
+                            Row {
+                                width: parent.width
+
+                                Column {
+                                    width: parent.width / 3
+                                    spacing: 4
+
+                                    StyledText {
+                                        text: root.tr("Week")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                    StyledText {
+                                        text: root.formatTokens(root.zaiWeekTokens)
+                                        font.pixelSize: Theme.fontSizeLarge
+                                        font.weight: Font.DemiBold
+                                        color: Theme.primary
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                }
+
+                                Column {
+                                    width: parent.width / 3
+                                    spacing: 4
+
+                                    StyledText {
+                                        text: root.tr("Month")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                    StyledText {
+                                        text: root.formatTokens(root.zaiMonthTokens)
+                                        font.pixelSize: Theme.fontSizeLarge
+                                        font.weight: Font.DemiBold
+                                        color: Theme.surfaceText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                }
+
+                                Column {
+                                    width: parent.width / 3
+                                    spacing: 4
+
+                                    StyledText {
+                                        text: root.tr("This Week")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        color: Theme.surfaceVariantText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                    StyledText {
+                                        text: root.zaiWeekCalls + " " + root.tr("Model calls")
+                                        font.pixelSize: Theme.fontSizeSmall
+                                        font.weight: Font.DemiBold
+                                        color: Theme.surfaceText
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Daily activity card ---
+                    StyledRect {
+                        width: parent.width
+                        height: zaiDailyCol.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+
+                        Column {
+                            id: zaiDailyCol
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingS
+
+                            StyledText {
+                                text: root.tr("Daily Activity")
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                            }
+
+                            Item {
+                                width: parent.width
+                                height: 70
+
+                                Row {
+                                    id: zaiChartRow
+                                    anchors.fill: parent
+                                    spacing: 4
+
+                                    Repeater {
+                                        model: 7
+                                        delegate: Column {
+                                            width: (zaiChartRow.width - 6 * 4) / 7
+                                            height: zaiChartRow.height
+                                            spacing: 2
+
+                                            Item {
+                                                width: parent.width
+                                                height: parent.height - zaiDayLabel.height - 2
+
+                                                Rectangle {
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.horizontalCenter: parent.horizontalCenter
+                                                    width: Math.max(parent.width - 4, 4)
+                                                    height: root.zaiMaxDaily > 0 ? Math.max(root.zaiDailyTokens[index] / root.zaiMaxDaily * parent.height, root.zaiDailyTokens[index] > 0 ? 3 : 0) : 0
+                                                    radius: 2
+                                                    color: index === root.todayIndex ? Theme.primary : Theme.surfaceVariant
+                                                    opacity: root.zaiHoveredDay >= 0 && index !== root.zaiHoveredDay ? 0.4 : 1.0
+
+                                                    Behavior on opacity {
+                                                        NumberAnimation {
+                                                            duration: 120
+                                                        }
+                                                    }
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    enabled: root.zaiDailyTokens[index] > 0
+                                                    onEntered: root.zaiHoveredDay = index
+                                                    onExited: root.zaiHoveredDay = -1
+                                                }
+                                            }
+
+                                            StyledText {
+                                                id: zaiDayLabel
+                                                text: root.dayLabels[index]
+                                                font.pixelSize: 11
+                                                color: index === root.zaiHoveredDay ? Theme.primary : index === root.todayIndex ? Theme.primary : Theme.surfaceVariantText
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            id: zaiChartTooltip
+                            visible: root.zaiHoveredDay >= 0 && root.zaiDailyTokens[root.zaiHoveredDay] > 0
+                            z: 10
+
+                            x: {
+                                var colW = (zaiChartRow.width - 6 * 4) / 7;
+                                var cx = root.zaiHoveredDay * (colW + 4) + colW / 2 - width / 2;
+                                var chartX = zaiChartRow.mapToItem(zaiChartTooltip.parent, 0, 0).x;
+                                var raw = chartX + cx;
+                                return Math.max(Theme.spacingM, Math.min(raw, parent.width - width - Theme.spacingM));
+                            }
+                            y: {
+                                var chartY = zaiChartRow.mapToItem(zaiChartTooltip.parent, 0, 0).y;
+                                return chartY - height - 2;
+                            }
+
+                            width: zaiTooltipText.implicitWidth + Theme.spacingS * 2
+                            height: zaiTooltipText.implicitHeight + Theme.spacingXS * 2
+                            radius: 4
+                            color: Theme.surfaceContainer
+
+                            StyledText {
+                                id: zaiTooltipText
+                                anchors.centerIn: parent
+                                text: root.zaiHoveredDay >= 0 ? root.formatTokens(root.zaiDailyTokens[root.zaiHoveredDay]) : ""
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                                color: Theme.surfaceText
+                            }
+                        }
+                    }
+
+                    // --- Model breakdown card ---
+                    StyledRect {
+                        width: parent.width
+                        height: zaiModelCardCol.implicitHeight + Theme.spacingM * 2
+                        color: Theme.surfaceContainerHigh
+                        visible: zaiModelListData.count > 0
+
+                        Column {
+                            id: zaiModelCardCol
+                            anchors.fill: parent
+                            anchors.margins: Theme.spacingM
+                            spacing: Theme.spacingS
+
+                            StyledText {
+                                text: root.tr("Models This Week")
+                                font.pixelSize: Theme.fontSizeMedium
+                                font.weight: Font.Medium
+                                color: Theme.surfaceText
+                            }
+
+                            Column {
+                                id: zaiModelCol
+                                width: parent.width
+                                spacing: Theme.spacingS
+
+                                Repeater {
+                                    model: zaiModelListData
+                                    delegate: Column {
+                                        width: zaiModelCol.width
+                                        spacing: 3
+
+                                        Row {
+                                            width: parent.width
+                                            spacing: Theme.spacingXS
+
+                                            StyledText {
+                                                // Z.ai reports display-ready names ("GLM-4.6"),
+                                                // so no capitalization pass here.
+                                                text: modelName
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceText
+                                            }
+                                            StyledText {
+                                                text: root.formatTokens(modelTokens)
+                                                font.pixelSize: Theme.fontSizeSmall
+                                                color: Theme.surfaceVariantText
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            width: parent.width
+                                            height: 4
+                                            radius: 2
+                                            color: Theme.surfaceVariant
+
+                                            Rectangle {
+                                                width: root.zaiWeekTokens > 0 ? parent.width * Math.min(modelTokens / root.zaiWeekTokens, 1) : 0
+                                                height: parent.height
+                                                radius: 2
+                                                color: Theme.primary
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

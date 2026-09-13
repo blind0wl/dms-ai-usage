@@ -6,11 +6,12 @@ A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) 
 
 ## Features
 
-- **Taskbar pill** with a circular progress ring per enabled Source (Claude, ChatGPT), each showing its nearest-to-reset rate window
+- **Taskbar pill** with a circular progress ring per enabled Source (Claude, ChatGPT, Z.ai), each showing its nearest-to-reset rate window
 - **Pacing indicator** on both Sources, showing whether you're over or under a linear burn rate for each window (e.g. "6% over pace", "25% under pace")
 - **Detailed popout**, one tab per Source:
   - **Claude**: 5-hour and 7-day rate window utilization with countdown timers and pacing
   - **ChatGPT**: primary and secondary rate windows (lengths reported by the API) with countdown timers and pacing
+  - **Z.ai**: 5-hour and weekly rate windows with countdown timers and pacing, plus weekly model-call count
   - Token consumption breakdown (today, calendar week, calendar month) for both Sources
   - Weekly activity bar chart (Monday–Sunday) with interactive hover tooltips, for both Sources
   - Per-model token usage for the current calendar week with dynamic model family detection, for both Sources
@@ -41,6 +42,7 @@ Neither AI tool is mandatory — install and enable the Sources you actually use
 
 - **Claude**: an active [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installation with OAuth credentials
 - **ChatGPT**: an active [Codex CLI](https://github.com/openai/codex) installation with OAuth credentials
+- **Z.ai**: a [GLM Coding Plan](https://z.ai) API key — auto-detected from the pi coding agent config (`~/.pi/agent/models.json`) or the `ZAI_API_KEY` environment variable, or added under **Custom Z.ai Accounts**
 
 A Source with no binary on `PATH` is detected automatically and hidden from the pill/popout; it doesn't need to be disabled by hand.
 
@@ -91,9 +93,18 @@ an auto-detected profile is skipped.
 Add additional accounts under **Custom ChatGPT Accounts** the same way, with a name and an
 auth directory (the folder containing `auth.json`, i.e. whatever `~/.codex` is by default).
 
+### Custom Z.ai Accounts
+
+Z.ai has no local config directory, so its accounts are registered by API key instead of by
+path: add a name and a GLM Coding Plan key under **Custom Z.ai Accounts**.
+
+| Name | API key |
+|------|---------|
+| `work` | `…` |
+
 ## How It Works
 
-The plugin runs two lightweight bash scripts on the configured refresh interval, one per
+The plugin runs three lightweight bash scripts on the configured refresh interval, one per
 Source:
 
 **Claude** (`get-claude-usage`):
@@ -107,17 +118,22 @@ Source:
 2. Queries the ChatGPT backend (`wham/usage`) for current rate limit status across the primary and secondary windows
 3. Scans `<account dir>/sessions/**/*.jsonl` for every discovered account for token consumption statistics
 
-Both scripts detect whether their binary (`claude`/`codex`) is present before doing any
-work, so a Source with nothing installed short-circuits to "not installed" instead of
-attempting a fetch.
+**Z.ai** (`get-zai-usage`):
+1. Reads your API key from `~/.pi/agent/models.json`, `ZAI_API_KEY`, or a custom account entry
+2. Queries `api.z.ai`'s quota endpoint for the 5-hour and weekly window utilization
+3. Queries the same host's model-usage endpoint for weekly/monthly tokens, model-call counts and the per-model breakdown — all server-side, so there's no binary to install and no local files are scanned. Hourly buckets returned by the API are treated as local dates when mapped onto the Monday–Sunday chart
+
+The Claude and ChatGPT scripts detect whether their binary (`claude`/`codex`) is present
+before doing any work, and the Z.ai script does the same with a discoverable API key, so a
+Source with nothing set up short-circuits to "not installed" instead of attempting a fetch.
 
 Claude's usage API response is cached for 90 seconds (`~/.claude/usage-cache.json`) to
 avoid rate limiting, with stale fallback on errors. ChatGPT's usage call has no cache —
 it's a single lightweight request per account per refresh.
 
 All data stays local. Network requests are limited to the official Anthropic API (usage),
-the ChatGPT backend (usage), GitHub (LiteLLM pricing, once/day), and Frankfurter (exchange
-rate, once/day).
+the ChatGPT backend (usage), the Z.ai API (usage), GitHub (LiteLLM pricing, once/day), and
+Frankfurter (exchange rate, once/day).
 
 ## License
 
