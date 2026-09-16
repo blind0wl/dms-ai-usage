@@ -1,0 +1,195 @@
+import QtQuick
+import qs.Common
+import qs.Widgets
+
+// Daily activity card: Monday to Sunday bars with a hover tooltip.
+//
+// `overlay` is on for Sources with an Account selector. The grey bar is then the
+// total and a coloured bar shows the selected Account's share, and the tooltip
+// breaks the day down into total, Account share and cost.
+StyledRect {
+    id: root
+
+    property var ctx: null
+    property var section: null
+
+    readonly property var source: ctx ? ctx.source : null
+    readonly property var api: ctx ? ctx.api : null
+    readonly property var dayLabels: ctx ? ctx.dayLabels : []
+    readonly property int todayIndex: ctx ? ctx.todayIndex : 0
+    readonly property bool overlay: section ? section.overlay === true : false
+    readonly property bool accountSelected: ctx ? ctx.accountSelected === true : false
+    readonly property string accountName: ctx ? ctx.accountName : ""
+
+    readonly property var dailyTokens: source && source.dailyTokens ? source.dailyTokens : [0, 0, 0, 0, 0, 0, 0]
+    readonly property var dailyCosts: source && source.dailyCosts ? source.dailyCosts : [0, 0, 0, 0, 0, 0, 0]
+    readonly property var accountDaily: source && source.accountDaily ? source.accountDaily : []
+    readonly property real maxDaily: Math.max.apply(null, dailyTokens) || 1
+
+    width: parent.width
+    height: dailyCol.implicitHeight + Theme.spacingM * 2
+    color: Theme.surfaceContainerHigh
+
+    property int hoveredDay: -1
+
+    function barHeight(value, availHeight) {
+        if (value <= 0)
+            return 0;
+        return Math.max(value / maxDaily * availHeight, 3);
+    }
+
+    Column {
+        id: dailyCol
+        anchors.fill: parent
+        anchors.margins: Theme.spacingM
+        spacing: Theme.spacingS
+
+        StyledText {
+            text: api.tr("Daily Activity")
+            font.pixelSize: Theme.fontSizeMedium
+            font.weight: Font.Medium
+            color: Theme.surfaceText
+        }
+
+        Item {
+            width: parent.width
+            height: 70
+
+            Row {
+                id: chartRow
+                anchors.fill: parent
+                spacing: 4
+
+                Repeater {
+                    model: 7
+                    delegate: Column {
+                        width: (chartRow.width - 6 * 4) / 7
+                        height: chartRow.height
+                        spacing: 2
+
+                        Item {
+                            id: barArea
+                            width: parent.width
+                            height: parent.height - dayLabel.height - 2
+
+                            // Total bar.
+                            Rectangle {
+                                anchors.bottom: parent.bottom
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: Math.max(parent.width - 4, 4)
+                                height: root.barHeight(root.dailyTokens[index], barArea.height)
+                                radius: 2
+                                color: root.overlay && root.accountSelected ? Theme.surfaceVariant : (index === root.todayIndex ? Theme.primary : Theme.surfaceVariant)
+                                opacity: root.hoveredDay >= 0 && index !== root.hoveredDay ? 0.4 : 1.0
+
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 120
+                                    }
+                                }
+                            }
+
+                            // Selected Account's share.
+                            Rectangle {
+                                visible: root.overlay && root.accountSelected && root.accountDaily.length > 0
+                                anchors.bottom: parent.bottom
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                width: Math.max(parent.width - 4, 4)
+                                height: root.accountDaily.length > index ? root.barHeight(root.accountDaily[index], barArea.height) : 0
+                                radius: 2
+                                color: Theme.primary
+                                opacity: root.hoveredDay >= 0 && index !== root.hoveredDay ? 0.4 : 1.0
+
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 120
+                                    }
+                                }
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                enabled: root.dailyTokens[index] > 0
+                                onEntered: root.hoveredDay = index
+                                onExited: root.hoveredDay = -1
+                            }
+                        }
+
+                        StyledText {
+                            id: dayLabel
+                            text: root.dayLabels[index]
+                            font.pixelSize: 11
+                            color: index === root.hoveredDay ? Theme.primary : index === root.todayIndex ? Theme.primary : Theme.surfaceVariantText
+                            anchors.horizontalCenter: parent.horizontalCenter
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Tooltip on hover, a child of the card so it is not clipped by the chart.
+    Rectangle {
+        id: chartTooltip
+        visible: root.hoveredDay >= 0 && root.dailyTokens[root.hoveredDay] > 0
+        z: 10
+
+        x: {
+            var colW = (chartRow.width - 6 * 4) / 7;
+            var cx = root.hoveredDay * (colW + 4) + colW / 2 - width / 2;
+            var chartX = chartRow.mapToItem(chartTooltip.parent, 0, 0).x;
+            var raw = chartX + cx;
+            return Math.max(Theme.spacingM, Math.min(raw, parent.width - width - Theme.spacingM));
+        }
+        y: {
+            var chartY = chartRow.mapToItem(chartTooltip.parent, 0, 0).y;
+            return chartY - height - 2;
+        }
+
+        width: tooltipCol.implicitWidth + Theme.spacingS * 2
+        height: tooltipCol.implicitHeight + Theme.spacingXS * 2
+        radius: 4
+        color: Theme.surfaceContainer
+
+        Column {
+            id: tooltipCol
+            anchors.centerIn: parent
+            spacing: 1
+
+            // Total, marked as a total only when an Account share sits under it.
+            StyledText {
+                text: {
+                    if (root.hoveredDay < 0)
+                        return "";
+                    var t = root.api.formatTokens(root.dailyTokens[root.hoveredDay]);
+                    return root.overlay && root.accountSelected ? t + " " + root.api.tr("total") : t;
+                }
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+                color: Theme.surfaceText
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            StyledText {
+                visible: root.overlay && root.accountSelected && root.hoveredDay >= 0 && root.accountDaily.length > root.hoveredDay && root.accountDaily[root.hoveredDay] > 0
+                text: {
+                    if (root.hoveredDay < 0 || root.accountDaily.length <= root.hoveredDay)
+                        return "";
+                    return root.api.formatTokens(root.accountDaily[root.hoveredDay]) + " " + root.accountName;
+                }
+                font.pixelSize: 11
+                color: Theme.primary
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            StyledText {
+                visible: root.hoveredDay >= 0 && root.dailyCosts[root.hoveredDay] > 0
+                text: root.hoveredDay >= 0 ? root.api.formatCost(root.dailyCosts[root.hoveredDay]) : ""
+                font.pixelSize: 11
+                color: Theme.surfaceVariantText
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+        }
+    }
+}

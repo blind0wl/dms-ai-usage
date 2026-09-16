@@ -39,22 +39,27 @@ Utilisation, Pacing, Section and Descriptor.
 ClaudeCodeUsageWidget.qml      pill, popout shell, fetch and parse
 ClaudeCodeUsageSettings.qml    settings GUI
 sources.js                     the registry: one descriptor per Source
-SourceTab.qml                  renders a descriptor's Sections into cards
-sections/WindowsSection.qml    one file per Section type
-sections/HeaderSection.qml
-sections/StatsSection.qml
-sections/ChartSection.qml
-sections/ModelsSection.qml
-sections/AccountsSection.qml
-sections/LoginSection.qml
-sections/AlltimeSection.qml
+ui/SourceTab.qml               renders a descriptor's Sections into cards
+ui/Ring.qml                    the shared utilisation ring
+ui/AccountsEditor.qml          settings editor for a Source's Account list
+ui/WindowsSection.qml          one file per Section type
+ui/HeaderSection.qml
+ui/StatsSection.qml
+ui/ChartSection.qml
+ui/ModelsSection.qml
+ui/AccountsSection.qml
+ui/LoginSection.qml
+ui/AlltimeSection.qml
 translations.js                unchanged
 ```
 
 `ClaudeCodeUsageWidget.qml` keeps its filename because `plugin.json` names it as
-the component entry point. Subdirectory QML is reached with a relative import
-(`import "sections"`), which Quickshell resolves against the component's
-`file://` URL.
+the component entry point. Everything else lives in `ui/` and is reached with a
+relative import (`import "ui"`), which Quickshell resolves against the
+component's `file://` URL. Note that the widget's own directory is *not*
+implicitly importable when Quickshell loads it with a cache-busting query
+string, so a component placed beside it would not resolve; `ui/` is imported
+explicitly instead.
 
 ## Descriptor
 
@@ -156,6 +161,9 @@ separate card *after* the model breakdown, and an option on `stats` would move
 it inside the Token Consumption card and change what the user sees. Rendering
 identically wins over a shorter type list.
 
+`header` renders the Source name and its plan line, and every Source's tab
+starts with one.
+
 `header` is not needed by any current Source's layout: Claude's plan line sits
 inside its first Window card. It stays in the type list because the opencode Go
 tab needs a card that reports plan and spend with no rate windows at all.
@@ -171,10 +179,14 @@ single key `sources` as an array of Source ids:
 
 Rules on load:
 
+- An absent key means the list was never configured, so every Source starts on.
+- An explicitly empty list stays empty, so the last Source can be switched off.
 - Ids not present in the registry are dropped.
-- Registry ids missing from the list are appended, enabled, in registry order.
+- Registry ids missing from a non-empty list are appended, enabled, in registry
+  order, so a newly added Source appears without the user editing anything.
 - The list order sets both pill ring order and popout tab order.
-- An empty list hides the pill entirely, as three disabled Sources does today.
+
+An empty list hides the pill entirely, as three disabled Sources does today.
 
 The settings page renders one row per Source with an enable toggle and up/down
 move buttons. DMS ships no reorder widget, so the row is built from the existing
@@ -184,6 +196,12 @@ Every existing DMS setting-widget type is available (`ToggleSetting`,
 `SliderSetting`, `StringSetting`, `SelectionSetting`, `ListSetting`,
 `ListSettingWithInput`, `ColorSetting`); none of them reorders, hence the
 custom row.
+
+The three custom Account list editors collapse the same way, into one
+`ui/AccountsEditor.qml` driven by each descriptor's `accounts` block. The editor
+previously existed three times over, differing only in the setting key, the
+labels, and whether the value is a config directory or an API key; all of those
+are descriptor data now.
 
 ### pluginId
 

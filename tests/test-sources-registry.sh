@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# Tests for the Source registry contract.
+#
+# Sources are data, so the descriptor shape is the interface between the
+# registry and the widget. These tests pin that interface: every descriptor is
+# complete, every Section type is one the renderer implements, every state key a
+# Section reads exists, and the settings list rules hold.
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "SKIP: Node.js not available, skipping registry tests"
+    exit 0
+fi
+
+PASS=0
+FAIL=0
+
+pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
+fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1" >&2; }
+
+echo "=== Extracting registry and renderer contracts ==="
+
+node - "$SCRIPT_DIR" >/tmp/registry-report.txt 2>&1 <<'NODE' || true
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+const root = process.argv[2];
+
+const load = (file, suffix) => {
+    const source = fs.readFileSync(path.join(root, file), "utf8").replace(/^\.pragma library\s*/, "");
+    const sandbox = {};
+    vm.createContext(sandbox);
+    vm.runInContext(source + suffix, sandbox, { filename: file });
+    return sandbox;
+};
+
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList };").api;
+const tr = load("translations.js", "; this.strings = strings;").strings;
+
+const widget = fs.readFileSync(path.join(root, "ClaudeCodeUsageWidget.qml"), "utf8");
+const tab = fs.readFileSync(path.join(root, "ui/SourceTab.qml"), "utf8");
+
+// State keys the widget produces: declared in emptyState(), or derived onto the
+// state object in stateFor() and its helpers.
+const stateKeys = new Set();
+for (const m of widget.matchAll(/\bst\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g))
+    stateKeys.add(m[1]);
+for (const m of widget.matchAll(/\bout\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g))
+    stateKeys.add(m[1]);
+const stateBlock = widget.match(/function emptyState\(\)\s*\{\s*return \{([\s\S]*?)\n        \};/);
+if (stateBlock) {
+    for (const m of stateBlock[1].matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*):/gm))
+        stateKeys.add(m[1]);
+}
+stateKeys.add("primary");
+stateKeys.add("secondary");
+
+// Section types SourceTab can render.
+const implemented = new Set();
+for (const m of tab.matchAll(/case "([a-z]+)":/g))
+    implemented.add(m[1]);
+
+// Properties the widget exposes for Account argument sources.
+const accountSettingKeys = new Set();
+for (const m of widget.matchAll(/property var (\w*[Aa]ccounts?\w*|\w*[Pp]rofiles\w*): pluginData/g))
+    accountSettingKeys.add(m[1]);
+
+const results = [];
+const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
+
+// --- Descriptor completeness ---
+for (const d of reg.SOURCES) {
+    const tag = `descriptor "${d.id}"`;
+    check(typeof d.id === "string" && d.id.length > 0, `${tag} has an id`);
+    check(typeof d.labelKey === "string" && d.labelKey.length > 0, `${tag} has a labelKey`);
+    check(typeof d.script === "string" && d.script.length > 0, `${tag} has a script`);
+    check(tr[d.labelKey] !== undefined, `${tag} labelKey "${d.labelKey}" is translated`);
+    check(fs.existsSync(path.join(root, d.script)), `${tag} script ${d.script} exists`);
+
+    check(d.windows !== undefined, `${tag} declares windows`);
+    for (const which of ["primary", "secondary"]) {
+        const w = d.windows && d.windows[which];
+        check(w !== undefined, `${tag} declares a ${which} window`);
+        if (!w) continue;
+        check(typeof w.util === "string" && w.util.length > 0, `${tag} ${which} names a util key`);
+        check(typeof w.reset === "string" && w.reset.length > 0, `${tag} ${which} names a reset key`);
+        const hasLength = typeof w.windowSeconds === "number" || typeof w.windowSecondsKey === "string";
+        check(hasLength, `${tag} ${which} declares a window length or the key for one`);
+        if (w.labelKey)
+            check(tr[w.labelKey] !== undefined, `${tag} ${which} label "${w.labelKey}" is translated`);
+    }
+
+    check(Array.isArray(d.sections) && d.sections.length > 0, `${tag} has sections`);
+
+    let sawAccountsSection = false;
+    for (const s of d.sections) {
+        check(implemented.has(s.type), `${tag} section type "${s.type}" is implemented by SourceTab`);
+        if (s.type === "accounts")
+            sawAccountsSection = true;
+        if (s.type === "windows") {
+            check(s.which === "primary" || s.which === "secondary", `${tag} windows section names a real window`);
+        }
+        if (s.type === "stats") {
+            check(Array.isArray(s.columns) && s.columns.length > 0, `${tag} stats declares columns`);
+            for (const c of s.columns || []) {
+                check(typeof c.labelKey === "string" && tr[c.labelKey] !== undefined, `${tag} stats column "${c.labelKey}" is translated`);
+                for (const slot of ["value", "sub"]) {
+                    const spec = c[slot];
+                    if (!spec) continue;
+                    check(["tokens", "cost", "count"].indexOf(spec.kind) >= 0, `${tag} stats ${slot} kind "${spec.kind}" is known`);
+                    check(stateKeys.has(spec.key), `${tag} stats ${slot} reads state key "${spec.key}"`);
+                    if (spec.kind === "count")
+                        check(tr[spec.unitKey] !== undefined, `${tag} stats ${slot} unit "${spec.unitKey}" is translated`);
+                }
+            }
+        }
+    }
+
+    // An accounts Section needs the descriptor to say how Accounts work, and
+    // vice versa: a declared Account list the widget cannot read is dead config.
+    if (sawAccountsSection)
+        check(d.accounts !== undefined, `${tag} has an accounts section so declares account settings`);
+    if (d.accounts) {
+        check(/^w*[Aa]ccounts?$|^custom\w+$/.test(d.accounts.settingKey), `${tag} account settingKey looks like a settings key`);
+        check(widget.indexOf(`property var ${d.accounts.settingKey}`) >= 0, `${tag} account settingKey "${d.accounts.settingKey}" is a property the widget reads`);
+        check(["path", "key"].indexOf(d.accounts.argField) >= 0, `${tag} account argField is path or key`);
+        check(tr[d.accounts.titleKey] !== undefined, `${tag} account title is translated`);
+        check(tr[d.accounts.descriptionKey] !== undefined, `${tag} account description is translated`);
+        check(tr[d.accounts.fieldLabelKey] !== undefined, `${tag} account field label is translated`);
+    }
+}
+
+// --- Identity ---
+const ids = reg.ids();
+check(new Set(ids).size === ids.length, "Source ids are unique");
+check(reg.byId("nope") === null, "byId returns null for an unknown id");
+check(reg.byId(ids[0]) === reg.SOURCES[0], "byId returns the matching descriptor");
+
+// --- Settings list rules ---
+check(JSON.stringify(reg.resolveList(undefined)) === JSON.stringify(ids), "absent list enables every Source in registry order");
+check(reg.resolveList(null).length === ids.length, "null list enables every Source");
+check(reg.resolveList([]).length === 0, "an explicitly empty list stays empty so the last Source can be switched off");
+check(JSON.stringify(reg.resolveList([ids[2], ids[0]])) === JSON.stringify([ids[2], ids[0], ids[1]]), "a partial list keeps its order and appends missing Sources");
+check(reg.resolveList(["ghost"]).length === ids.length, "unknown ids are dropped");
+check(reg.resolveList(["ghost", ids[1]])[0] === ids[1], "a dropped id does not displace a real one");
+check(reg.resolveList([ids[0], ids[0]]).length === ids.length, "a duplicated id is not repeated");
+
+console.log(results.join("\n"));
+NODE
+
+while IFS=$'\t' read -r status label; do
+    [ -z "${status:-}" ] && continue
+    if [ "$status" = "PASS" ]; then
+        pass "$label"
+    else
+        fail "$label"
+    fi
+done < /tmp/registry-report.txt
+
+# A Node crash would leave the report empty, which would otherwise look like a
+# clean run.
+if [ "$PASS" -eq 0 ] && [ "$FAIL" -eq 0 ]; then
+    fail "registry report produced no results (node failed?) see /tmp/registry-report.txt"
+fi
+
+echo ""
+echo "Results: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ] || exit 1

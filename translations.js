@@ -3,6 +3,20 @@
 var strings = {
     "AI Usage":
         { fr: "Utilisation de l'IA", es: "Uso de IA" },
+    "Sources":
+        { fr: "Sources", es: "Fuentes" },
+    "Account":
+        { fr: "Compte", es: "Cuenta" },
+    "Choose which providers appear, and in what order. This sets both the taskbar ring order and the popout tab order.":
+        {
+            fr: "Choisissez les fournisseurs à afficher et leur ordre. Cela détermine l'ordre des anneaux dans la barre des tâches et celui des onglets.",
+            es: "Elige qué proveedores se muestran y en qué orden. Esto determina el orden de los anillos en la barra de tareas y el de las pestañas."
+        },
+    "Monitor the usage of your AI coding subscriptions. Rate limits and subscription tiers are detected automatically.":
+        {
+            fr: "Surveillez l'utilisation de vos abonnements d'IA de codage. Les limites de débit et les niveaux d'abonnement sont détectés automatiquement.",
+            es: "Supervisa el uso de tus suscripciones de IA para programar. Los límites de velocidad y los niveles de suscripción se detectan automáticamente."
+        },
     "Claude":
         { fr: "Claude", es: "Claude" },
     "ChatGPT":
