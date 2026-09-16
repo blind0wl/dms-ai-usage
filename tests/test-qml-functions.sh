@@ -751,6 +751,49 @@ if ! grep -q "^PASS\|^FAIL" "$CREDS_REPORT"; then
     fail "creds-status report produced no results (node failed?) see $CREDS_REPORT"
 fi
 
+# ============================================================
+echo "=== Test 11: the Pill's no-reading rule ==="
+# ============================================================
+
+# pillHasReading decides whether a Pill slot draws a reading or a hollow
+# no-reading ring. Extracted from the widget so the rule cannot drift.
+PILL_REPORT=/tmp/pill-reading-report.txt
+node - "$SCRIPT_DIR/ClaudeCodeUsageWidget.qml" > "$PILL_REPORT" 2>&1 <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(process.argv[2], "utf8");
+const match = source.match(/function pillHasReading\(id\) \{[\s\S]*?\n    \}/);
+if (!match) {
+    console.log("FAIL\tpillHasReading could not be extracted from the widget");
+    process.exit(0);
+}
+const sandbox = { root: { sourceData: {} } };
+vm.createContext(sandbox);
+vm.runInContext(match[0] + "; this.pillHasReading = pillHasReading;", sandbox, { filename: "pillHasReading" });
+const results = [];
+const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
+const has = (status) => {
+    sandbox.root.sourceData = status === undefined ? {} : { s: { credsStatus: status } };
+    return sandbox.pillHasReading("s");
+};
+check(has(undefined) === true, "a Source before its first fetch keeps its ring");
+check(has("unknown") === true, "an unknown status keeps its ring");
+check(has("ok") === true, "a good reading draws the ring");
+check(has("missing") === false, "missing credentials draw no reading");
+check(has("expired") === false, "expired credentials draw no reading");
+check(has("unavailable") === false, "an unavailable endpoint draws no reading");
+console.log(results.join("\n"));
+NODE
+
+while IFS=$'\t' read -r status label; do
+    [ -z "${status:-}" ] && continue
+    if [ "$status" = "PASS" ]; then pass "$label"; else fail "$label"; fi
+done < "$PILL_REPORT"
+
+if ! grep -q "^PASS\|^FAIL" "$PILL_REPORT"; then
+    fail "pill-reading report produced no results (node failed?) see $PILL_REPORT"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

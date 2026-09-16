@@ -93,25 +93,6 @@ PluginComponent {
         return d.id;
     })
 
-    // Sources that still hold a current reading get a Pill Ring. A Source whose
-    // endpoint is unavailable keeps its popout tab but drops out of the Pill,
-    // so a stale percentage is never shown as though it were current.
-    readonly property var pillDescriptors: {
-        void (sourceData);
-        var out = [];
-        for (var i = 0; i < visibleDescriptors.length; i++) {
-            var d = visibleDescriptors[i];
-            var st = sourceData[d.id];
-            if (!st || st.credsStatus !== "unavailable")
-                out.push(d);
-        }
-        return out;
-    }
-
-    readonly property var pillIds: pillDescriptors.map(function (d) {
-        return d.id;
-    })
-
     // Empty until the user picks a tab. The popout prefers that choice, and
     // otherwise falls back to the first visible Source, which is the first one
     // in the configured order. Deriving the active id rather than storing it
@@ -132,8 +113,6 @@ PluginComponent {
         root.updatePillVisibility();
     }
 
-    onPillIdsChanged: root.updatePillVisibility()
-
     function ensureActiveTab() {
         var ids = root.visibleIds;
         if (ids.length === 0)
@@ -143,7 +122,7 @@ PluginComponent {
     }
 
     function updatePillVisibility() {
-        if (root.pillIds.length === 0)
+        if (root.visibleIds.length === 0)
             root.setVisibilityOverride(false);
         else
             root.clearVisibilityOverride();
@@ -271,6 +250,17 @@ PluginComponent {
         var todaySeries = pd && pd.daily ? pd.daily : st.dailyTokens;
         st.todayTokens = (todaySeries && todaySeries[root.todayIndex]) || 0;
         return st;
+    }
+
+    // Whether a Source has a reading the Pill can draw. Before the first fetch
+    // the state is "unknown" and the ring draws at zero so it does not flicker.
+    // Once a Source reports missing credentials or an unavailable endpoint there
+    // is no reading, so the ring goes hollow rather than showing a zero.
+    function pillHasReading(id) {
+        var st = root.sourceData[id];
+        if (!st)
+            return true;
+        return st.credsStatus === "ok" || st.credsStatus === "unknown";
     }
 
     function paceFor(source, which) {
@@ -619,7 +609,7 @@ PluginComponent {
             spacing: Theme.spacingXS
 
             Repeater {
-                model: root.pillDescriptors
+                model: root.visibleDescriptors
 
                 delegate: Row {
                     id: hGroup
@@ -643,12 +633,15 @@ PluginComponent {
                         anchors.verticalCenter: parent.verticalCenter
                         percent: root.stateFor(hGroup.modelData.id) ? root.stateFor(hGroup.modelData.id).primary.util : 0
                         pace: root.paceFor(root.stateFor(hGroup.modelData.id), "primary")
+                        hasReading: root.pillHasReading(hGroup.modelData.id)
                         showPaceTick: false
                     }
 
                     StyledText {
                         anchors.verticalCenter: parent.verticalCenter
                         text: {
+                            if (!root.pillHasReading(hGroup.modelData.id))
+                                return "--";
                             var st = root.stateFor(hGroup.modelData.id);
                             var p = root.paceFor(st, "primary");
                             var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
@@ -656,6 +649,8 @@ PluginComponent {
                         }
                         font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                         color: {
+                            if (!root.pillHasReading(hGroup.modelData.id))
+                                return Theme.surfaceVariantText;
                             var p = root.paceFor(root.stateFor(hGroup.modelData.id), "primary");
                             var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
                             return over ? root.paceColor(p.status) : Theme.surfaceText;
@@ -671,7 +666,7 @@ PluginComponent {
             spacing: Theme.spacingXS || 4
 
             Repeater {
-                model: root.pillDescriptors
+                model: root.visibleDescriptors
 
                 delegate: Column {
                     id: vGroup
@@ -695,12 +690,15 @@ PluginComponent {
                         anchors.horizontalCenter: parent.horizontalCenter
                         percent: root.stateFor(vGroup.modelData.id) ? root.stateFor(vGroup.modelData.id).primary.util : 0
                         pace: root.paceFor(root.stateFor(vGroup.modelData.id), "primary")
+                        hasReading: root.pillHasReading(vGroup.modelData.id)
                         showPaceTick: false
                     }
 
                     StyledText {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: {
+                            if (!root.pillHasReading(vGroup.modelData.id))
+                                return "--";
                             var st = root.stateFor(vGroup.modelData.id);
                             var p = root.paceFor(st, "primary");
                             var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
@@ -708,6 +706,8 @@ PluginComponent {
                         }
                         font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                         color: {
+                            if (!root.pillHasReading(vGroup.modelData.id))
+                                return Theme.surfaceVariantText;
                             var p = root.paceFor(root.stateFor(vGroup.modelData.id), "primary");
                             var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
                             return over ? root.paceColor(p.status) : Theme.surfaceText;

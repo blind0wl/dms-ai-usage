@@ -10,6 +10,10 @@ Canvas {
     property real percent: 0
     property var pace: null
     property bool showPaceTick: false
+    // False when there is no current reading to draw (missing credentials, or an
+    // unavailable endpoint). The track still draws, so the Source keeps its slot,
+    // but no arc and no pace tick, so no fabricated value is shown.
+    property bool hasReading: true
     property real ringRadius: width * 0.375
     property real ringWidth: width * 0.125
 
@@ -18,6 +22,7 @@ Canvas {
     onPaceChanged: requestPaint()
     onWidthChanged: requestPaint()
     onShowPaceTickChanged: requestPaint()
+    onHasReadingChanged: requestPaint()
 
     function progressColor(pct) {
         if (pct > 80)
@@ -55,7 +60,7 @@ Canvas {
         ctx.stroke();
 
         var pct = percent / 100;
-        if (pct > 0) {
+        if (hasReading && pct > 0) {
             ctx.beginPath();
             ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
             ctx.lineWidth = lw;
@@ -64,6 +69,7 @@ Canvas {
             ctx.stroke();
         }
 
-        drawPaceTick(ctx, cx, cy, r, lw, pace);
+        if (hasReading)
+            drawPaceTick(ctx, cx, cy, r, lw, pace);
     }
 }

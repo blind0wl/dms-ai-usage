@@ -9,7 +9,7 @@ The two failure modes are now separate. A key the endpoint rejects is **Missing*
 The user fixes it in settings, so the tab shows the settings card. Every other
 failure, whether a 404, a 5xx, a timeout or a body that does not carry the two
 Windows, is **Unavailable**. It gets a `status` Section whose copy never mentions
-settings, the Source drops its Ring from the Pill, and the tab shows its last
+settings, the Pill draws its slot with no reading, and the tab shows its last
 known Window values only under a card that says they are stale. A failure with no
 prior reading draws no Window cards at all, rather than a fabricated zero.
 
@@ -32,7 +32,9 @@ can fail.
 
 `get-opencode-go-usage` reports no Window values on an Unavailable run, so the
 widget keeps the previous reading instead of parsing the failure as a fresh zero.
-The Pill filters Unavailable Sources out of its Rings while keeping their popout
-tab, so a stale percentage never reads as current. This refines the registry's
-last-good fallback rather than replacing it. The values are still kept, but the
-card labels them instead of presenting them as current.
+The Pill keeps every installed Source's slot and draws a hollow ring with no
+percentage when there is no reading, for Unavailable and Missing alike. The
+Source never vanishes, so the card that explains it stays reachable, and no stale
+percentage reads as current. This refines the registry's last-good fallback
+rather than replacing it. The values are still kept, but the card labels them
+instead of presenting them as current.
