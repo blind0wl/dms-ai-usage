@@ -269,6 +269,48 @@ assert_eq "$(val "$OUT5" PRIMARY_UTIL)" "80" "PRIMARY_UTIL is the max across Acc
 assert_eq "$(val "$OUT5" PRIMARY_RESET)" "2026-09-17T00:00:00.000Z" "PRIMARY_RESET comes from the Account holding the max"
 assert_eq "$(val "$OUT5" SECONDARY_UTIL)" "6" "SECONDARY_UTIL is the max across Accounts"
 assert_eq "$(val "$OUT5" SECONDARY_RESET)" "2026-09-21T00:00:00.155Z" "SECONDARY_RESET comes from the Account holding the max"
+# ============================================================
+echo "=== Test 6: Per-Account Window readings ==="
+# ============================================================
+# The aggregate is the max, which hides which Account is binding. Each Account's
+# own reading is reported alongside it so work and personal keys do not blur.
+assert_eq "$(val "$OUT5" PROFILE_PRIMARY_UTIL)" "default:1,work:80" "PROFILE_PRIMARY_UTIL carries each Account's own rolling.percent"
+assert_eq "$(val "$OUT5" PROFILE_PRIMARY_RESET)" "default:2026-09-16T15:31:05.155Z,work:2026-09-17T00:00:00.000Z" "PROFILE_PRIMARY_RESET carries each Account's own reset"
+assert_eq "$(val "$OUT5" PROFILE_SECONDARY_UTIL)" "default:6,work:2" "PROFILE_SECONDARY_UTIL carries each Account's own weekly.percent"
+assert_eq "$(val "$OUT5" PROFILE_SECONDARY_RESET)" "default:2026-09-21T00:00:00.155Z,work:2026-09-22T00:00:00.000Z" "PROFILE_SECONDARY_RESET carries each Account's own reset"
+assert_eq "$(val "$OUT5" PROFILE_CREDS_STATUS)" "default:ok,work:ok" "PROFILE_CREDS_STATUS carries each Account's own status"
+
+# ============================================================
+echo "=== Test 7: A rejected secondary key is reported, not masked ==="
+# ============================================================
+H7=$(new_home home7)
+write_pi_key "$H7" k1
+OUT7=$(run_script "$H7" "work=k2")
+
+assert_eq "$(val "$OUT7" PROFILE_CREDS_STATUS)" "default:ok,work:missing" "a rejected secondary key is reported as missing, not hidden behind the healthy default"
+# The Source keeps working, so its status still follows the default Account. The
+# per-Account status is what makes the rejection visible.
+assert_eq "$(val "$OUT7" CREDS_STATUS)" "ok" "the Source-level status still follows the default Account"
+# A rejected key reports its own zero rather than the healthy Account's reading,
+# matching what the Source-level keys do for a lone rejected key, because the
+# settings card is what explains the zero.
+assert_eq "$(val "$OUT7" PROFILE_PRIMARY_UTIL)" "default:1,work:0" "a rejected key reports its own zero, not the healthy Account's reading"
+
+# ============================================================
+echo "=== Test 8: An unavailable Account reports no Window reading ==="
+# ============================================================
+# ADR-0002 has a failed endpoint report no Window values so the widget keeps its
+# last good reading rather than a fabricated zero. That holds per Account too,
+# so the failed Account is left out of the Window lists entirely.
+H8=$(new_home home8)
+write_pi_key "$H8" k1
+OUT8=$(run_script "$H8" "work=k404")
+
+assert_eq "$(val "$OUT8" PROFILE_CREDS_STATUS)" "default:ok,work:unavailable" "an unavailable Account keeps its own status"
+assert_eq "$(val "$OUT8" PROFILE_PRIMARY_UTIL)" "default:1" "an unavailable Account is omitted from PROFILE_PRIMARY_UTIL"
+assert_eq "$(val "$OUT8" PROFILE_SECONDARY_UTIL)" "default:6" "an unavailable Account is omitted from PROFILE_SECONDARY_UTIL"
+assert_eq "$(val "$OUT8" PROFILE_PRIMARY_RESET)" "default:2026-09-16T15:31:05.155Z" "an unavailable Account is omitted from PROFILE_PRIMARY_RESET"
+assert_eq "$(val "$OUT8" PROFILE_SECONDARY_RESET)" "default:2026-09-21T00:00:00.155Z" "an unavailable Account is omitted from PROFILE_SECONDARY_RESET"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

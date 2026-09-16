@@ -272,6 +272,29 @@ assert_match "$(val "$OUT8" WEEK_MODELS)" "GLM-5\.3-Air=600" "WEEK_MODELS keeps 
 assert_eq "$(val "$OUT8" PLAN_TYPE)" "lite" "PLAN_TYPE comes from the default account"
 
 # ============================================================
+echo "=== Test 9: Per-Account Window readings ==="
+# ============================================================
+# The aggregate is the max, which hides which Account is binding. Each Account's
+# own reading is reported alongside it so two keys do not blur into one.
+assert_eq "$(val "$OUT8" PROFILE_PRIMARY_UTIL)" "work:80,default:34" "PROFILE_PRIMARY_UTIL carries each Account's own primary Utilisation"
+assert_eq "$(val "$OUT8" PROFILE_PRIMARY_RESET)" "work:1700000000,default:1789279094" "PROFILE_PRIMARY_RESET carries each Account's own reset, ms converted to seconds"
+assert_eq "$(val "$OUT8" PROFILE_SECONDARY_UTIL)" "work:2,default:6" "PROFILE_SECONDARY_UTIL carries each Account's own secondary Utilisation"
+assert_eq "$(val "$OUT8" PROFILE_SECONDARY_RESET)" "work:1700000001,default:1789865116" "PROFILE_SECONDARY_RESET carries each Account's own reset"
+assert_eq "$(val "$OUT8" PROFILE_CREDS_STATUS)" "work:ok,default:ok" "PROFILE_CREDS_STATUS carries each Account's own status"
+
+# ============================================================
+echo "=== Test 10: A rejected secondary key is reported, not masked ==="
+# ============================================================
+H9=$(new_home home9)
+write_pi_key "$H9" k1
+OUT9=$(run_script "$H9" "work=k4")
+
+assert_eq "$(val "$OUT9" PROFILE_CREDS_STATUS)" "work:missing,default:ok" "a rejected key is reported as missing while the healthy Account still reads ok"
+# A rejected key reports its own zero rather than the healthy Account's reading,
+# matching what the Source-level keys do for a lone rejected key.
+assert_eq "$(val "$OUT9" PROFILE_PRIMARY_UTIL)" "work:0,default:34" "a rejected key reports its own zero, not the healthy Account's reading"
+
+# ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

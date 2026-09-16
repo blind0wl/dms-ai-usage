@@ -243,6 +243,15 @@ MONTH_TOKENS=0
 DAILY="0,0,0,0,0,0,0"
 WEEK_MODELS=""
 
+# Per-Account lists, in the "name:value,name2:value2" form the Claude and
+# ChatGPT Sources already emit. The aggregate above keeps the Pill reading
+# unchanged; these are what let the Popout report an Account on its own.
+PROF_PRIMARY_UTIL=""
+PROF_PRIMARY_RESET=""
+PROF_SECONDARY_UTIL=""
+PROF_SECONDARY_RESET=""
+PROF_CREDS_STATUS=""
+
 MODELS_ACC=""
 DAILY_ARR=(0 0 0 0 0 0 0)
 
@@ -298,6 +307,16 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
 
     MODELS_ACC="${MODELS_ACC:+${MODELS_ACC},}${a_models}"
 
+    # Each Account's own reading, so a rejected key cannot disappear behind a
+    # healthy default. Z.ai needs no Unavailable exception here: its endpoint is
+    # documented, so a failed call is a rejected key rather than a state the
+    # widget must carry last-good values through (ADR-0002).
+    PROF_PRIMARY_UTIL="${PROF_PRIMARY_UTIL:+${PROF_PRIMARY_UTIL},}${aname}:${a_pu}"
+    PROF_PRIMARY_RESET="${PROF_PRIMARY_RESET:+${PROF_PRIMARY_RESET},}${aname}:${a_pr}"
+    PROF_SECONDARY_UTIL="${PROF_SECONDARY_UTIL:+${PROF_SECONDARY_UTIL},}${aname}:${a_su}"
+    PROF_SECONDARY_RESET="${PROF_SECONDARY_RESET:+${PROF_SECONDARY_RESET},}${aname}:${a_sr}"
+    PROF_CREDS_STATUS="${PROF_CREDS_STATUS:+${PROF_CREDS_STATUS},}${aname}:${a_cs}"
+
     rm -f "$usage_tmpf"
 done
 
@@ -324,3 +343,8 @@ echo "MONTH_TOKENS=${MONTH_TOKENS}"
 echo "DAILY=${DAILY}"
 echo "WEEK_MODELS=${WEEK_MODELS}"
 echo "ACCOUNTS=${ACCOUNTS}"
+echo "PROFILE_PRIMARY_UTIL=${PROF_PRIMARY_UTIL}"
+echo "PROFILE_PRIMARY_RESET=${PROF_PRIMARY_RESET}"
+echo "PROFILE_SECONDARY_UTIL=${PROF_SECONDARY_UTIL}"
+echo "PROFILE_SECONDARY_RESET=${PROF_SECONDARY_RESET}"
+echo "PROFILE_CREDS_STATUS=${PROF_CREDS_STATUS}"
