@@ -250,18 +250,63 @@ While the refactor is in progress, each Section type lands one at a time and the
 plugin reloads cleanly (`dms ipc plugins reload aiUsage`, then no QML errors in
 the journal).
 
-Branch `refactor/source-registry` is done when:
+### Known DMS reload bug
+
+`dms ipc plugins reload` fails about half the time for this plugin, alternating
+success and failure with no code change, logging:
+
+```
+component error aiUsage widget .../ClaudeCodeUsageWidget.qml:719:17:
+  SourceTab is not a type
+```
+
+The cause is in DMS, not here: `PluginService.reloadPlugin` unloads and reloads
+within one call, and a directory import (`import "ui"`) does not survive that
+cycle. The original widget had no directory import, which is why it reloaded
+cleanly.
+
+What this does and does not affect:
+
+- Cold start and `dms ipc plugins disable` followed by `enable` are reliable.
+  Verified 6 for 6 with no component errors, so the plugin always appears.
+- Only the reload IPC call is affected, so this is a development-loop papercut.
+  Reloading twice clears it.
+
+Adding `ui/qmldir` does not fix it, and neither does moving the components back
+beside the widget (Quickshell loads the widget with a cache-busting query string,
+so the widget's own directory is not implicitly importable either). Revisit if
+DMS fixes the reload path.
+
+### Verified so far
+
+The pill renders byte-for-byte identically to the pre-refactor build. Captured
+the same bar region from both builds and compared: mean absolute pixel
+difference 0.00, zero differing pixels.
+
+The registry contract is covered by `tests/test-sources-registry.sh` (147
+assertions): descriptor completeness, every Section type implemented, every state
+key a Section reads produced by the widget, translated labels, and the settings
+list rules. `tests/test-qml-syntax.sh` recurses into `ui/`.
+
+The popout tabs have not been visually compared yet. Opening the popout could not
+be driven from outside the shell in this session (neither `triggerPopout()` nor a
+synthetic click through `ydotool` opened it), so the eight Section components are
+covered by static checks and the descriptor contract test but not by a render
+comparison. This is the one outstanding step.
+
+### Branch `refactor/source-registry` is done when
 
 1. The registry drives the pill and the popout with no per-Source branches
    outside `sources.js`.
-2. Claude, ChatGPT and Z.ai render identically to the current build. Verified by
-   reloading and comparing each tab against `screenshot.png`.
+2. Claude, ChatGPT and Z.ai render identically to the current build. The pill is
+   verified; each popout tab still needs comparing against `screenshot.png`.
 3. Settings show one ordered row per Source, and reordering changes pill and tab
    order.
-4. `tests/test-qml-functions.sh` covers descriptor lookup, Section resolution and
-   the settings list rules.
-5. `tests/test-qml-syntax.sh` recurses into `sections/`.
-6. The suite passes and `qmllint` reports no `[syntax]` diagnostics.
+4. `tests/test-qml-functions.sh` and `tests/test-sources-registry.sh` cover
+   descriptor lookup, Section resolution and the settings list rules.
+5. `tests/test-qml-syntax.sh` recurses into `ui/`.
+6. The suite passes (521 assertions across seven files) and `qmllint` reports no
+   `[syntax]` or `[missing-property]` diagnostics.
 
 Branch `feat/opencode-go-source` is done when:
 

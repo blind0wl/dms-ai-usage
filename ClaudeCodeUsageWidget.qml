@@ -47,8 +47,10 @@ PluginComponent {
     property var selectedAccount: ({})
     property var loginInProgress: ({})
     property var refreshPending: ({})
-    property var processes: ({})
     property bool isLoading: true
+
+    // Parallel to Sources.SOURCES: the Process for the Source at the same index.
+    property var sourceProcesses: []
 
     // Live countdown, refreshed on its own timer so countdowns tick between
     // fetches.
@@ -304,11 +306,16 @@ PluginComponent {
         return ["timeout", "120", "bash", root.scriptPathFor(id)].concat(root.accountArgs(id));
     }
 
+    function processFor(id) {
+        var at = Sources.ids().indexOf(id);
+        return at >= 0 && root.sourceProcesses[at] ? root.sourceProcesses[at] : null;
+    }
+
     // Wrapped in `timeout` as a watchdog: a run that never exits (a hung
     // `claude --version`, a stalled curl) would otherwise freeze that Source on
     // stale values until the plugin reloaded.
     function requestFetch(id) {
-        var p = root.processes[id];
+        var p = root.processFor(id);
         if (!p)
             return;
         if (p.running) {
@@ -384,16 +391,18 @@ PluginComponent {
             onExited: (exitCode, exitStatus) => root.onSourceExited(sourceId, exitCode)
         }
 
+        // Indexed by model position rather than by a property on the created
+        // object, which keeps the delegate's identity out of these handlers.
         onObjectAdded: (index, object) => {
-            var next = Object.assign({}, root.processes);
-            next[object.sourceId] = object;
-            root.processes = next;
+            var next = root.sourceProcesses.slice();
+            next[index] = object;
+            root.sourceProcesses = next;
         }
 
         onObjectRemoved: (index, object) => {
-            var next = Object.assign({}, root.processes);
-            delete next[object.sourceId];
-            root.processes = next;
+            var next = root.sourceProcesses.slice();
+            next[index] = null;
+            root.sourceProcesses = next;
         }
     }
 
