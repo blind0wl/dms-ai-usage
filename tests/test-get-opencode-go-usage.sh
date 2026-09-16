@@ -291,15 +291,16 @@ assert_eq "$(val "$OUT7" PROFILE_CREDS_STATUS)" "default:ok,work:missing" "a rej
 # The Source keeps working, so its status still follows the default Account. The
 # per-Account status is what makes the rejection visible.
 assert_eq "$(val "$OUT7" CREDS_STATUS)" "ok" "the Source-level status still follows the default Account"
-# A rejected key reports its own zero rather than the healthy Account's reading,
-# matching what the Source-level keys do for a lone rejected key, because the
-# settings card is what explains the zero.
-assert_eq "$(val "$OUT7" PROFILE_PRIMARY_UTIL)" "default:1,work:0" "a rejected key reports its own zero, not the healthy Account's reading"
+# The Account whose key was rejected reports its own zero rather than the
+# healthy Account's reading, matching what the Source-level keys do for a lone
+# Account whose key was rejected, because the settings Section is what explains
+# the zero.
+assert_eq "$(val "$OUT7" PROFILE_PRIMARY_UTIL)" "default:1,work:0" "the Account whose key was rejected reports its own zero, not the healthy Account's reading"
 
 # ============================================================
 echo "=== Test 8: An unavailable Account reports no Window reading ==="
 # ============================================================
-# ADR-0002 has a failed endpoint report no Window values so the widget keeps its
+# ADR-0002 has a failed endpoint report no Window values so the Popout keeps its
 # last good reading rather than a fabricated zero. That holds per Account too,
 # so the failed Account is left out of the Window lists entirely.
 H8=$(new_home home8)

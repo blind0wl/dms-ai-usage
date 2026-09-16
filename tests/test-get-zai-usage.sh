@@ -290,9 +290,10 @@ write_pi_key "$H9" k1
 OUT9=$(run_script "$H9" "work=k4")
 
 assert_eq "$(val "$OUT9" PROFILE_CREDS_STATUS)" "work:missing,default:ok" "a rejected key is reported as missing while the healthy Account still reads ok"
-# A rejected key reports its own zero rather than the healthy Account's reading,
-# matching what the Source-level keys do for a lone rejected key.
-assert_eq "$(val "$OUT9" PROFILE_PRIMARY_UTIL)" "work:0,default:34" "a rejected key reports its own zero, not the healthy Account's reading"
+# The Account whose key was rejected reports its own zero rather than the
+# healthy Account's reading, matching what the Source-level keys do for a lone
+# Account whose key was rejected.
+assert_eq "$(val "$OUT9" PROFILE_PRIMARY_UTIL)" "work:0,default:34" "the Account whose key was rejected reports its own zero, not the healthy Account's reading"
 
 # ============================================================
 echo ""

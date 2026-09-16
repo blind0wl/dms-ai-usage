@@ -182,11 +182,11 @@ CREDS_STATUS="missing"
 # Per-Account lists, in the "name:value,name2:value2" form the Claude and
 # ChatGPT Sources already emit. The aggregate above keeps the Pill reading
 # unchanged; these are what let the Popout report an Account on its own.
-PROF_PRIMARY_UTIL=""
-PROF_PRIMARY_RESET=""
-PROF_SECONDARY_UTIL=""
-PROF_SECONDARY_RESET=""
-PROF_CREDS_STATUS=""
+ACC_PRIMARY_UTIL=""
+ACC_PRIMARY_RESET=""
+ACC_SECONDARY_UTIL=""
+ACC_SECONDARY_RESET=""
+ACC_CREDS_STATUS=""
 
 max_util() {
     awk -v a="$1" -v b="$2" 'BEGIN { print (a + 0 > b + 0) ? 1 : 0 }'
@@ -226,12 +226,12 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     # healthy default. An Unavailable Account is left out of the Window lists
     # for the same reason the Source-level keys omit them (ADR-0002): there is
     # no reading, and a zero would be fabricated rather than measured.
-    PROF_CREDS_STATUS="${PROF_CREDS_STATUS:+${PROF_CREDS_STATUS},}${aname}:${a_cs}"
+    ACC_CREDS_STATUS="${ACC_CREDS_STATUS:+${ACC_CREDS_STATUS},}${aname}:${a_cs}"
     if [ "$a_cs" != "unavailable" ]; then
-        PROF_PRIMARY_UTIL="${PROF_PRIMARY_UTIL:+${PROF_PRIMARY_UTIL},}${aname}:${a_pu}"
-        PROF_PRIMARY_RESET="${PROF_PRIMARY_RESET:+${PROF_PRIMARY_RESET},}${aname}:${a_pr}"
-        PROF_SECONDARY_UTIL="${PROF_SECONDARY_UTIL:+${PROF_SECONDARY_UTIL},}${aname}:${a_su}"
-        PROF_SECONDARY_RESET="${PROF_SECONDARY_RESET:+${PROF_SECONDARY_RESET},}${aname}:${a_sr}"
+        ACC_PRIMARY_UTIL="${ACC_PRIMARY_UTIL:+${ACC_PRIMARY_UTIL},}${aname}:${a_pu}"
+        ACC_PRIMARY_RESET="${ACC_PRIMARY_RESET:+${ACC_PRIMARY_RESET},}${aname}:${a_pr}"
+        ACC_SECONDARY_UTIL="${ACC_SECONDARY_UTIL:+${ACC_SECONDARY_UTIL},}${aname}:${a_su}"
+        ACC_SECONDARY_RESET="${ACC_SECONDARY_RESET:+${ACC_SECONDARY_RESET},}${aname}:${a_sr}"
     fi
 
     rm -f "$usage_tmpf"
@@ -251,8 +251,8 @@ if [ "$CREDS_STATUS" != "unavailable" ]; then
 fi
 echo "CREDS_STATUS=${CREDS_STATUS}"
 echo "ACCOUNTS=${ACCOUNTS}"
-echo "PROFILE_PRIMARY_UTIL=${PROF_PRIMARY_UTIL}"
-echo "PROFILE_PRIMARY_RESET=${PROF_PRIMARY_RESET}"
-echo "PROFILE_SECONDARY_UTIL=${PROF_SECONDARY_UTIL}"
-echo "PROFILE_SECONDARY_RESET=${PROF_SECONDARY_RESET}"
-echo "PROFILE_CREDS_STATUS=${PROF_CREDS_STATUS}"
+echo "PROFILE_PRIMARY_UTIL=${ACC_PRIMARY_UTIL}"
+echo "PROFILE_PRIMARY_RESET=${ACC_PRIMARY_RESET}"
+echo "PROFILE_SECONDARY_UTIL=${ACC_SECONDARY_UTIL}"
+echo "PROFILE_SECONDARY_RESET=${ACC_SECONDARY_RESET}"
+echo "PROFILE_CREDS_STATUS=${ACC_CREDS_STATUS}"
