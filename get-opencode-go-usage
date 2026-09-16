@@ -1,0 +1,220 @@
+#!/usr/bin/env bash
+set -eu
+
+# opencode Go's usage endpoint is undocumented. The captured response is:
+#
+#   {"usage":{
+#     "rolling":{"status":"ok","percent":1,"resetsAt":"..."},
+#     "weekly": {"status":"ok","percent":6,"resetsAt":"..."},
+#     "monthly":{"status":"ok","percent":3,"resetsAt":"..."}}}
+#
+# `rolling` is the 5-hour Window and `weekly` the weekly one, each a percentage
+# of that Window's own allowance. `resetsAt` is ISO-8601, so the widget parses
+# it without any unit conversion. `monthly` is returned but not modelled,
+# because the registry gives every Source two Window slots and the Go console
+# surfaces exactly these two. Window lengths are declared in the descriptor, not
+# derived here, because the resets fall on boundaries rather than as rolling
+# spans.
+API_URL="https://opencode.ai/zen/go/v1/usage"
+
+# Credential discovery order, first hit wins:
+#   1. pi's auth store, where the key actually lives on this machine
+#   2. opencode's own credentials file, which its connect flow writes
+#   3. an environment variable
+#   4. a key added under Custom opencode Accounts in the plugin settings (argv)
+PI_AUTH="${HOME}/.pi/agent/auth.json"
+OPENCODE_AUTH="${HOME}/.local/share/opencode/auth.json"
+
+ACCOUNT_NAMES=()
+ACCOUNT_KEYS=()
+
+# add_account <name> <api-key>
+# First registration of a name (or of a key) wins, so the order the callers
+# below run in is the precedence order.
+add_account() {
+    local name="$1" key="$2"
+
+    # , | : are output delimiters, they cannot survive in an account name
+    name="${name//[,|:]/}"
+    [ -n "$name" ] || return 0
+    [ -n "$key" ] || return 0
+
+    local existing
+    for existing in "${ACCOUNT_NAMES[@]:-}"; do
+        [ "$existing" = "$name" ] && return 0
+    done
+    for existing in "${ACCOUNT_KEYS[@]:-}"; do
+        [ "$existing" = "$key" ] && return 0
+    done
+
+    ACCOUNT_NAMES+=("$name")
+    ACCOUNT_KEYS+=("$key")
+}
+
+# read_key <credentials-file> — the `opencode-go` entry's key, or empty.
+read_key() {
+    [ -f "$1" ] || return 0
+    jq -r '."opencode-go".key // ""' "$1" 2>/dev/null || true
+}
+
+pi_key=$(read_key "$PI_AUTH")
+[ -n "$pi_key" ] && add_account "default" "$pi_key"
+
+opencode_key=$(read_key "$OPENCODE_AUTH")
+[ -n "$opencode_key" ] && add_account "default" "$opencode_key"
+
+[ -n "${OPENCODE_GO_KEY:-}" ] && add_account "default" "$OPENCODE_GO_KEY"
+[ -n "${OPENCODE_API_KEY:-}" ] && add_account "default" "$OPENCODE_API_KEY"
+
+for arg in "$@"; do
+    case "$arg" in
+        *=*) add_account "${arg%%=*}" "${arg#*=}" ;;
+    esac
+done
+
+# No key anywhere means the Source isn't installed at all rather than logged
+# out, so it stays hidden from both the Pill and the Popout. The opencode binary
+# is never required, because the Source tracks a paid plan and must work on a
+# machine that only watches it.
+if [ "${#ACCOUNT_NAMES[@]}" -eq 0 ]; then
+    cat <<'NOTINSTALLED'
+PLAN_TYPE=unknown
+PRIMARY_UTIL=0
+PRIMARY_RESET=
+SECONDARY_UTIL=0
+SECONDARY_RESET=
+CREDS_STATUS=not_installed
+ACCOUNTS=
+NOTINSTALLED
+    exit 0
+fi
+
+# --- Per-account usage fetcher ---
+# Usage: fetch_account_usage <api-key> <out_tmpfile>
+# Writes PLAN_TYPE, PRIMARY_*, SECONDARY_*, CREDS_STATUS to out_tmpfile.
+fetch_account_usage() {
+    local key="$1"
+    local out_file="$2"
+
+    local plan_type="unknown"
+    local primary_util=0 primary_reset=""
+    local secondary_util=0 secondary_reset=""
+    local creds_status="missing"
+
+    write_out() {
+        printf 'PLAN_TYPE=%s\nPRIMARY_UTIL=%s\nPRIMARY_RESET=%s\nSECONDARY_UTIL=%s\nSECONDARY_RESET=%s\nCREDS_STATUS=%s\n' \
+            "$plan_type" "$primary_util" "$primary_reset" \
+            "$secondary_util" "$secondary_reset" "$creds_status" > "$out_file"
+    }
+
+    # The key goes in Authorization as "Bearer <key>", which the endpoint
+    # accepts; without one it answers 401 with an AuthError body.
+    local raw http body
+    raw=$(curl -s --max-time 10 -w $'\n%{http_code}' \
+        -H "Authorization: Bearer $key" \
+        "$API_URL" 2>/dev/null || echo "")
+    http="${raw##*$'\n'}"
+    body="${raw%$'\n'*}"
+    [ "$raw" = "$http" ] && body=""
+
+    # A rejected key is the one failure the user can fix in settings. It is
+    # reported as missing credentials, never as a working key sitting at 0%,
+    # because the two are different states.
+    local body_error
+    body_error=$(echo "$body" | jq -r '.error.type // ""' 2>/dev/null || echo "")
+    if [ "$http" = "401" ] || [ "$http" = "403" ] || [ "$body_error" = "AuthError" ]; then
+        creds_status="missing"
+        write_out
+        return
+    fi
+
+    # Anything else without a parseable body is a failed endpoint, not a zero
+    # reading. Nothing is known about the key, so report no usage rather than
+    # inventing zeros as a confirmed reading.
+    if ! echo "$body" | jq -e '.usage.rolling and .usage.weekly' >/dev/null 2>&1; then
+        creds_status="missing"
+        write_out
+        return
+    fi
+
+    creds_status="ok"
+    primary_util=$(echo "$body" | jq -r '.usage.rolling.percent // 0')
+    primary_reset=$(echo "$body" | jq -r '.usage.rolling.resetsAt // ""')
+    secondary_util=$(echo "$body" | jq -r '.usage.weekly.percent // 0')
+    secondary_reset=$(echo "$body" | jq -r '.usage.weekly.resetsAt // ""')
+
+    write_out
+}
+
+# --- Fetch per account in parallel ---
+TMPDIR_ROOT=$(mktemp -d)
+trap 'rm -rf "$TMPDIR_ROOT"' EXIT
+
+USAGE_TMPFILES=()
+PIDS=()
+
+for idx in "${!ACCOUNT_KEYS[@]}"; do
+    usage_tmpf=$(mktemp "$TMPDIR_ROOT/account_XXXXXX")
+    USAGE_TMPFILES+=("$usage_tmpf")
+    fetch_account_usage "${ACCOUNT_KEYS[$idx]}" "$usage_tmpf" &
+    PIDS+=("$!")
+done
+
+for pid in "${PIDS[@]:-}"; do
+    [ -n "$pid" ] && wait "$pid" || true
+done
+
+# --- Aggregate ---
+PLAN_TYPE="unknown"
+PRIMARY_UTIL=0
+PRIMARY_RESET=""
+SECONDARY_UTIL=0
+SECONDARY_RESET=""
+CREDS_STATUS="missing"
+
+max_util() {
+    awk -v a="$1" -v b="$2" 'BEGIN { print (a + 0 > b + 0) ? 1 : 0 }'
+}
+
+for idx in "${!USAGE_TMPFILES[@]}"; do
+    usage_tmpf="${USAGE_TMPFILES[$idx]}"
+    aname="${ACCOUNT_NAMES[$idx]}"
+    [ -f "$usage_tmpf" ] || continue
+
+    a_plan=$(grep "^PLAN_TYPE=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
+    a_pu=$(grep "^PRIMARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_pr=$(grep "^PRIMARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
+    a_su=$(grep "^SECONDARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
+    a_sr=$(grep "^SECONDARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
+    a_cs=$(grep "^CREDS_STATUS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "missing")
+
+    # Plan/status come from the "default" account, falling back to the first
+    # account when the user only configured named ones.
+    if [ "$aname" = "default" ] || [ "$idx" -eq 0 ]; then
+        PLAN_TYPE="$a_plan"
+        CREDS_STATUS="$a_cs"
+    fi
+
+    # Windows: the highest utilisation is the binding constraint, so its reset
+    # is the one the countdown must show.
+    if [ -n "$a_pr" ] && { [ -z "$PRIMARY_RESET" ] || [ "$(max_util "$a_pu" "$PRIMARY_UTIL")" = "1" ]; }; then
+        PRIMARY_UTIL="$a_pu"
+        PRIMARY_RESET="$a_pr"
+    fi
+    if [ -n "$a_sr" ] && { [ -z "$SECONDARY_RESET" ] || [ "$(max_util "$a_su" "$SECONDARY_UTIL")" = "1" ]; }; then
+        SECONDARY_UTIL="$a_su"
+        SECONDARY_RESET="$a_sr"
+    fi
+
+    rm -f "$usage_tmpf"
+done
+
+ACCOUNTS=$(IFS=,; echo "${ACCOUNT_NAMES[*]}")
+
+echo "PLAN_TYPE=${PLAN_TYPE}"
+echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
+echo "PRIMARY_RESET=${PRIMARY_RESET}"
+echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
+echo "SECONDARY_RESET=${SECONDARY_RESET}"
+echo "CREDS_STATUS=${CREDS_STATUS}"
+echo "ACCOUNTS=${ACCOUNTS}"

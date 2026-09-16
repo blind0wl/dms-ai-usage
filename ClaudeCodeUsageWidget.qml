@@ -32,6 +32,7 @@ PluginComponent {
     property var customProfiles: pluginData.customProfiles || []
     property var customChatgptAccounts: pluginData.customChatgptAccounts || []
     property var customZaiAccounts: pluginData.customZaiAccounts || []
+    property var customOpencodeAccounts: pluginData.customOpencodeAccounts || []
     property real usdEurRate: 0
 
     // The ordered list of enabled Sources. Order drives the pill rings and the
@@ -284,6 +285,8 @@ PluginComponent {
             return root.customChatgptAccounts;
         if (key === "customZaiAccounts")
             return root.customZaiAccounts;
+        if (key === "customOpencodeAccounts")
+            return root.customOpencodeAccounts;
         return [];
     }
 
@@ -343,6 +346,7 @@ PluginComponent {
     onCustomProfilesChanged: root.accountsChanged("customProfiles")
     onCustomChatgptAccountsChanged: root.accountsChanged("customChatgptAccounts")
     onCustomZaiAccountsChanged: root.accountsChanged("customZaiAccounts")
+    onCustomOpencodeAccountsChanged: root.accountsChanged("customOpencodeAccounts")
 
     // Toggling a Source on fetches immediately rather than waiting a tick.
     onSourceOrderChanged: {

@@ -142,7 +142,9 @@ check(reg.byId(ids[0]) === reg.SOURCES[0], "byId returns the matching descriptor
 check(JSON.stringify(reg.resolveList(undefined)) === JSON.stringify(ids), "absent list enables every Source in registry order");
 check(reg.resolveList(null).length === ids.length, "null list enables every Source");
 check(reg.resolveList([]).length === 0, "an explicitly empty list stays empty so the last Source can be switched off");
-check(JSON.stringify(reg.resolveList([ids[2], ids[0]])) === JSON.stringify([ids[2], ids[0], ids[1]]), "a partial list keeps its order and appends missing Sources");
+const partial = [ids[2], ids[0]];
+const expectedPartial = partial.concat(ids.filter((id) => !partial.includes(id)));
+check(JSON.stringify(reg.resolveList(partial)) === JSON.stringify(expectedPartial), "a partial list keeps its order and appends missing Sources");
 check(reg.resolveList(["ghost"]).length === ids.length, "unknown ids are dropped");
 check(reg.resolveList(["ghost", ids[1]])[0] === ids[1], "a dropped id does not displace a real one");
 check(reg.resolveList([ids[0], ids[0]]).length === ids.length, "a duplicated id is not repeated");

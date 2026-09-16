@@ -144,6 +144,56 @@ var SOURCES = [
         ]
     },
     {
+        id: "opencode",
+        labelKey: "opencode Go",
+        script: "get-opencode-go-usage",
+        // The endpoint reports ISO-8601 reset times and no window length, so
+        // the fixed 5h and 7d lengths are declared here for Pacing. Its two
+        // windows are the response's `rolling` and `weekly` entries; the
+        // response's `monthly` entry is not modelled.
+        windows: {
+            primary: {
+                util: "PRIMARY_UTIL",
+                reset: "PRIMARY_RESET",
+                windowSeconds: 18000,
+                labelKey: "5h Window"
+            },
+            secondary: {
+                util: "SECONDARY_UTIL",
+                reset: "SECONDARY_RESET",
+                windowSeconds: 604800,
+                labelKey: "Weekly Window"
+            }
+        },
+        accounts: {
+            // opencode Go is keyed rather than directory-backed, so Accounts
+            // are passed to the script as name=api-key, like Z.ai.
+            settingKey: "customOpencodeAccounts",
+            argField: "key",
+            labelKey: "Account",
+            titleKey: "Custom opencode Accounts",
+            descriptionKey: "Track extra opencode Go keys by API key. A key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".",
+            fieldLabelKey: "API key",
+            placeholder: ""
+        },
+        login: {
+            // There is no CLI login flow to shell out to, and the opencode
+            // binary is not required. The fix is an API key in the settings.
+            kind: "text",
+            titleKey: "API key rejected",
+            bodyKey: "Check your opencode Go key in the plugin settings."
+        },
+        planStyle: "plan",
+        // The response carries no plan name and no spend, so the tab holds the
+        // Source name and its two Window cards, with no stats, chart or models.
+        sections: [
+            { type: "header" },
+            { type: "login" },
+            { type: "windows", which: "primary" },
+            { type: "windows", which: "secondary" }
+        ]
+    },
+    {
         id: "zai",
         labelKey: "Z.ai",
         script: "get-zai-usage",

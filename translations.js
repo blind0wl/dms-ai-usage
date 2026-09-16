@@ -23,6 +23,8 @@ var strings = {
         { fr: "ChatGPT", es: "ChatGPT" },
     "Z.ai":
         { fr: "Z.ai", es: "Z.ai" },
+    "opencode Go":
+        { fr: "opencode Go", es: "opencode Go" },
     "Model calls":
         { fr: "appels de modèle", es: "llamadas al modelo" },
     "Plan":
@@ -150,6 +152,13 @@ var strings = {
             fr: "Suivez d'autres comptes Z.ai par clé d'API. Une clé présente dans la configuration de l'agent pi (~/.pi/agent/models.json) est détectée automatiquement comme « default ».",
             es: "Haz seguimiento de otras cuentas de Z.ai mediante su clave de API. Una clave presente en la configuración del agente pi (~/.pi/agent/models.json) se detecta automáticamente como «default»."
         },
+    "Custom opencode Accounts":
+        { fr: "Comptes opencode personnalisés", es: "Cuentas de opencode personalizadas" },
+    "Track extra opencode Go keys by API key. A key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".":
+        {
+            fr: "Suivez d'autres clés opencode Go par clé d'API. Une clé présente dans le magasin d'authentification de l'agent pi (~/.pi/agent/auth.json) est détectée automatiquement comme « default ».",
+            es: "Haz seguimiento de otras claves de opencode Go mediante su clave de API. Una clave presente en el almacén de autenticación del agente pi (~/.pi/agent/auth.json) se detecta automáticamente como «default»."
+        },
     "API key":
         { fr: "Clé d'API", es: "Clave de API" },
     "Name":
@@ -183,6 +192,11 @@ var strings = {
         {
             fr: "Vérifiez votre clé d'API Z.ai dans les paramètres du plugin.",
             es: "Comprueba tu clave de API de Z.ai en los ajustes del plugin."
+        },
+    "Check your opencode Go key in the plugin settings.":
+        {
+            fr: "Vérifiez votre clé opencode Go dans les paramètres du plugin.",
+            es: "Comprueba tu clave de opencode Go en los ajustes del plugin."
         },
     "Log in":
         { fr: "Se connecter", es: "Iniciar sesión" },
