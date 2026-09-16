@@ -3,6 +3,8 @@
 # Extracts pure JS functions from ClaudeCodeUsageWidget.qml and tests them via Node.js
 set -eu
 
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+
 # Check for Node.js
 if ! command -v node >/dev/null 2>&1; then
     echo "SKIP: Node.js not available, skipping QML function tests"
@@ -686,6 +688,111 @@ R_PAST=$(run_js "${JS_HARNESS} countdownNow = Date.UTC(2026, 8, 13, 3, 35, 0); c
 if [ "$R_PAST" = "Resetting..." ]; then pass "past reset still Resetting... without a label"; else fail "past reset got '$R_PAST'"; fi
 R_ZERO=$(run_js "${JS_HARNESS} console.log(formatCountdown(0))")
 if [ "$R_ZERO" = "" ]; then pass "zero reset still empty"; else fail "zero reset got '$R_ZERO'"; fi
+
+# ============================================================
+echo "=== Test 10: endpoint failures keep the last good reading ==="
+# ============================================================
+
+# applyCredsStatus is the one piece of the stale-value rule that is pure, so it
+# is pulled out of the widget itself rather than copied into this harness, and
+# exercised for real.
+CREDS_REPORT=/tmp/creds-status-report.txt
+node - "$SCRIPT_DIR/ClaudeCodeUsageWidget.qml" > "$CREDS_REPORT" 2>&1 <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(process.argv[2], "utf8");
+const match = source.match(/function applyCredsStatus\(st, val\) \{[\s\S]*?\n    \}/);
+if (!match) {
+    console.log("FAIL\tapplyCredsStatus could not be extracted from the widget");
+    process.exit(0);
+}
+const sandbox = {};
+vm.createContext(sandbox);
+vm.runInContext(match[0] + "; this.apply = applyCredsStatus;", sandbox, { filename: "applyCredsStatus" });
+const apply = sandbox.apply;
+const results = [];
+const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
+
+// A good reading is the only thing that counts as data.
+const good = { credsStatus: "unknown", hasData: false, primary: { util: 0 }, secondary: { util: 0 } };
+apply(good, "ok");
+check(good.hasData === true && good.credsStatus === "ok", "a good reading marks the Source as having data");
+
+// An endpoint failure must not blank the last good reading: the script reports
+// no Window values, so the widget keeps them and the status card marks them
+// stale. hasData survives so the card knows there is something to fall back on.
+const afterFailure = { credsStatus: "ok", hasData: true, primary: { util: 42 }, secondary: { util: 7 } };
+apply(afterFailure, "unavailable");
+check(afterFailure.hasData === true, "an endpoint failure keeps the last good reading marked as data");
+check(afterFailure.credsStatus === "unavailable", "an endpoint failure is its own status");
+check(afterFailure.primary.util === 42 && afterFailure.secondary.util === 7, "an endpoint failure does not overwrite the Window values with zeros");
+
+// A first fetch that fails has nothing to fall back on, so the tab must say so
+// rather than draw a fabricated zero.
+const firstFailure = { credsStatus: "unknown", hasData: false, primary: { util: 0 }, secondary: { util: 0 } };
+apply(firstFailure, "unavailable");
+check(firstFailure.hasData === false, "a first endpoint failure reports no data to fall back on");
+
+// A rejected key is a credential problem, not data: it must not mark the
+// Source as having a current reading and must stay distinct from unavailable.
+const rejected = { credsStatus: "unknown", hasData: false };
+apply(rejected, "missing");
+check(rejected.hasData === false && rejected.credsStatus === "missing", "a rejected key is not data and is not unavailable");
+
+console.log(results.join("\n"));
+NODE
+
+while IFS=$'\t' read -r status label; do
+    [ -z "${status:-}" ] && continue
+    if [ "$status" = "PASS" ]; then pass "$label"; else fail "$label"; fi
+done < "$CREDS_REPORT"
+
+if ! grep -q "^PASS\|^FAIL" "$CREDS_REPORT"; then
+    fail "creds-status report produced no results (node failed?) see $CREDS_REPORT"
+fi
+
+# ============================================================
+echo "=== Test 11: the Pill's no-reading rule ==="
+# ============================================================
+
+# pillHasReading decides whether a Pill slot draws a reading or a hollow
+# no-reading ring. Extracted from the widget so the rule cannot drift.
+PILL_REPORT=/tmp/pill-reading-report.txt
+node - "$SCRIPT_DIR/ClaudeCodeUsageWidget.qml" > "$PILL_REPORT" 2>&1 <<'NODE'
+const fs = require("fs");
+const vm = require("vm");
+const source = fs.readFileSync(process.argv[2], "utf8");
+const match = source.match(/function pillHasReading\(id\) \{[\s\S]*?\n    \}/);
+if (!match) {
+    console.log("FAIL\tpillHasReading could not be extracted from the widget");
+    process.exit(0);
+}
+const sandbox = { root: { sourceData: {} } };
+vm.createContext(sandbox);
+vm.runInContext(match[0] + "; this.pillHasReading = pillHasReading;", sandbox, { filename: "pillHasReading" });
+const results = [];
+const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
+const has = (status) => {
+    sandbox.root.sourceData = status === undefined ? {} : { s: { credsStatus: status } };
+    return sandbox.pillHasReading("s");
+};
+check(has(undefined) === true, "a Source before its first fetch keeps its ring");
+check(has("unknown") === true, "an unknown status keeps its ring");
+check(has("ok") === true, "a good reading draws the ring");
+check(has("missing") === false, "missing credentials draw no reading");
+check(has("expired") === false, "expired credentials draw no reading");
+check(has("unavailable") === false, "an unavailable endpoint draws no reading");
+console.log(results.join("\n"));
+NODE
+
+while IFS=$'\t' read -r status label; do
+    [ -z "${status:-}" ] && continue
+    if [ "$status" = "PASS" ]; then pass "$label"; else fail "$label"; fi
+done < "$PILL_REPORT"
+
+if ! grep -q "^PASS\|^FAIL" "$PILL_REPORT"; then
+    fail "pill-reading report produced no results (node failed?) see $PILL_REPORT"
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

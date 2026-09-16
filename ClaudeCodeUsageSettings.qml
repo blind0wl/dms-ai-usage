@@ -4,19 +4,101 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 import "translations.js" as Tr
+import "sources.js" as Sources
+import "ui"
 
 PluginSettings {
     id: root
-    pluginId: "claudeCodeUsage"
+
+    // Must match the id in plugin.json. The widget loads its settings as
+    // "aiUsage", so a different id here would write to a key it never reads.
+    pluginId: "aiUsage"
 
     property string lang: (SessionData.locale || Qt.locale().name).split(/[_-]/)[0]
     function tr(key) {
         return Tr.tr(key, lang);
     }
 
+    // --- Source order ---
+    // The stored list is the ordered set of enabled Sources. Order drives the
+    // pill rings and the popout tabs. It is reconciled against the registry on
+    // load so a stale list heals itself and a newly added Source appears.
+    property var sourceOrder: []
+    property bool sourceOrderLoaded: false
+
+    Component.onCompleted: loadSourceOrder()
+
+    function loadSourceOrder() {
+        sourceOrderLoaded = false;
+        sourceOrder = Sources.resolveList(root.loadValue("sources", null), root.loadValue("sourcesKnown", null));
+        sourceOrderLoaded = true;
+    }
+
+    // `sources` is the enabled order. `sourcesKnown` is every registry id the
+    // user has been shown, and is what lets a disabled Source stay disabled
+    // while a Source added by an update still appears on its own.
+    function saveSourceOrder() {
+        if (!sourceOrderLoaded)
+            return;
+        root.saveValue("sources", sourceOrder);
+        root.saveValue("sourcesKnown", Sources.ids());
+    }
+
+    function isEnabled(id) {
+        return sourceOrder.indexOf(id) >= 0;
+    }
+
+    function setEnabled(id, enabled) {
+        var list = sourceOrder.slice();
+        var at = list.indexOf(id);
+        if (enabled && at < 0)
+            list.push(id);
+        else if (!enabled && at >= 0)
+            list.splice(at, 1);
+        sourceOrder = list;
+        saveSourceOrder();
+    }
+
+    function move(id, delta) {
+        var list = sourceOrder.slice();
+        var at = list.indexOf(id);
+        if (at < 0)
+            return;
+        var to = at + delta;
+        if (to < 0 || to >= list.length)
+            return;
+        var tmp = list[at];
+        list[at] = list[to];
+        list[to] = tmp;
+        sourceOrder = list;
+        saveSourceOrder();
+    }
+
+    // Enabled Sources first, in their configured order, then any disabled ones
+    // in registry order so they can be switched back on.
+    function displayOrder() {
+        var out = [];
+        for (var i = 0; i < sourceOrder.length; i++)
+            out.push(sourceOrder[i]);
+        var known = Sources.ids();
+        for (var j = 0; j < known.length; j++) {
+            if (out.indexOf(known[j]) < 0)
+                out.push(known[j]);
+        }
+        return out;
+    }
+
+    readonly property var displayDescriptors: displayOrder().map(function (id) {
+        return Sources.byId(id);
+    })
+
+    readonly property var accountDescriptors: Sources.SOURCES.filter(function (d) {
+        return d.accounts !== undefined;
+    })
+
     StyledText {
         width: parent.width
-        text: root.tr("Claude Code Usage")
+        text: root.tr("AI Usage")
         font.pixelSize: Theme.fontSizeLarge
         font.weight: Font.Medium
         color: Theme.surfaceText
@@ -24,7 +106,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: root.tr("Monitor your Claude Code subscription usage. Rate limits and subscription tier are detected automatically via the Anthropic API.")
+        text: root.tr("Monitor the usage of your AI coding subscriptions. Rate limits and subscription tiers are detected automatically.")
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
@@ -49,27 +131,6 @@ PluginSettings {
         defaultValue: true
     }
 
-    ToggleSetting {
-        settingKey: "enableClaude"
-        label: root.tr("Enable Claude Source")
-        description: root.tr("Show Claude Code usage. Off, or Claude Code not installed, hides its ring entirely.")
-        defaultValue: true
-    }
-
-    ToggleSetting {
-        settingKey: "enableChatgpt"
-        label: root.tr("Enable ChatGPT Source")
-        description: root.tr("Show Codex/ChatGPT usage. Off, or Codex not installed, hides its ring entirely.")
-        defaultValue: true
-    }
-
-    ToggleSetting {
-        settingKey: "enableZai"
-        label: root.tr("Enable Z.ai Source")
-        description: root.tr("Show Z.ai GLM Coding Plan usage. Off, or no API key found, hides its ring entirely.")
-        defaultValue: true
-    }
-
     Rectangle {
         width: parent.width
         height: 1
@@ -78,53 +139,13 @@ PluginSettings {
     }
 
     Column {
-        id: customProfilesSetting
+        id: sourcesSetting
 
         width: parent.width
         spacing: Theme.spacingM
 
-        property var items: []
-        property bool isLoading: false
-        readonly property real nameColumnWidth: Math.min(130, Math.max(100, width * 0.27))
-        readonly property real actionWidth: 92
-
-        Component.onCompleted: loadValue()
-
-        function loadValue() {
-            isLoading = true;
-            items = root.loadValue("customProfiles", []);
-            isLoading = false;
-        }
-
-        function saveItems(newItems) {
-            items = newItems;
-            if (!isLoading)
-                root.saveValue("customProfiles", items);
-        }
-
-        function addItem() {
-            var name = profileNameInput.text.trim();
-            var path = profilePathInput.text.trim();
-            if (!name || !path)
-                return;
-
-            saveItems(items.concat([{
-                name: name,
-                path: path
-            }]));
-            profileNameInput.text = "";
-            profilePathInput.text = "";
-            profileNameInput.forceActiveFocus();
-        }
-
-        function removeItem(index) {
-            var updatedItems = items.slice();
-            updatedItems.splice(index, 1);
-            saveItems(updatedItems);
-        }
-
         StyledText {
-            text: root.tr("Custom Profiles")
+            text: root.tr("Sources")
             font.pixelSize: Theme.fontSizeMedium
             font.weight: Font.Medium
             color: Theme.surfaceText
@@ -132,528 +153,167 @@ PluginSettings {
 
         StyledText {
             width: parent.width
-            text: root.tr("Track extra Claude config directories. Point at a CLAUDE_CONFIG_DIR (the folder containing projects/). ~/.claude, Claude Code Switcher and claude-code-profiles are detected automatically.")
+            text: root.tr("Choose which Sources appear, and in what order. This sets both the taskbar ring order and the popout tab order.")
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap
         }
 
-        Row {
-            width: parent.width
-            spacing: Theme.spacingS
+        Repeater {
+            model: root.displayDescriptors
 
-            StyledText {
-                width: customProfilesSetting.nameColumnWidth
-                text: root.tr("Name")
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.surfaceText
-            }
+            StyledRect {
+                id: sourceRow
 
-            StyledText {
-                width: parent.width - customProfilesSetting.nameColumnWidth - customProfilesSetting.actionWidth - parent.spacing * 2
-                text: root.tr("Config directory")
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.surfaceText
-            }
+                required property int index
+                required property var modelData
 
-            Item {
-                width: customProfilesSetting.actionWidth
-                height: 1
-            }
-        }
+                readonly property bool isOn: root.isEnabled(modelData.id)
+                // Only enabled Sources hold a position, so only they can move.
+                readonly property bool inList: index < root.sourceOrder.length
+                readonly property bool canMoveUp: inList && index > 0
+                readonly property bool canMoveDown: inList && index < root.sourceOrder.length - 1
 
-        Row {
-            width: parent.width
-            spacing: Theme.spacingS
+                width: parent.width
+                height: 48
+                radius: Theme.cornerRadius
+                color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
+                border.width: 0
 
-            DankTextField {
-                id: profileNameInput
-                width: customProfilesSetting.nameColumnWidth
-                placeholderText: "work"
-                Keys.onReturnPressed: customProfilesSetting.addItem()
-            }
+                Row {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.spacingM
+                    anchors.rightMargin: Theme.spacingM
+                    spacing: Theme.spacingS
 
-            DankTextField {
-                id: profilePathInput
-                width: parent.width - customProfilesSetting.nameColumnWidth - customProfilesSetting.actionWidth - parent.spacing * 2
-                placeholderText: "~/.ccp/data/work"
-                Keys.onReturnPressed: customProfilesSetting.addItem()
-            }
+                    DankIcon {
+                        name: "monitoring"
+                        size: 18
+                        color: sourceRow.isOn ? Theme.primary : Theme.surfaceVariantText
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
 
-            DankButton {
-                width: customProfilesSetting.actionWidth
-                height: 40
-                text: root.tr("Add")
-                onClicked: customProfilesSetting.addItem()
-            }
-        }
-
-        Column {
-            width: parent.width
-            spacing: Theme.spacingS
-
-            Repeater {
-                model: customProfilesSetting.items
-
-                StyledRect {
-                    required property int index
-                    required property var modelData
-
-                    width: parent.width
-                    height: 44
-                    radius: Theme.cornerRadius
-                    color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                    border.width: 0
+                    StyledText {
+                        width: Math.max(0, parent.width - 18 - moveButtons.width - toggleSwitch.width - Theme.spacingS * 3)
+                        text: root.tr(modelData.labelKey)
+                        font.pixelSize: Theme.fontSizeMedium
+                        color: sourceRow.isOn ? Theme.surfaceText : Theme.surfaceVariantText
+                        anchors.verticalCenter: parent.verticalCenter
+                        elide: Text.ElideRight
+                    }
 
                     Row {
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingS
-                        spacing: Theme.spacingS
+                        id: moveButtons
+                        spacing: Theme.spacingXS
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: sourceRow.inList
 
-                        StyledText {
-                            width: customProfilesSetting.nameColumnWidth
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData.name || ""
-                            color: Theme.surfaceText
-                            font.pixelSize: Theme.fontSizeMedium
-                            elide: Text.ElideRight
+                        Repeater {
+                            model: [{
+                                delta: -1,
+                                icon: "keyboard_arrow_up",
+                                canMove: sourceRow.canMoveUp
+                            }, {
+                                delta: 1,
+                                icon: "keyboard_arrow_down",
+                                canMove: sourceRow.canMoveDown
+                            }]
+
+                            Rectangle {
+                                required property var modelData
+
+                                width: 28
+                                height: 28
+                                radius: 14
+                                color: moveArea.containsMouse && modelData.canMove ? Theme.surfaceVariant : "transparent"
+
+                                DankIcon {
+                                    anchors.centerIn: parent
+                                    name: modelData.icon
+                                    size: 18
+                                    color: modelData.canMove ? Theme.surfaceText : Theme.withAlpha(Theme.surfaceVariantText, 0.4)
+                                }
+
+                                MouseArea {
+                                    id: moveArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    enabled: modelData.canMove
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.move(sourceRow.modelData.id, modelData.delta)
+                                }
+                            }
                         }
+                    }
 
-                        StyledText {
-                            width: parent.width - customProfilesSetting.nameColumnWidth - customProfilesSetting.actionWidth - parent.spacing * 2
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData.path || ""
-                            color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeMedium
-                            elide: Text.ElideMiddle
+                    Rectangle {
+                        id: toggleSwitch
+                        width: 44
+                        height: 24
+                        radius: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: sourceRow.isOn ? Theme.primary : Theme.surfaceVariant
+
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: 120
+                            }
                         }
 
                         Rectangle {
-                            width: customProfilesSetting.actionWidth
-                            height: 32
+                            width: 18
+                            height: 18
+                            radius: 9
                             anchors.verticalCenter: parent.verticalCenter
-                            color: removeArea.containsMouse ? Theme.errorHover : Theme.error
-                            radius: Theme.cornerRadius
+                            x: sourceRow.isOn ? parent.width - width - 3 : 3
+                            color: sourceRow.isOn ? Theme.primaryText : Theme.surfaceVariantText
 
-                            StyledText {
-                                anchors.centerIn: parent
-                                text: root.tr("Remove")
-                                color: Theme.onError
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: Font.Medium
+                            Behavior on x {
+                                NumberAnimation {
+                                    duration: 120
+                                }
                             }
+                        }
 
-                            MouseArea {
-                                id: removeArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: customProfilesSetting.removeItem(index)
-                            }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.setEnabled(sourceRow.modelData.id, !sourceRow.isOn)
                         }
                     }
                 }
             }
-
-            StyledText {
-                text: root.tr("No items added yet")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceVariantText
-                visible: customProfilesSetting.items.length === 0
-            }
         }
     }
 
-    Rectangle {
-        width: parent.width
-        height: 1
-        color: Theme.outline
-        opacity: 0.3
-    }
-
+    // Wrapped in a Column so PluginSettings re-parents it into the settings
+    // column; a bare Repeater is not an Item and would not be laid out.
     Column {
-        id: customChatgptAccountsSetting
-
         width: parent.width
         spacing: Theme.spacingM
 
-        property var items: []
-        property bool isLoading: false
-        readonly property real nameColumnWidth: Math.min(130, Math.max(100, width * 0.27))
-        readonly property real actionWidth: 92
+        Repeater {
+            model: root.accountDescriptors
 
-        Component.onCompleted: loadValue()
+            Column {
+                required property int index
+                required property var modelData
 
-        function loadValue() {
-            isLoading = true;
-            items = root.loadValue("customChatgptAccounts", []);
-            isLoading = false;
-        }
+                width: parent.width
+                spacing: Theme.spacingM
 
-        function saveItems(newItems) {
-            items = newItems;
-            if (!isLoading)
-                root.saveValue("customChatgptAccounts", items);
-        }
-
-        function addItem() {
-            var name = chatgptAccountNameInput.text.trim();
-            var path = chatgptAccountPathInput.text.trim();
-            if (!name || !path)
-                return;
-
-            saveItems(items.concat([{
-                name: name,
-                path: path
-            }]));
-            chatgptAccountNameInput.text = "";
-            chatgptAccountPathInput.text = "";
-            chatgptAccountNameInput.forceActiveFocus();
-        }
-
-        function removeItem(index) {
-            var updatedItems = items.slice();
-            updatedItems.splice(index, 1);
-            saveItems(updatedItems);
-        }
-
-        StyledText {
-            text: root.tr("Custom ChatGPT Accounts")
-            font.pixelSize: Theme.fontSizeMedium
-            font.weight: Font.Medium
-            color: Theme.surfaceText
-        }
-
-        StyledText {
-            width: parent.width
-            text: root.tr("Track extra Codex accounts. Point at a CODEX_HOME (the folder containing auth.json). ~/.codex is detected automatically as \"default\".")
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-            wrapMode: Text.WordWrap
-        }
-
-        Row {
-            width: parent.width
-            spacing: Theme.spacingS
-
-            StyledText {
-                width: customChatgptAccountsSetting.nameColumnWidth
-                text: root.tr("Name")
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.surfaceText
-            }
-
-            StyledText {
-                width: parent.width - customChatgptAccountsSetting.nameColumnWidth - customChatgptAccountsSetting.actionWidth - parent.spacing * 2
-                text: root.tr("Config directory")
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.surfaceText
-            }
-
-            Item {
-                width: customChatgptAccountsSetting.actionWidth
-                height: 1
-            }
-        }
-
-        Row {
-            width: parent.width
-            spacing: Theme.spacingS
-
-            DankTextField {
-                id: chatgptAccountNameInput
-                width: customChatgptAccountsSetting.nameColumnWidth
-                placeholderText: "work"
-                Keys.onReturnPressed: customChatgptAccountsSetting.addItem()
-            }
-
-            DankTextField {
-                id: chatgptAccountPathInput
-                width: parent.width - customChatgptAccountsSetting.nameColumnWidth - customChatgptAccountsSetting.actionWidth - parent.spacing * 2
-                placeholderText: "~/.codex-work"
-                Keys.onReturnPressed: customChatgptAccountsSetting.addItem()
-            }
-
-            DankButton {
-                width: customChatgptAccountsSetting.actionWidth
-                height: 40
-                text: root.tr("Add")
-                onClicked: customChatgptAccountsSetting.addItem()
-            }
-        }
-
-        Column {
-            width: parent.width
-            spacing: Theme.spacingS
-
-            Repeater {
-                model: customChatgptAccountsSetting.items
-
-                StyledRect {
-                    required property int index
-                    required property var modelData
-
+                Rectangle {
                     width: parent.width
-                    height: 44
-                    radius: Theme.cornerRadius
-                    color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                    border.width: 0
-
-                    Row {
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingS
-                        spacing: Theme.spacingS
-
-                        StyledText {
-                            width: customChatgptAccountsSetting.nameColumnWidth
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData.name || ""
-                            color: Theme.surfaceText
-                            font.pixelSize: Theme.fontSizeMedium
-                            elide: Text.ElideRight
-                        }
-
-                        StyledText {
-                            width: parent.width - customChatgptAccountsSetting.nameColumnWidth - customChatgptAccountsSetting.actionWidth - parent.spacing * 2
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData.path || ""
-                            color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeMedium
-                            elide: Text.ElideMiddle
-                        }
-
-                        Rectangle {
-                            width: customChatgptAccountsSetting.actionWidth
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: chatgptRemoveArea.containsMouse ? Theme.errorHover : Theme.error
-                            radius: Theme.cornerRadius
-
-                            StyledText {
-                                anchors.centerIn: parent
-                                text: root.tr("Remove")
-                                color: Theme.onError
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: Font.Medium
-                            }
-
-                            MouseArea {
-                                id: chatgptRemoveArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: customChatgptAccountsSetting.removeItem(index)
-                            }
-                        }
-                    }
+                    height: 1
+                    color: Theme.outline
+                    opacity: 0.3
+                    visible: index > 0
                 }
-            }
 
-            StyledText {
-                text: root.tr("No items added yet")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceVariantText
-                visible: customChatgptAccountsSetting.items.length === 0
-            }
-        }
-    }
-
-    Rectangle {
-        width: parent.width
-        height: 1
-        color: Theme.outline
-        opacity: 0.3
-    }
-
-    Column {
-        id: customZaiAccountsSetting
-
-        width: parent.width
-        spacing: Theme.spacingM
-
-        property var items: []
-        property bool isLoading: false
-        readonly property real nameColumnWidth: Math.min(130, Math.max(100, width * 0.27))
-        readonly property real actionWidth: 92
-
-        Component.onCompleted: loadValue()
-
-        function loadValue() {
-            isLoading = true;
-            items = root.loadValue("customZaiAccounts", []);
-            isLoading = false;
-        }
-
-        function saveItems(newItems) {
-            items = newItems;
-            if (!isLoading)
-                root.saveValue("customZaiAccounts", items);
-        }
-
-        function addItem() {
-            var name = zaiAccountNameInput.text.trim();
-            var key = zaiAccountKeyInput.text.trim();
-            if (!name || !key)
-                return;
-
-            saveItems(items.concat([{
-                name: name,
-                key: key
-            }]));
-            zaiAccountNameInput.text = "";
-            zaiAccountKeyInput.text = "";
-            zaiAccountNameInput.forceActiveFocus();
-        }
-
-        function removeItem(index) {
-            var updatedItems = items.slice();
-            updatedItems.splice(index, 1);
-            saveItems(updatedItems);
-        }
-
-        StyledText {
-            text: root.tr("Custom Z.ai Accounts")
-            font.pixelSize: Theme.fontSizeMedium
-            font.weight: Font.Medium
-            color: Theme.surfaceText
-        }
-
-        StyledText {
-            width: parent.width
-            text: root.tr("Track extra Z.ai accounts by API key. A key from the pi coding agent config (~/.pi/agent/models.json) is detected automatically as \"default\".")
-            font.pixelSize: Theme.fontSizeSmall
-            color: Theme.surfaceVariantText
-            wrapMode: Text.WordWrap
-        }
-
-        Row {
-            width: parent.width
-            spacing: Theme.spacingS
-
-            StyledText {
-                width: customZaiAccountsSetting.nameColumnWidth
-                text: root.tr("Name")
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.surfaceText
-            }
-
-            StyledText {
-                width: parent.width - customZaiAccountsSetting.nameColumnWidth - customZaiAccountsSetting.actionWidth - parent.spacing * 2
-                text: root.tr("API key")
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.surfaceText
-            }
-
-            Item {
-                width: customZaiAccountsSetting.actionWidth
-                height: 1
-            }
-        }
-
-        Row {
-            width: parent.width
-            spacing: Theme.spacingS
-
-            DankTextField {
-                id: zaiAccountNameInput
-                width: customZaiAccountsSetting.nameColumnWidth
-                placeholderText: "work"
-                Keys.onReturnPressed: customZaiAccountsSetting.addItem()
-            }
-
-            DankTextField {
-                id: zaiAccountKeyInput
-                width: parent.width - customZaiAccountsSetting.nameColumnWidth - customZaiAccountsSetting.actionWidth - parent.spacing * 2
-                placeholderText: ""
-                Keys.onReturnPressed: customZaiAccountsSetting.addItem()
-            }
-
-            DankButton {
-                width: customZaiAccountsSetting.actionWidth
-                height: 40
-                text: root.tr("Add")
-                onClicked: customZaiAccountsSetting.addItem()
-            }
-        }
-
-        Column {
-            width: parent.width
-            spacing: Theme.spacingS
-
-            Repeater {
-                model: customZaiAccountsSetting.items
-
-                StyledRect {
-                    required property int index
-                    required property var modelData
-
-                    width: parent.width
-                    height: 44
-                    radius: Theme.cornerRadius
-                    color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                    border.width: 0
-
-                    Row {
-                        anchors.fill: parent
-                        anchors.margins: Theme.spacingS
-                        spacing: Theme.spacingS
-
-                        StyledText {
-                            width: customZaiAccountsSetting.nameColumnWidth
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData.name || ""
-                            color: Theme.surfaceText
-                            font.pixelSize: Theme.fontSizeMedium
-                            elide: Text.ElideRight
-                        }
-
-                        StyledText {
-                            width: parent.width - customZaiAccountsSetting.nameColumnWidth - customZaiAccountsSetting.actionWidth - parent.spacing * 2
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData.key || ""
-                            color: Theme.surfaceVariantText
-                            font.pixelSize: Theme.fontSizeMedium
-                            elide: Text.ElideMiddle
-                        }
-
-                        Rectangle {
-                            width: customZaiAccountsSetting.actionWidth
-                            height: 32
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: zaiRemoveArea.containsMouse ? Theme.errorHover : Theme.error
-                            radius: Theme.cornerRadius
-
-                            StyledText {
-                                anchors.centerIn: parent
-                                text: root.tr("Remove")
-                                color: Theme.onError
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: Font.Medium
-                            }
-
-                            MouseArea {
-                                id: zaiRemoveArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: customZaiAccountsSetting.removeItem(index)
-                            }
-                        }
-                    }
+                AccountsEditor {
+                    settingsRoot: root
+                    descriptor: modelData
                 }
-            }
-
-            StyledText {
-                text: root.tr("No items added yet")
-                font.pixelSize: Theme.fontSizeSmall
-                color: Theme.surfaceVariantText
-                visible: customZaiAccountsSetting.items.length === 0
             }
         }
     }

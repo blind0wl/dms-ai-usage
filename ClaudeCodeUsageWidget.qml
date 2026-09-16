@@ -6,6 +6,8 @@ import qs.Services
 import qs.Widgets
 import qs.Modules.Plugins
 import "translations.js" as Tr
+import "sources.js" as Sources
+import "ui"
 
 PluginComponent {
     id: root
@@ -16,7 +18,6 @@ PluginComponent {
         return Tr.tr(key, lang);
     }
 
-    // Calendar week labels: Monday to Sunday (fixed order)
     property int refreshEpoch: 0
     readonly property var dayLabelsByLanguage: ({
         en: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
@@ -25,416 +26,424 @@ PluginComponent {
     })
     property var dayLabels: dayLabelsByLanguage[lang] || dayLabelsByLanguage.en
 
-    // Settings
+    // --- Settings ---
     property int refreshInterval: (pluginData.refreshInterval || 2) * 60000
     property bool showPacing: pluginData.showPacing !== false
     property var customProfiles: pluginData.customProfiles || []
-    property bool customProfilesRefreshPending: false
+    property var customChatgptAccounts: pluginData.customChatgptAccounts || []
+    property var customZaiAccounts: pluginData.customZaiAccounts || []
+    property var customOpencodeAccounts: pluginData.customOpencodeAccounts || []
+    property real usdEurRate: 0
 
-    // Source enable/disable — manual override on top of not_installed detection
-    // (see get-claude-usage/get-chatgpt-usage), both on by default so existing
-    // dms-claudecode users upgrade with no config changes required.
-    property bool enableClaude: pluginData.enableClaude !== false
-    property bool enableChatgpt: pluginData.enableChatgpt !== false
-    property bool enableZai: pluginData.enableZai !== false
+    // The ordered list of enabled Sources. Order drives the pill rings and the
+    // popout tabs. An absent value turns everything on; unknown ids are dropped
+    // and newly added Sources appended, so a stale stored list heals itself.
+    property var sourceOrder: Sources.resolveList(pluginData.sources, pluginData.sourcesKnown)
 
-    // A Source is actually shown only when enabled AND its script confirms the
-    // binary (or, for Z.ai, a usable API key) is present. The *CredsStatus
-    // properties default to "unknown" before the first fetch completes, so the
-    // *Visible properties start true and correct themselves once CREDS_STATUS
-    // arrives.
-    readonly property bool claudeVisible: enableClaude && credsStatus !== "not_installed"
-    readonly property bool chatgptVisible: enableChatgpt && chatgptCredsStatus !== "not_installed"
-    readonly property bool zaiVisible: enableZai && zaiCredsStatus !== "not_installed"
+    // --- Runtime state ---
+    // sourceData and selectedAccount are keyed by Source id. accountData is
+    // keyed by Source id and then Account name.
+    property var sourceData: ({})
+    property var accountData: ({})
+    property var selectedAccount: ({})
+    property var loginInProgress: ({})
+    property var refreshPending: ({})
+    property bool isLoading: true
 
-    onClaudeVisibleChanged: {
+    // Parallel to Sources.SOURCES: the Process for the Source at the same index.
+    property var sourceProcesses: []
+
+    // Live countdown, refreshed on its own timer so countdowns tick between
+    // fetches.
+    property real countdownNow: Date.now()
+    property int todayIndex: {
+        void (countdownNow);
+        var dow = new Date().getDay();
+        return dow === 0 ? 6 : dow - 1;
+    }
+
+    // --- Registry views ---
+
+    readonly property var enabledDescriptors: {
+        var out = [];
+        for (var i = 0; i < sourceOrder.length; i++) {
+            var d = Sources.byId(sourceOrder[i]);
+            if (d)
+                out.push(d);
+        }
+        return out;
+    }
+
+    // A Source is shown when it is enabled AND its script has not reported that
+    // it is not installed. Credentials arriving as "unknown" before the first
+    // fetch counts as shown, so the pill does not flicker.
+    readonly property var visibleDescriptors: {
+        void (sourceData);
+        var out = [];
+        for (var i = 0; i < enabledDescriptors.length; i++) {
+            var d = enabledDescriptors[i];
+            var st = sourceData[d.id];
+            if (!st || st.credsStatus !== "not_installed")
+                out.push(d);
+        }
+        return out;
+    }
+
+    readonly property var visibleIds: visibleDescriptors.map(function (d) {
+        return d.id;
+    })
+
+    // Empty until the user picks a tab. The popout prefers that choice, and
+    // otherwise falls back to the first visible Source, which is the first one
+    // in the configured order. Deriving the active id rather than storing it
+    // means the popout can never come up with nothing selected.
+    property string popoutSourceTab: ""
+
+    readonly property string activeSourceId: {
+        var ids = root.visibleIds;
+        if (root.popoutSourceTab && ids.indexOf(root.popoutSourceTab) >= 0)
+            return root.popoutSourceTab;
+        return ids.length > 0 ? ids[0] : "";
+    }
+
+    readonly property var activeDescriptor: Sources.byId(root.activeSourceId)
+
+    onVisibleIdsChanged: {
+        root.ensureActiveTab();
         root.updatePillVisibility();
-        if (!root.claudeVisible && root.popoutSourceTab === "claude")
-            root.popoutSourceTab = root.chatgptVisible ? "chatgpt" : "zai";
-    }
-    onChatgptVisibleChanged: {
-        root.updatePillVisibility();
-        if (!root.chatgptVisible && root.popoutSourceTab === "chatgpt")
-            root.popoutSourceTab = root.claudeVisible ? "claude" : "zai";
-    }
-    onZaiVisibleChanged: {
-        root.updatePillVisibility();
-        if (!root.zaiVisible && root.popoutSourceTab === "zai")
-            root.popoutSourceTab = root.claudeVisible ? "claude" : "chatgpt";
     }
 
-    // Toggling a Source back on should fetch immediately rather than waiting
-    // for the next refresh tick. Toggling off needs no action here — the
-    // Timer/onCustomProfilesChanged/onCustomChatgptAccountsChanged guards
-    // above already skip spawning that Source's Process from this point on.
-    onEnableClaudeChanged: {
-        if (root.enableClaude && !usageProcess.running)
-            usageProcess.running = true;
-    }
-    onEnableChatgptChanged: {
-        if (root.enableChatgpt && !chatgptProcess.running)
-            chatgptProcess.running = true;
-    }
-    onEnableZaiChanged: {
-        if (root.enableZai && !zaiProcess.running)
-            zaiProcess.running = true;
+    function ensureActiveTab() {
+        var ids = root.visibleIds;
+        if (ids.length === 0)
+            return;
+        if (ids.indexOf(root.popoutSourceTab) < 0)
+            root.popoutSourceTab = ids[0];
     }
 
     function updatePillVisibility() {
-        if (!root.claudeVisible && !root.chatgptVisible && !root.zaiVisible)
+        if (root.visibleIds.length === 0)
             root.setVisibilityOverride(false);
         else
             root.clearVisibilityOverride();
     }
 
     Component.onCompleted: {
+        root.ensureActiveTab();
         root.updatePillVisibility();
-        if (!root.claudeVisible)
-            root.popoutSourceTab = root.chatgptVisible ? "chatgpt" : "zai";
     }
 
-    // API usage data
-    property string subscriptionType: ""
-    property string rateLimitTier: ""
-    property real fiveHourUtil: 0
-    property string fiveHourReset: ""
-    property real sevenDayUtil: 0
-    property string sevenDayReset: ""
-    property bool extraUsageEnabled: false
-    property string credsStatus: "unknown"
+    // --- Per-Source state ---
 
-    // ChatGPT (Codex) Source — default account's aggregate values, per the
-    // script's own default-account convention. No per-account switching UI
-    // yet (ticket 2 scoped ChatGPT to window cards only), but customChatgptAccounts
-    // still feeds the script so multi-account fetching is reachable.
-    property var customChatgptAccounts: pluginData.customChatgptAccounts || []
-    property bool chatgptAccountsRefreshPending: false
-    property string chatgptPlanType: "unknown"
-    property real chatgptPrimaryUtil: 0
-    property real chatgptPrimaryResetMs: 0
-    property real chatgptPrimaryWindowSeconds: 0
-    property real chatgptSecondaryUtil: 0
-    property real chatgptSecondaryResetMs: 0
-    property real chatgptSecondaryWindowSeconds: 0
-    property real chatgptCreditsBalance: 0
-    property bool chatgptCreditsHas: false
-    property string chatgptCredsStatus: "unknown"
-    property bool chatgptLoginInProgress: false
-
-    // ChatGPT token/model stats — from local ~/.codex/sessions/**/*.jsonl
-    // rollout files (get-chatgpt-usage's count_account_tokens), mirroring
-    // Claude's JSONL-derived stats below. No cost estimate: unlike Claude's
-    // LiteLLM-backed pricing cache, there's no reliable public price list for
-    // Codex/OpenAI models to build one from.
-    property int chatgptWeekMessages: 0
-    property int chatgptWeekSessions: 0
-    property real chatgptWeekTokens: 0
-    property real chatgptMonthTokens: 0
-    property var chatgptDailyTokens: [0, 0, 0, 0, 0, 0, 0]
-    property int chatgptHoveredDay: -1
-    property int chatgptAlltimeSessions: 0
-    property int chatgptAlltimeMessages: 0
-    property string chatgptFirstSession: ""
-
-    ListModel {
-        id: chatgptModelListData
+    function emptyState() {
+        return {
+            credsStatus: "unknown",
+            // True once a fetch has reported a good reading. An endpoint failure
+            // with nothing to fall back on shows no Window cards at all rather
+            // than a fabricated zero.
+            hasData: false,
+            plan: "",
+            planTier: "",
+            extraUsageEnabled: false,
+            primary: { util: 0, resetMs: 0, windowSeconds: 0 },
+            secondary: { util: 0, resetMs: 0, windowSeconds: 0 },
+            weekTokens: 0,
+            monthTokens: 0,
+            weekCalls: 0,
+            weekMessages: 0,
+            weekSessions: 0,
+            todayCost: 0,
+            weekCost: 0,
+            monthCost: 0,
+            dailyTokens: [0, 0, 0, 0, 0, 0, 0],
+            dailyCosts: [0, 0, 0, 0, 0, 0, 0],
+            models: [],
+            alltime: { sessions: 0, messages: 0, firstSession: "" },
+            accounts: []
+        };
     }
 
-    // Z.ai (GLM Coding Plan) Source — aggregated across every discovered API
-    // key by get-zai-usage, same default-account convention as ChatGPT above.
-    property var customZaiAccounts: pluginData.customZaiAccounts || []
-    property bool zaiAccountsRefreshPending: false
-    property string zaiPlanType: "unknown"
-    property real zaiPrimaryUtil: 0
-    property real zaiPrimaryResetMs: 0
-    property real zaiPrimaryWindowSeconds: 0
-    property real zaiSecondaryUtil: 0
-    property real zaiSecondaryResetMs: 0
-    property real zaiSecondaryWindowSeconds: 0
-    property string zaiCredsStatus: "unknown"
-    property var zaiAccounts: []
-
-    // Z.ai token/model stats come from the server-side model-usage endpoint
-    // rather than local session files, so there's no session/message count to
-    // report — the API counts model calls instead, and no all-time history is
-    // exposed at all.
-    property real zaiWeekTokens: 0
-    property int zaiWeekCalls: 0
-    property real zaiMonthTokens: 0
-    property var zaiDailyTokens: [0, 0, 0, 0, 0, 0, 0]
-    property int zaiHoveredDay: -1
-
-    ListModel {
-        id: zaiModelListData
+    function updateSource(id, mutate) {
+        var next = Object.assign({}, root.sourceData);
+        var st = Object.assign({}, next[id] || root.emptyState());
+        mutate(st);
+        next[id] = st;
+        root.sourceData = next;
     }
 
-    // Weekly state
-    property int weekMessages: 0
-    property int weekSessions: 0
-    property real weekTokens: 0
-
-    // Monthly state
-    property real monthTokens: 0
-
-    // All-time state
-    property int alltimeSessions: 0
-    property int alltimeMessages: 0
-    property string firstSession: ""
-
-    // Daily breakdown (rolling 7 days, computed from JSONL files)
-    property var dailyTokens: [0, 0, 0, 0, 0, 0, 0]
-
-    // Estimated API cost (in USD)
-    property real todayCost: 0
-    property real weekCost: 0
-    property real monthCost: 0
-    property var dailyCosts: [0, 0, 0, 0, 0, 0, 0]
-    property real usdEurRate: 0
-
-    // Chart hover state
-    property int hoveredDay: -1
-
-    // Model list
-    ListModel {
-        id: modelListData
+    function setWindow(st, which, field, value) {
+        var w = Object.assign({}, st[which] || { util: 0, resetMs: 0, windowSeconds: 0 });
+        w[field] = value;
+        st[which] = w;
     }
 
-    // Popout source tab (Claude / ChatGPT / Z.ai) — only one Source's cards
-    // render at a time, keeping the popout short on small screens.
-    property string popoutSourceTab: "claude"
-
-    // Hidden Sources are dropped from the strip rather than shown disabled, so
-    // the remaining tabs always split the full popout width between them.
-    readonly property var popoutSourceTabs: {
-        var tabs = [];
-        if (claudeVisible)
-            tabs.push({
-                key: "claude",
-                label: tr("Claude")
-            });
-        if (chatgptVisible)
-            tabs.push({
-                key: "chatgpt",
-                label: tr("ChatGPT")
-            });
-        if (zaiVisible)
-            tabs.push({
-                key: "zai",
-                label: tr("Z.ai")
-            });
-        return tabs;
+    // The Source's Window length. Prefers what the script reported and falls
+    // back to the descriptor, which is where fixed-length Sources declare it.
+    function windowSeconds(id, which) {
+        var st = root.sourceData[id];
+        var w = st ? st[which] : null;
+        if (w && w.windowSeconds > 0)
+            return w.windowSeconds;
+        var d = Sources.byId(id);
+        if (d && d.windows[which] && d.windows[which].windowSeconds)
+            return d.windows[which].windowSeconds;
+        return 0;
     }
 
-    // Profile selector state
-    property string selectedProfile: "all"
-    property var profileData: ({})
-    // Shape per profile: { weekTokens, monthTokens, todayCost, weekCost, monthCost,
-    //   daily:[7], dailyCosts:[7], weekModels:[{modelName,modelTokens}],
-    //   fiveHourUtil, sevenDayUtil, fiveHourReset, sevenDayReset }
-
-    ListModel {
-        id: profileListModel
-    }
-    // First entry is always { name: "all" }; populated by PROFILES output field.
-
-    // currentPd is a single reactive snapshot of the selected profile's data object.
-    // Re-evaluated whenever selectedProfile or profileData changes.
-    // All display* properties derive from this — ensures consistent re-evaluation.
-    property var currentPd: {
-        void (selectedProfile);
-        void (profileData);
-        if (selectedProfile === "all")
+    // The state a Section renders: the Source's aggregate values, with the
+    // selected Account's values laid over them when one is selected.
+    function stateFor(id) {
+        var base = root.sourceData[id];
+        if (!base)
             return null;
-        return profileData[selectedProfile] || null;
+
+        var sel = root.selectedAccount[id] || "all";
+        var pd = sel !== "all" ? (root.accountData[id] || {})[sel] : null;
+        var st = Object.assign({}, base);
+        st.id = id;
+
+        if (pd) {
+            if (pd.weekTokens !== undefined)
+                st.weekTokens = pd.weekTokens;
+            if (pd.monthTokens !== undefined)
+                st.monthTokens = pd.monthTokens;
+            if (pd.weekMessages !== undefined)
+                st.weekMessages = pd.weekMessages;
+            if (pd.weekSessions !== undefined)
+                st.weekSessions = pd.weekSessions;
+            if (pd.todayCost !== undefined)
+                st.todayCost = pd.todayCost;
+            if (pd.weekCost !== undefined)
+                st.weekCost = pd.weekCost;
+            if (pd.monthCost !== undefined)
+                st.monthCost = pd.monthCost;
+            if (pd.subscriptionType !== undefined)
+                st.plan = pd.subscriptionType;
+            if (pd.rateLimitTier !== undefined)
+                st.planTier = pd.rateLimitTier;
+            if (pd.credsStatus !== undefined)
+                st.credsStatus = pd.credsStatus;
+            if (pd.extraUsageEnabled !== undefined)
+                st.extraUsageEnabled = pd.extraUsageEnabled;
+            st.primary = {
+                util: pd.fiveHourUtil !== undefined ? pd.fiveHourUtil : base.primary.util,
+                resetMs: pd.fiveHourReset !== undefined ? root.parseResetMs(pd.fiveHourReset) : base.primary.resetMs,
+                windowSeconds: base.primary.windowSeconds
+            };
+            st.secondary = {
+                util: pd.sevenDayUtil !== undefined ? pd.sevenDayUtil : base.secondary.util,
+                resetMs: pd.sevenDayReset !== undefined ? root.parseResetMs(pd.sevenDayReset) : base.secondary.resetMs,
+                windowSeconds: base.secondary.windowSeconds
+            };
+            // The daily chart keeps the aggregate in dailyTokens and dailyCosts,
+            // so its grey bars stay the total and the cost tooltip stays the day
+            // total, and carries the Account's own series separately for the
+            // coloured share.
+            st.accountDaily = pd.daily || [];
+            st.models = pd.weekModels || [];
+            // All-time figures are only tracked in aggregate.
+            st.alltime = { sessions: 0, messages: 0, firstSession: "" };
+        }
+
+        // The Today figure follows the selected Account when there is one, and
+        // the aggregate otherwise.
+        var todaySeries = pd && pd.daily ? pd.daily : st.dailyTokens;
+        st.todayTokens = (todaySeries && todaySeries[root.todayIndex]) || 0;
+        return st;
     }
 
-    // Computed display values — switch between aggregate and per-profile data.
-    property string displaySubscriptionType: currentPd && currentPd.subscriptionType ? currentPd.subscriptionType : subscriptionType
-    property string displayRateLimitTier: currentPd && currentPd.rateLimitTier ? currentPd.rateLimitTier : rateLimitTier
-    property real displayFiveHourUtil: currentPd && currentPd.fiveHourUtil !== undefined ? currentPd.fiveHourUtil : fiveHourUtil
-    property string displayFiveHourReset: currentPd && currentPd.fiveHourReset !== undefined ? currentPd.fiveHourReset : fiveHourReset
-    property real displaySevenDayUtil: currentPd && currentPd.sevenDayUtil !== undefined ? currentPd.sevenDayUtil : sevenDayUtil
-    property string displayCredsStatus: currentPd && currentPd.credsStatus !== undefined ? currentPd.credsStatus : credsStatus
-    property string displaySevenDayReset: currentPd && currentPd.sevenDayReset !== undefined ? currentPd.sevenDayReset : sevenDayReset
-    property real displayWeekTokens: currentPd && currentPd.weekTokens !== undefined ? currentPd.weekTokens : weekTokens
-    property int displayWeekMessages: currentPd && currentPd.weekMessages !== undefined ? currentPd.weekMessages : weekMessages
-    property int displayWeekSessions: currentPd && currentPd.weekSessions !== undefined ? currentPd.weekSessions : weekSessions
-    property real displayMonthTokens: currentPd && currentPd.monthTokens !== undefined ? currentPd.monthTokens : monthTokens
-    property real displayTodayCost: currentPd && currentPd.todayCost !== undefined ? currentPd.todayCost : todayCost
-    property real displayWeekCost: currentPd && currentPd.weekCost !== undefined ? currentPd.weekCost : weekCost
-    property real displayMonthCost: currentPd && currentPd.monthCost !== undefined ? currentPd.monthCost : monthCost
-    property var displayDailyTokens: currentPd && currentPd.daily ? currentPd.daily : dailyTokens
+    // Whether a Source has a reading the Pill can draw. Before the first fetch
+    // the state is "unknown" and the ring draws at zero so it does not flicker.
+    // Once a Source reports missing credentials or an unavailable endpoint there
+    // is no reading, so the ring goes hollow rather than showing a zero.
+    function pillHasReading(id) {
+        var st = root.sourceData[id];
+        if (!st)
+            return true;
+        return st.credsStatus === "ok" || st.credsStatus === "unknown";
+    }
 
-    // Per-profile daily tokens for chart overlay. Empty array when "all" selected.
-    property var profileDailyTokens: currentPd && currentPd.daily ? currentPd.daily : []
+    function paceFor(source, which) {
+        if (!source)
+            return null;
+        var w = source[which] || {};
+        return root.paceInfo(w.util || 0, w.resetMs || 0, root.windowSeconds(source.id, which) * 1000);
+    }
 
-    // Note: displayDailyCosts is intentionally NOT defined.
-    // The tooltip cost line always shows aggregate dailyCosts per spec.
-    // The Token Consumption card uses displayTodayCost/displayWeekCost/displayMonthCost instead.
-
-    property string displayFiveHourCountdown: {
-        if (!displayFiveHourReset)
+    function countdownFor(source, which) {
+        if (!source)
             return "";
-        var resetMs = new Date(displayFiveHourReset).getTime();
-        var remaining = Math.max(0, resetMs - countdownNow);
-        if (remaining <= 0)
-            return tr("Resetting...");
-        var hours = Math.floor(remaining / 3600000);
-        var mins = Math.floor((remaining % 3600000) / 60000);
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+        var w = source[which] || {};
+        return root.formatCountdown(w.resetMs || 0);
     }
 
-    property string displaySevenDayCountdown: {
-        if (!displaySevenDayReset)
+    function windowLabelFor(source, which) {
+        if (!source)
             return "";
-        var resetMs = new Date(displaySevenDayReset).getTime();
-        var remaining = Math.max(0, resetMs - countdownNow);
-        if (remaining <= 0)
-            return tr("Resetting...");
-        var days = Math.floor(remaining / 86400000);
-        var hours = Math.floor((remaining % 86400000) / 3600000);
-        var mins = Math.floor((remaining % 3600000) / 60000);
-        if (days > 0)
-            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+        var d = Sources.byId(source.id);
+        var w = d && d.windows[which] ? d.windows[which] : null;
+        if (w && w.labelKey)
+            return root.tr(w.labelKey);
+        var generic = which === "primary" ? "Primary Window" : "Secondary Window";
+        return root.formatWindowLabel(root.windowSeconds(source.id, which), generic);
     }
 
-    // Pacing: whether usage is ahead of (over) or behind (under) a linear burn
-    // rate for the time window. Each touches countdownNow so it recomputes on
-    // the 60s timer below.
-    property var fiveHourPace: {
-        void (countdownNow);
-        return paceInfo(displayFiveHourUtil, displayFiveHourReset, 18000000);
-    }
-    property var sevenDayPace: {
-        void (countdownNow);
-        return paceInfo(displaySevenDayUtil, displaySevenDayReset, 604800000);
-    }
-    // Pills are not profile-scoped — derive from aggregate 5h values.
-    property var pillFivePace: {
-        void (countdownNow);
-        return paceInfo(fiveHourUtil, fiveHourReset, 18000000);
-    }
-    // Whether the taskbar pill should show the over-pace arrow/color. Shared by
-    // the horizontal and vertical pills so they never diverge.
-    readonly property bool pillOverPace: showPacing && (pillFivePace.status === "over" || pillFivePace.status === "over_quota")
-
-    // ChatGPT pacing, mirroring the Claude properties above. Window length
-    // comes from the script's real limit_window_seconds rather than a
-    // hardcoded constant, since primary/secondary windows vary by plan.
-    property var chatgptPrimaryPace: {
-        void (countdownNow);
-        return paceInfo(chatgptPrimaryUtil, chatgptPrimaryResetMs, chatgptPrimaryWindowSeconds * 1000);
-    }
-    property var chatgptSecondaryPace: {
-        void (countdownNow);
-        return paceInfo(chatgptSecondaryUtil, chatgptSecondaryResetMs, chatgptSecondaryWindowSeconds * 1000);
-    }
-    readonly property bool chatgptPillOverPace: showPacing && (chatgptPrimaryPace.status === "over" || chatgptPrimaryPace.status === "over_quota")
-
-    // Z.ai pacing, same shape as ChatGPT's — window lengths are fixed by the
-    // plan (5h / 7d) but still arrive as WINDOW_SECONDS so a window the API
-    // omits degrades to "unknown" instead of a false over-pace.
-    property var zaiPrimaryPace: {
-        void (countdownNow);
-        return paceInfo(zaiPrimaryUtil, zaiPrimaryResetMs, zaiPrimaryWindowSeconds * 1000);
-    }
-    property var zaiSecondaryPace: {
-        void (countdownNow);
-        return paceInfo(zaiSecondaryUtil, zaiSecondaryResetMs, zaiSecondaryWindowSeconds * 1000);
-    }
-    readonly property bool zaiPillOverPace: showPacing && (zaiPrimaryPace.status === "over" || zaiPrimaryPace.status === "over_quota")
-
-    // Today's index in the calendar week (0=Monday, 6=Sunday)
-    property int todayIndex: {
-        void (countdownNow);
-        var dow = new Date().getDay(); // 0=Sunday, 6=Saturday
-        return dow === 0 ? 6 : dow - 1;
+    function accountNames(id) {
+        var st = root.sourceData[id];
+        var names = st && st.accounts ? st.accounts.slice() : [];
+        if (names.indexOf("all") < 0)
+            names.unshift("all");
+        return names;
     }
 
-    // Derived
-    property real maxDaily: Math.max.apply(null, dailyTokens) || 1
-    property real chatgptMaxDaily: Math.max.apply(null, chatgptDailyTokens) || 1
-    property real zaiMaxDaily: Math.max.apply(null, zaiDailyTokens) || 1
-    property bool isLoading: true
-    property bool loginInProgress: false
-
-    // Live countdown
-    property real countdownNow: Date.now()
-
-    // Local wall clock of a reset instant, appended to countdowns so they can
-    // be reconciled against provider dashboards that render resets in their
-    // own timezone (Z.ai's shows Asia/Shanghai). The date appears only when
-    // the reset falls on another calendar day.
-    function resetClockLabel(resetMs) {
-        var resetDate = new Date(resetMs);
-        var sameDay = Qt.formatDateTime(resetDate, "yyyy-MM-dd") === Qt.formatDateTime(new Date(), "yyyy-MM-dd");
-        if (!sameDay)
-            return " (" + Qt.formatDateTime(resetDate, "ddd HH:mm") + ")";
-        return " (" + Qt.formatDateTime(resetDate, "HH:mm") + ")";
+    function selectAccount(id, name) {
+        var next = Object.assign({}, root.selectedAccount);
+        next[id] = name;
+        root.selectedAccount = next;
     }
 
-    // Generic countdown formatter for a resolved epoch-ms reset time (used by
-    // ChatGPT's windows, which arrive as unix seconds rather than Claude's ISO
-    // strings — see parseResetMs, which normalizes both to ms at parse time).
-    function formatCountdown(resetMs) {
-        void (countdownNow);
-        if (!resetMs)
-            return "";
-        var remaining = Math.max(0, resetMs - countdownNow);
-        if (remaining <= 0)
-            return tr("Resetting...");
-        var days = Math.floor(remaining / 86400000);
-        var hours = Math.floor((remaining % 86400000) / 3600000);
-        var mins = Math.floor((remaining % 3600000) / 60000);
-        if (days > 0)
-            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+    // --- Fetching ---
+
+    function scriptPathFor(id) {
+        var d = Sources.byId(id);
+        return PluginService.pluginDirectory + "/" + root.pluginId + "/" + d.script;
     }
 
-    // Unix-seconds strings are all-digit; ISO-8601 strings always contain a
-    // non-digit (dashes, "T", colons), so a digit-only test tells them apart.
-    function parseResetMs(val) {
-        if (!val)
-            return 0;
-        if (/^[0-9]+$/.test(val))
-            return parseFloat(val) * 1000;
-        var ms = new Date(val).getTime();
-        return isNaN(ms) ? 0 : ms;
+    function settingList(key) {
+        if (key === "customProfiles")
+            return root.customProfiles;
+        if (key === "customChatgptAccounts")
+            return root.customChatgptAccounts;
+        if (key === "customZaiAccounts")
+            return root.customZaiAccounts;
+        if (key === "customOpencodeAccounts")
+            return root.customOpencodeAccounts;
+        return [];
     }
 
-    property string chatgptPrimaryCountdown: root.formatCountdown(root.chatgptPrimaryResetMs)
-    property string chatgptSecondaryCountdown: root.formatCountdown(root.chatgptSecondaryResetMs)
-    property string zaiPrimaryCountdown: root.formatCountdown(root.zaiPrimaryResetMs)
-    property string zaiSecondaryCountdown: root.formatCountdown(root.zaiSecondaryResetMs)
-
-    // `wham/usage` names its windows "primary"/"secondary" with no fixed
-    // duration in the field name itself (unlike Claude's five_hour/seven_day),
-    // but does carry each window's actual length in limit_window_seconds.
-    // Label with that real duration instead of the generic primary/secondary
-    // names — known values today are 5h and 7d (weekly), called out with
-    // dedicated translated strings; anything else falls back to a plain
-    // duration built the same non-translated-abbreviation way formatCountdown
-    // already does elsewhere in this file. genericKey is used only while
-    // WINDOW_SECONDS hasn't arrived yet (0 = not fetched, not "unknown length").
-    function formatWindowLabel(seconds, genericKey) {
-        if (!seconds || seconds <= 0)
-            return root.tr(genericKey);
-        if (seconds === 604800)
-            return root.tr("Weekly Window");
-        if (seconds === 18000)
-            return root.tr("5h Window");
-        if (seconds % 86400 === 0)
-            return (seconds / 86400) + "d " + root.tr("Window");
-        var hours = Math.round(seconds / 3600);
-        return hours + "h " + root.tr("Window");
+    function accountArgs(id) {
+        var d = Sources.byId(id);
+        if (!d.accounts)
+            return [];
+        var field = d.accounts.argField;
+        var list = root.settingList(d.accounts.settingKey);
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var a = list[i];
+            if (a && a.name && a[field])
+                out.push(a.name + "=" + a[field]);
+        }
+        return out;
     }
 
-    property string chatgptPrimaryWindowLabel: root.formatWindowLabel(root.chatgptPrimaryWindowSeconds, "Primary Window")
-    property string chatgptSecondaryWindowLabel: root.formatWindowLabel(root.chatgptSecondaryWindowSeconds, "Secondary Window")
-    property string zaiPrimaryWindowLabel: root.formatWindowLabel(root.zaiPrimaryWindowSeconds, "Primary Window")
-    property string zaiSecondaryWindowLabel: root.formatWindowLabel(root.zaiSecondaryWindowSeconds, "Secondary Window")
+    function commandFor(id) {
+        return ["timeout", "120", "bash", root.scriptPathFor(id)].concat(root.accountArgs(id));
+    }
 
+    function processFor(id) {
+        var at = Sources.ids().indexOf(id);
+        return at >= 0 && root.sourceProcesses[at] ? root.sourceProcesses[at] : null;
+    }
+
+    // Wrapped in `timeout` as a watchdog: a run that never exits (a hung
+    // `claude --version`, a stalled curl) would otherwise freeze that Source on
+    // stale values until the plugin reloaded.
+    function requestFetch(id) {
+        var p = root.processFor(id);
+        if (!p)
+            return;
+        if (p.running) {
+            var next = Object.assign({}, root.refreshPending);
+            next[id] = true;
+            root.refreshPending = next;
+        } else {
+            p.running = true;
+        }
+    }
+
+    function fetchVisible() {
+        for (var i = 0; i < root.visibleIds.length; i++)
+            root.requestFetch(root.visibleIds[i]);
+    }
+
+    function accountsChanged(settingKey) {
+        for (var i = 0; i < Sources.SOURCES.length; i++) {
+            var d = Sources.SOURCES[i];
+            if (d.accounts && d.accounts.settingKey === settingKey && root.sourceOrder.indexOf(d.id) >= 0)
+                root.requestFetch(d.id);
+        }
+    }
+
+    onCustomProfilesChanged: root.accountsChanged("customProfiles")
+    onCustomChatgptAccountsChanged: root.accountsChanged("customChatgptAccounts")
+    onCustomZaiAccountsChanged: root.accountsChanged("customZaiAccounts")
+    onCustomOpencodeAccountsChanged: root.accountsChanged("customOpencodeAccounts")
+
+    // Toggling a Source on fetches immediately rather than waiting a tick.
+    onSourceOrderChanged: {
+        root.ensureActiveTab();
+        root.updatePillVisibility();
+        for (var i = 0; i < root.sourceOrder.length; i++)
+            root.requestFetch(root.sourceOrder[i]);
+    }
+
+    function onSourceExited(id, exitCode) {
+        if (exitCode === 0)
+            root.isLoading = false;
+        var pending = root.refreshPending[id];
+        if (pending) {
+            var next = Object.assign({}, root.refreshPending);
+            delete next[id];
+            root.refreshPending = next;
+            Qt.callLater(function () {
+                root.requestFetch(id);
+            });
+        }
+    }
+
+    function setLoginInProgress(id, value) {
+        var next = Object.assign({}, root.loginInProgress);
+        next[id] = value;
+        root.loginInProgress = next;
+    }
+
+    Instantiator {
+        id: processPool
+        model: Sources.SOURCES
+
+        delegate: Process {
+            required property var modelData
+
+            readonly property string sourceId: modelData.id
+
+            command: root.commandFor(sourceId)
+            running: false
+
+            stdout: SplitParser {
+                onRead: data => root.parseLine(sourceId, data.trim())
+            }
+
+            onExited: (exitCode, exitStatus) => root.onSourceExited(sourceId, exitCode)
+        }
+
+        // Indexed by model position rather than by a property on the created
+        // object, which keeps the delegate's identity out of these handlers.
+        onObjectAdded: (index, object) => {
+            var next = root.sourceProcesses.slice();
+            next[index] = object;
+            root.sourceProcesses = next;
+        }
+
+        onObjectRemoved: (index, object) => {
+            var next = root.sourceProcesses.slice();
+            next[index] = null;
+            root.sourceProcesses = next;
+        }
+    }
+
+    // Countdown tick. Also refetches a Source whose Window has just reset, so it
+    // does not sit on "Resetting..." until the next scheduled poll, and refetches
+    // everything after a gap long enough to mean the machine woke from sleep.
     Timer {
         interval: 60000
         running: true
@@ -444,47 +453,338 @@ PluginComponent {
             var now = Date.now();
             var elapsed = now - root.countdownNow;
             root.countdownNow = now;
-            // Large gap (>2min) indicates wake from sleep — force immediate refresh
+
             if (elapsed > 120000) {
-                if (root.enableClaude && !usageProcess.running)
-                    usageProcess.running = true;
-                if (root.enableChatgpt && !chatgptProcess.running)
-                    chatgptProcess.running = true;
-                if (root.enableZai && !zaiProcess.running)
-                    zaiProcess.running = true;
-            } else {
-                // A window's reset time has just passed locally — don't sit on
-                // "Resetting..." until the next scheduled poll, fetch the new
-                // resets_at right away.
-                if (root.enableClaude && !usageProcess.running) {
-                    var fiveExpired = root.fiveHourReset && new Date(root.fiveHourReset).getTime() <= now;
-                    var sevenExpired = root.sevenDayReset && new Date(root.sevenDayReset).getTime() <= now;
-                    if (fiveExpired || sevenExpired)
-                        usageProcess.running = true;
-                }
-                if (root.enableChatgpt && !chatgptProcess.running) {
-                    var primaryExpired = root.chatgptPrimaryResetMs && root.chatgptPrimaryResetMs <= now;
-                    var secondaryExpired = root.chatgptSecondaryResetMs && root.chatgptSecondaryResetMs <= now;
-                    if (primaryExpired || secondaryExpired)
-                        chatgptProcess.running = true;
-                }
-                if (root.enableZai && !zaiProcess.running) {
-                    var zaiPrimaryExpired = root.zaiPrimaryResetMs && root.zaiPrimaryResetMs <= now;
-                    var zaiSecondaryExpired = root.zaiSecondaryResetMs && root.zaiSecondaryResetMs <= now;
-                    if (zaiPrimaryExpired || zaiSecondaryExpired)
-                        zaiProcess.running = true;
+                root.fetchVisible();
+                return;
+            }
+            for (var i = 0; i < root.visibleIds.length; i++) {
+                var id = root.visibleIds[i];
+                var st = root.sourceData[id];
+                if (!st)
+                    continue;
+                var expired = (st.primary.resetMs && st.primary.resetMs <= now) || (st.secondary.resetMs && st.secondary.resetMs <= now);
+                if (expired)
+                    root.requestFetch(id);
+            }
+        }
+    }
+
+    Timer {
+        interval: root.refreshInterval
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: root.fetchVisible()
+    }
+
+    // --- CLI logins ---
+
+    function startLogin(action) {
+        if (action === "claudeLogin") {
+            if (claudeLoginProcess.running)
+                return;
+            var profile = root.selectedAccount["claude"] || "all";
+            var dir = root.configDirForProfile(profile);
+            var envPrefix = dir ? "CLAUDE_CONFIG_DIR=" + root.shellQuote(dir) + " " : "";
+            claudeLoginProcess.command = ["bash", "-c", envPrefix + "PATH=\"$PATH:" + root.cliSearchPathAdditions + "\" exec claude auth login --claudeai"];
+            root.setLoginInProgress("claude", true);
+            claudeLoginProcess.running = true;
+        } else if (action === "chatgptLogin") {
+            if (chatgptLoginProcess.running)
+                return;
+            root.setLoginInProgress("chatgpt", true);
+            chatgptLoginProcess.running = true;
+        }
+    }
+
+    // `command` is set by startLogin rather than declared, because Quickshell's
+    // own PATH is a bare `/usr/local/bin:/usr/bin` and would not find a `claude`
+    // under ~/.local/bin or ~/.npm-global/bin, leaving the button stuck on
+    // "Logging in…" because the Process never spawned and never exited.
+    Process {
+        id: claudeLoginProcess
+        running: false
+
+        onExited: (exitCode, exitStatus) => {
+            root.setLoginInProgress("claude", false);
+            root.requestFetch("claude");
+        }
+    }
+
+    Process {
+        id: chatgptLoginProcess
+        command: ["bash", "-c", "PATH=\"$PATH:" + root.cliSearchPathAdditions + "\" exec codex login"]
+        running: false
+
+        onExited: (exitCode, exitStatus) => {
+            root.setLoginInProgress("chatgpt", false);
+            root.requestFetch("chatgpt");
+        }
+    }
+
+    popoutWidth: 380
+    popoutHeight: 740
+
+    // --- Shared helpers exposed to the Section components ---
+
+    readonly property QtObject api: QtObject {
+        function tr(key) {
+            return root.tr(key);
+        }
+
+        function formatTokens(n) {
+            return root.formatTokens(n);
+        }
+
+        function formatCost(usd) {
+            return root.formatCost(usd);
+        }
+
+        function shortModelName(name) {
+            return root.shortModelName(name);
+        }
+
+        function progressColor(pct) {
+            return root.progressColor(pct);
+        }
+
+        function formatSubscription(subType, tier) {
+            return root.formatSubscription(subType, tier);
+        }
+
+        function pace(source, which) {
+            return root.paceFor(source, which);
+        }
+
+        function countdown(source, which) {
+            return root.countdownFor(source, which);
+        }
+
+        function windowLabel(source, which) {
+            return root.windowLabelFor(source, which);
+        }
+
+        function paceLabel(p) {
+            return root.paceLabel(p);
+        }
+
+        function paceColor(status) {
+            return root.paceColor(status);
+        }
+
+        function startLogin(action) {
+            root.startLogin(action);
+        }
+
+        function selectAccount(id, name) {
+            root.selectAccount(id, name);
+        }
+    }
+
+    // Everything a Section needs beyond its own descriptor entry.
+    function contextFor(id) {
+        var d = Sources.byId(id);
+        var sel = root.selectedAccount[id] || "all";
+        return {
+            source: root.stateFor(id),
+            api: root.api,
+            descriptor: d,
+            label: d ? root.tr(d.labelKey) : "",
+            showPacing: root.showPacing,
+            dayLabels: root.dayLabels,
+            todayIndex: root.todayIndex,
+            accounts: root.accountNames(id),
+            selected: sel,
+            accountSelected: sel !== "all",
+            accountName: sel,
+            loginInProgress: root.loginInProgress[id] === true
+        };
+    }
+
+    // --- Taskbar pills ---
+
+    horizontalBarPill: Component {
+        Row {
+            spacing: Theme.spacingXS
+
+            Repeater {
+                model: root.visibleDescriptors
+
+                delegate: Row {
+                    id: hGroup
+                    required property var modelData
+                    required property int index
+
+                    spacing: Theme.spacingXS
+
+                    Rectangle {
+                        width: 1
+                        height: root.iconSize * 0.7
+                        anchors.verticalCenter: parent.verticalCenter
+                        color: Theme.outline
+                        opacity: 0.5
+                        visible: index > 0
+                    }
+
+                    Ring {
+                        width: root.iconSize
+                        height: root.iconSize
+                        anchors.verticalCenter: parent.verticalCenter
+                        percent: root.stateFor(hGroup.modelData.id) ? root.stateFor(hGroup.modelData.id).primary.util : 0
+                        pace: root.paceFor(root.stateFor(hGroup.modelData.id), "primary")
+                        hasReading: root.pillHasReading(hGroup.modelData.id)
+                        showPaceTick: false
+                    }
+
+                    StyledText {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: {
+                            if (!root.pillHasReading(hGroup.modelData.id))
+                                return "--";
+                            var st = root.stateFor(hGroup.modelData.id);
+                            var p = root.paceFor(st, "primary");
+                            var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
+                            return Math.round(st ? st.primary.util : 0) + "%" + (over ? " ↑" : "");
+                        }
+                        font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
+                        color: {
+                            if (!root.pillHasReading(hGroup.modelData.id))
+                                return Theme.surfaceVariantText;
+                            var p = root.paceFor(root.stateFor(hGroup.modelData.id), "primary");
+                            var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
+                            return over ? root.paceColor(p.status) : Theme.surfaceText;
+                        }
+                    }
                 }
             }
         }
     }
 
-    // Script paths via PluginService
-    property string scriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-claude-usage"
-    property string chatgptScriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-chatgpt-usage"
-    property string zaiScriptPath: PluginService.pluginDirectory + "/" + root.pluginId + "/get-zai-usage"
+    verticalBarPill: Component {
+        Column {
+            spacing: Theme.spacingXS || 4
 
-    popoutWidth: 380
-    popoutHeight: 740
+            Repeater {
+                model: root.visibleDescriptors
+
+                delegate: Column {
+                    id: vGroup
+                    required property var modelData
+                    required property int index
+
+                    spacing: Theme.spacingXS || 4
+
+                    Rectangle {
+                        width: root.iconSize * 0.7
+                        height: 1
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        color: Theme.outline
+                        opacity: 0.5
+                        visible: index > 0
+                    }
+
+                    Ring {
+                        width: root.iconSize
+                        height: root.iconSize
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        percent: root.stateFor(vGroup.modelData.id) ? root.stateFor(vGroup.modelData.id).primary.util : 0
+                        pace: root.paceFor(root.stateFor(vGroup.modelData.id), "primary")
+                        hasReading: root.pillHasReading(vGroup.modelData.id)
+                        showPaceTick: false
+                    }
+
+                    StyledText {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: {
+                            if (!root.pillHasReading(vGroup.modelData.id))
+                                return "--";
+                            var st = root.stateFor(vGroup.modelData.id);
+                            var p = root.paceFor(st, "primary");
+                            var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
+                            return Math.round(st ? st.primary.util : 0) + "%" + (over ? " ↑" : "");
+                        }
+                        font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
+                        color: {
+                            if (!root.pillHasReading(vGroup.modelData.id))
+                                return Theme.surfaceVariantText;
+                            var p = root.paceFor(root.stateFor(vGroup.modelData.id), "primary");
+                            var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
+                            return over ? root.paceColor(p.status) : Theme.surfaceText;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Popout ---
+
+    popoutContent: Component {
+        PopoutComponent {
+            headerText: root.tr("AI Usage")
+            showCloseButton: true
+
+            Column {
+                width: parent.width - Theme.spacingM * 2
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: Theme.spacingL
+
+                // Only one Source's cards render at a time, keeping the popout
+                // short on small screens. Hidden when there is nothing to switch
+                // between; an all-hidden pill already hides the whole widget.
+                Row {
+                    width: parent.width
+                    spacing: Theme.spacingXS
+                    visible: root.visibleDescriptors.length > 1
+
+                    Repeater {
+                        model: root.visibleDescriptors
+
+                        delegate: Rectangle {
+                            required property var modelData
+
+                            width: (parent.width - Theme.spacingXS * (root.visibleDescriptors.length - 1)) / root.visibleDescriptors.length
+                            height: 32
+                            radius: 16
+                            color: root.activeSourceId === modelData.id ? Theme.primary : Theme.surfaceVariant
+
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: 120
+                                }
+                            }
+
+                            StyledText {
+                                anchors.centerIn: parent
+                                text: root.tr(modelData.labelKey)
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: root.activeSourceId === modelData.id ? Font.Medium : Font.Normal
+                                color: root.activeSourceId === modelData.id ? Theme.primaryText : Theme.surfaceVariantText
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.popoutSourceTab = modelData.id
+                            }
+                        }
+                    }
+                }
+
+                SourceTab {
+                    descriptor: root.activeDescriptor
+                    ctx: root.activeDescriptor ? root.contextFor(root.activeDescriptor.id) : null
+                }
+
+                // Bottom padding to match the sides, compensating Column spacing.
+                Item {
+                    width: 1
+                    height: 1
+                }
+            }
+        }
+    }
 
     // --- Helpers ---
 
@@ -514,21 +814,14 @@ PluginComponent {
 
     // Returns { timeFrac, delta, status } for a usage window.
     // status: over_quota | over | under | on | unknown
-    function paceInfo(util, resetIso, windowMs) {
+    function paceInfo(util, resetMs, windowMs) {
         util = util || 0;
-        if (!resetIso || !windowMs)
+        if (!resetMs || !windowMs)
             return util >= 100 ? {
                 timeFrac: 1,
                 delta: util,
                 status: "over_quota"
             } : {
-                timeFrac: 0,
-                delta: 0,
-                status: "unknown"
-            };
-        var resetMs = new Date(resetIso).getTime();
-        if (isNaN(resetMs))
-            return {
                 timeFrac: 0,
                 delta: 0,
                 status: "unknown"
@@ -578,20 +871,59 @@ PluginComponent {
         return Theme.surfaceVariantText;
     }
 
-    // Draws the pace tick — a short radial mark at the linear-burn position — on
-    // a ring canvas. Shared by the 5h and 7d popout rings.
-    function drawPaceTick(ctx, cx, cy, r, lw, pace) {
-        if (!showPacing || !pace || pace.status === "unknown")
-            return;
-        var a = -Math.PI / 2 + 2 * Math.PI * Math.min(Math.max(pace.timeFrac, 0), 1);
-        var ri = r - lw / 2 - 1, ro = r + lw / 2 + 1;
-        ctx.beginPath();
-        ctx.moveTo(cx + ri * Math.cos(a), cy + ri * Math.sin(a));
-        ctx.lineTo(cx + ro * Math.cos(a), cy + ro * Math.sin(a));
-        ctx.lineWidth = 2;
-        ctx.lineCap = "butt";
-        ctx.strokeStyle = Theme.surfaceText;
-        ctx.stroke();
+    // Local wall clock of a reset instant, appended to countdowns so they can be
+    // reconciled against provider dashboards that render resets in their own
+    // timezone (Z.ai's shows Asia/Shanghai). The date appears only when the
+    // reset falls on another calendar day.
+    function resetClockLabel(resetMs) {
+        var resetDate = new Date(resetMs);
+        var sameDay = Qt.formatDateTime(resetDate, "yyyy-MM-dd") === Qt.formatDateTime(new Date(), "yyyy-MM-dd");
+        if (!sameDay)
+            return " (" + Qt.formatDateTime(resetDate, "ddd HH:mm") + ")";
+        return " (" + Qt.formatDateTime(resetDate, "HH:mm") + ")";
+    }
+
+    function formatCountdown(resetMs) {
+        void (countdownNow);
+        if (!resetMs)
+            return "";
+        var remaining = Math.max(0, resetMs - countdownNow);
+        if (remaining <= 0)
+            return tr("Resetting...");
+        var days = Math.floor(remaining / 86400000);
+        var hours = Math.floor((remaining % 86400000) / 3600000);
+        var mins = Math.floor((remaining % 3600000) / 60000);
+        if (days > 0)
+            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+    }
+
+    // Unix-seconds strings are all-digit; ISO-8601 strings always contain a
+    // non-digit (dashes, "T", colons), so a digit-only test tells them apart.
+    function parseResetMs(val) {
+        if (!val)
+            return 0;
+        if (/^[0-9]+$/.test(val))
+            return parseFloat(val) * 1000;
+        var ms = new Date(val).getTime();
+        return isNaN(ms) ? 0 : ms;
+    }
+
+    // `wham/usage` names its windows "primary" and "secondary" with no fixed
+    // duration in the field name, but does carry each window's length, so label
+    // with the real duration. genericKey covers the window before its length has
+    // arrived (0 means not fetched, not "unknown length").
+    function formatWindowLabel(seconds, genericKey) {
+        if (!seconds || seconds <= 0)
+            return root.tr(genericKey);
+        if (seconds === 604800)
+            return root.tr("Weekly Window");
+        if (seconds === 18000)
+            return root.tr("5h Window");
+        if (seconds % 86400 === 0)
+            return (seconds / 86400) + "d " + root.tr("Window");
+        var hours = Math.round(seconds / 3600);
+        return hours + "h " + root.tr("Window");
     }
 
     function formatCost(usd) {
@@ -630,10 +962,23 @@ PluginComponent {
         });
     }
 
-    // Resolves the CLAUDE_CONFIG_DIR to log into for a given profile name.
+    function formatSubscription(subType, tier) {
+        var tierLabel = formatTier(tier);
+        if (!subType || subType === "unknown")
+            return tierLabel;
+        // Normalize subscriptionType like "claude_pro" → "Pro", "claude_max" → "Max"
+        var subLabel = subType.replace(/^claude[_-]?/i, "").replace(/_/g, " ").replace(/\b\w/g, function (c) {
+            return c.toUpperCase();
+        });
+        if (tierLabel && tierLabel !== subLabel)
+            return subLabel + " · " + tierLabel;
+        return subLabel || tierLabel;
+    }
+
+    // Resolves the CLAUDE_CONFIG_DIR to log into for a given Account name.
     // "all"/"default" (or unrecognized names, e.g. auto-discovered ccs/ccp
-    // profiles the widget doesn't know the path for) fall back to "" — the
-    // login command's own default (~/.claude).
+    // profiles the widget doesn't know the path for) fall back to "" — the login
+    // command's own default (~/.claude).
     function configDirForProfile(name) {
         if (!name || name === "all" || name === "default")
             return "";
@@ -646,2965 +991,337 @@ PluginComponent {
     }
 
     // Common install locations for CLIs installed via nvm/npm/cargo/etc, not
-    // covered by Quickshell's own (bare `/usr/local/bin:/usr/bin`) PATH — the
-    // same set the get-claude-usage/get-chatgpt-usage scripts already widen
-    // PATH with. The login commands below run via `bash -c` with this same
-    // widening so `claude`/`codex` resolve regardless of where they're
-    // installed, instead of relying on Quickshell's minimal inherited PATH.
+    // covered by Quickshell's own bare PATH. The login commands run via `bash -c`
+    // with this same widening so `claude`/`codex` resolve wherever they live.
     readonly property string cliSearchPathAdditions: "$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/bin:$HOME/go/bin:$HOME/.cargo/bin:$HOME/.volta/bin:$HOME/.claude/local"
 
-    // Single-quotes a string for safe use inside a `bash -c '...'` argument.
     function shellQuote(s) {
         return "'" + String(s).replace(/'/g, "'\\''") + "'";
     }
 
-    function startLogin(profileName) {
-        if (loginProcess.running)
-            return;
-        var dir = root.configDirForProfile(profileName);
-        var envPrefix = dir ? "CLAUDE_CONFIG_DIR=" + root.shellQuote(dir) + " " : "";
-        loginProcess.command = ["bash", "-c", envPrefix + "PATH=\"$PATH:" + root.cliSearchPathAdditions + "\" exec claude auth login --claudeai"];
-        root.loginInProgress = true;
-        loginProcess.running = true;
+    // --- Script output parsing ---
+
+    // Applies a CREDS_STATUS value to one Source's state. A good reading is the
+    // only thing that counts as data; an endpoint failure reports no Window
+    // values, so the last good reading survives in state and the status card
+    // above it marks those values as stale rather than current.
+    function applyCredsStatus(st, val) {
+        st.credsStatus = val;
+        if (val === "ok")
+            st.hasData = true;
     }
 
-    function formatSubscription(subType, tier) {
-        var tierLabel = formatTier(tier);
-        if (!subType || subType === "unknown")
-            return tierLabel;
-        // Normalize subscriptionType like "claude_pro" → "Pro", "claude_max" → "Max"
-        var subLabel = subType.replace(/^claude[_-]?/i, "").replace(/_/g, " ").replace(/\b\w/g, function (c) {
-            return c.toUpperCase();
+    function parseLine(id, line) {
+        if (!line)
+            return;
+        var idx = line.indexOf("=");
+        if (idx < 0)
+            return;
+        var key = line.substring(0, idx);
+        var val = line.substring(idx + 1);
+        var d = Sources.byId(id);
+        if (!d)
+            return;
+
+        // Window keys are named by the descriptor, so what each Source calls its
+        // primary and secondary windows does not matter here. The Account keys
+        // are handled here too rather than in the switch below, because they
+        // write a different map and nesting two state writes would let the
+        // outer one clobber the inner.
+        if (root.parseWindowKey(d, id, "primary", key, val))
+            return;
+        if (root.parseWindowKey(d, id, "secondary", key, val))
+            return;
+        if (root.parseAccountKey(id, key, val))
+            return;
+
+        root.updateSource(id, function (st) {
+            switch (key) {
+            case "PLAN_TYPE":
+                st.plan = val;
+                break;
+            case "SUBSCRIPTION_TYPE":
+                st.plan = val;
+                break;
+            case "RATE_LIMIT_TIER":
+                st.planTier = val;
+                break;
+            case "EXTRA_USAGE_ENABLED":
+                st.extraUsageEnabled = (val === "true");
+                break;
+            case "CREDS_STATUS":
+                root.applyCredsStatus(st, val);
+                break;
+            case "WEEK_MESSAGES":
+                st.weekMessages = parseInt(val) || 0;
+                break;
+            case "WEEK_SESSIONS":
+                st.weekSessions = parseInt(val) || 0;
+                break;
+            case "WEEK_CALLS":
+                st.weekCalls = parseInt(val) || 0;
+                break;
+            case "WEEK_TOKENS":
+                st.weekTokens = parseFloat(val) || 0;
+                break;
+            case "MONTH_TOKENS":
+                st.monthTokens = parseFloat(val) || 0;
+                break;
+            case "ALLTIME_SESSIONS":
+                st.alltime = Object.assign({}, st.alltime, { sessions: parseInt(val) || 0 });
+                break;
+            case "ALLTIME_MESSAGES":
+                st.alltime = Object.assign({}, st.alltime, { messages: parseInt(val) || 0 });
+                break;
+            case "FIRST_SESSION":
+                st.alltime = Object.assign({}, st.alltime, { firstSession: val });
+                break;
+            case "WEEK_MODELS":
+                st.models = root.parseModels(val);
+                break;
+            case "DAILY":
+                st.dailyTokens = root.parseDaily(val);
+                break;
+            case "DAILY_COSTS":
+                st.dailyCosts = root.parseDaily(val);
+                break;
+            case "TODAY_COST":
+                st.todayCost = parseFloat(val) || 0;
+                break;
+            case "WEEK_COST":
+                st.weekCost = parseFloat(val) || 0;
+                break;
+            case "MONTH_COST":
+                st.monthCost = parseFloat(val) || 0;
+                break;
+            case "USD_EUR_RATE":
+                root.usdEurRate = parseFloat(val) || 0;
+                break;
+            case "ACCOUNTS":
+                st.accounts = val.length > 0 ? val.split(",") : [];
+                break;
+            }
         });
-        // Prefer tier label if it adds info beyond subType
-        if (tierLabel && tierLabel !== subLabel)
-            return subLabel + " · " + tierLabel;
-        return subLabel || tierLabel;
     }
 
-    // Helper: parse "name:value,name:value,..." into profileData[name][field]
-    // For numeric fields. Full object replacement ensures QML reactivity.
-    function parseProfileSimple(val, field, isFloat) {
-        var _pd = Object.assign({}, profileData);
-        var entries = val.split(",");
-        for (var i = 0; i < entries.length; i++) {
-            var entry = entries[i];
-            var colon = entry.indexOf(":");
-            if (colon < 0)
-                continue;
-            var name = entry.substring(0, colon);
-            var v = isFloat ? (parseFloat(entry.substring(colon + 1)) || 0) : (parseInt(entry.substring(colon + 1)) || 0);
-            if (!_pd[name])
-                _pd[name] = {};
-            else
-                _pd[name] = Object.assign({}, _pd[name]);
-            _pd[name][field] = v;
-        }
-        return _pd;
-    }
-
-    // Uses indexOf(":") so ISO 8601 timestamps (which contain colons) are parsed correctly —
-    // profile names never contain colons, so the first colon is always the name delimiter.
-    // An empty value after ":" (e.g. "personal:") is stored as "" — means no data for that profile.
-    function parseProfileString(val, field) {
-        var _pd = Object.assign({}, profileData);
-        var entries = val.split(",");
-        for (var i = 0; i < entries.length; i++) {
-            var entry = entries[i];
-            var colon = entry.indexOf(":");
-            if (colon < 0)
-                continue;
-            var name = entry.substring(0, colon);
-            if (!_pd[name])
-                _pd[name] = {};
-            else
-                _pd[name] = Object.assign({}, _pd[name]);
-            _pd[name][field] = entry.substring(colon + 1);
-        }
-        return _pd;
-    }
-
-    function parseProfileBool(val, field) {
-        var _pd = Object.assign({}, profileData);
-        var entries = val.split(",");
-        for (var i = 0; i < entries.length; i++) {
-            var entry = entries[i];
-            var colon = entry.indexOf(":");
-            if (colon < 0)
-                continue;
-            var name = entry.substring(0, colon);
-            if (!_pd[name])
-                _pd[name] = {};
-            else
-                _pd[name] = Object.assign({}, _pd[name]);
-            _pd[name][field] = entry.substring(colon + 1) === "true";
-        }
-        return _pd;
-    }
-
-    function parseLine(line) {
-        var idx = line.indexOf("=");
-        if (idx < 0)
-            return;
-        var key = line.substring(0, idx);
-        var val = line.substring(idx + 1);
-
+    // Account keys write the per-Account overlay map rather than the Source's
+    // own state, so they are dispatched separately. Returns true when handled.
+    function parseAccountKey(id, key, val) {
         switch (key) {
-        case "SUBSCRIPTION_TYPE":
-            subscriptionType = val;
-            break;
-        case "RATE_LIMIT_TIER":
-            rateLimitTier = val;
-            break;
-        case "FIVE_HOUR_UTIL":
-            fiveHourUtil = parseFloat(val) || 0;
-            break;
-        case "FIVE_HOUR_RESET":
-            fiveHourReset = val;
-            break;
-        case "SEVEN_DAY_UTIL":
-            sevenDayUtil = parseFloat(val) || 0;
-            break;
-        case "SEVEN_DAY_RESET":
-            sevenDayReset = val;
-            break;
-        case "EXTRA_USAGE_ENABLED":
-            extraUsageEnabled = (val === "true");
-            break;
-        case "CREDS_STATUS":
-            credsStatus = val;
-            break;
-        case "WEEK_MESSAGES":
-            weekMessages = parseInt(val) || 0;
-            break;
-        case "WEEK_SESSIONS":
-            weekSessions = parseInt(val) || 0;
-            break;
-        case "WEEK_TOKENS":
-            weekTokens = parseFloat(val) || 0;
-            break;
-        case "MONTH_TOKENS":
-            monthTokens = parseFloat(val) || 0;
-            break;
-        case "ALLTIME_SESSIONS":
-            alltimeSessions = parseInt(val) || 0;
-            break;
-        case "ALLTIME_MESSAGES":
-            alltimeMessages = parseInt(val) || 0;
-            break;
-        case "FIRST_SESSION":
-            firstSession = val;
-            break;
-        case "WEEK_MODELS":
-            modelListData.clear();
-            if (val.length > 0) {
-                var wmpairs = val.split(",");
-                for (var wmi = 0; wmi < wmpairs.length; wmi++) {
-                    var wmeq = wmpairs[wmi].indexOf("=");
-                    if (wmeq >= 0)
-                        modelListData.append({
-                            modelName: wmpairs[wmi].substring(0, wmeq),
-                            modelTokens: parseInt(wmpairs[wmi].substring(wmeq + 1)) || 0
-                        });
-                }
-            }
-            break;
-        case "DAILY":
-            var parts = val.split(",");
-            var arr = [];
-            for (var j = 0; j < 7; j++)
-                arr.push(j < parts.length ? (parseFloat(parts[j]) || 0) : 0);
-            dailyTokens = arr;
-            break;
-        case "TODAY_COST":
-            todayCost = parseFloat(val) || 0;
-            break;
-        case "WEEK_COST":
-            weekCost = parseFloat(val) || 0;
-            break;
-        case "MONTH_COST":
-            monthCost = parseFloat(val) || 0;
-            break;
-        case "USD_EUR_RATE":
-            usdEurRate = parseFloat(val) || 0;
-            break;
-        case "DAILY_COSTS":
-            var cparts = val.split(",");
-            var carr = [];
-            for (var k = 0; k < 7; k++)
-                carr.push(k < cparts.length ? (parseFloat(cparts[k]) || 0) : 0);
-            dailyCosts = carr;
-            break;
         case "PROFILES":
-            {
-                profileListModel.clear();
-                profileListModel.append({
-                    name: "all"
-                });
-                var profs = val.split(",");
-                for (var pi = 0; pi < profs.length; pi++)
-                    profileListModel.append({
-                        name: profs[pi]
-                    });
-                // Reset selectedProfile if it no longer exists in new profile list
-                if (selectedProfile !== "all") {
-                    var found = false;
-                    for (var fi = 0; fi < profs.length; fi++)
-                        if (profs[fi] === selectedProfile) {
-                            found = true;
-                            break;
-                        }
-                    if (!found)
-                        selectedProfile = "all";
-                }
-                break;
-            }
-        case "PROFILE_WEEK_TOKENS":
-            profileData = parseProfileSimple(val, "weekTokens", false);
-            break;
-        case "PROFILE_MONTH_TOKENS":
-            profileData = parseProfileSimple(val, "monthTokens", false);
-            break;
-        case "PROFILE_WEEK_MESSAGES":
-            profileData = parseProfileSimple(val, "weekMessages", false);
-            break;
-        case "PROFILE_WEEK_SESSIONS":
-            profileData = parseProfileSimple(val, "weekSessions", false);
-            break;
-        case "PROFILE_TODAY_COST":
-            profileData = parseProfileSimple(val, "todayCost", true);
-            break;
-        case "PROFILE_WEEK_COST":
-            profileData = parseProfileSimple(val, "weekCost", true);
-            break;
-        case "PROFILE_MONTH_COST":
-            profileData = parseProfileSimple(val, "monthCost", true);
-            break;
+            root.applyAccounts(id, val);
+            return true;
         case "PROFILE_SUBSCRIPTION":
-            profileData = parseProfileString(val, "subscriptionType");
-            break;
+            root.applyAccountField(id, val, "subscriptionType");
+            return true;
         case "PROFILE_TIER":
-            profileData = parseProfileString(val, "rateLimitTier");
-            break;
-        case "PROFILE_FIVE_HOUR_UTIL":
-            profileData = parseProfileSimple(val, "fiveHourUtil", true);
-            break;
-        case "PROFILE_SEVEN_DAY_UTIL":
-            profileData = parseProfileSimple(val, "sevenDayUtil", true);
-            break;
-        case "PROFILE_FIVE_HOUR_RESET":
-            profileData = parseProfileString(val, "fiveHourReset");
-            break;
-        case "PROFILE_SEVEN_DAY_RESET":
-            profileData = parseProfileString(val, "sevenDayReset");
-            break;
-        case "PROFILE_EXTRA_USAGE":
-            profileData = parseProfileBool(val, "extraUsageEnabled");
-            break;
+            root.applyAccountField(id, val, "rateLimitTier");
+            return true;
         case "PROFILE_CREDS_STATUS":
-            profileData = parseProfileString(val, "credsStatus");
-            break;
+            root.applyAccountField(id, val, "credsStatus");
+            return true;
+        case "PROFILE_FIVE_HOUR_RESET":
+            root.applyAccountField(id, val, "fiveHourReset");
+            return true;
+        case "PROFILE_SEVEN_DAY_RESET":
+            root.applyAccountField(id, val, "sevenDayReset");
+            return true;
+        case "PROFILE_WEEK_TOKENS":
+            root.applyAccountNumber(id, val, "weekTokens");
+            return true;
+        case "PROFILE_MONTH_TOKENS":
+            root.applyAccountNumber(id, val, "monthTokens");
+            return true;
+        case "PROFILE_WEEK_MESSAGES":
+            root.applyAccountNumber(id, val, "weekMessages");
+            return true;
+        case "PROFILE_WEEK_SESSIONS":
+            root.applyAccountNumber(id, val, "weekSessions");
+            return true;
+        case "PROFILE_FIVE_HOUR_UTIL":
+            root.applyAccountNumber(id, val, "fiveHourUtil");
+            return true;
+        case "PROFILE_SEVEN_DAY_UTIL":
+            root.applyAccountNumber(id, val, "sevenDayUtil");
+            return true;
+        case "PROFILE_TODAY_COST":
+            root.applyAccountNumber(id, val, "todayCost");
+            return true;
+        case "PROFILE_WEEK_COST":
+            root.applyAccountNumber(id, val, "weekCost");
+            return true;
+        case "PROFILE_MONTH_COST":
+            root.applyAccountNumber(id, val, "monthCost");
+            return true;
+        case "PROFILE_EXTRA_USAGE":
+            root.applyAccountBool(id, val, "extraUsageEnabled");
+            return true;
         case "PROFILE_DAILY":
-            {
-                var _pd1 = Object.assign({}, profileData);
-                var blocks1 = val.split("|");
-                for (var bi1 = 0; bi1 < blocks1.length; bi1++) {
-                    var blk1 = blocks1[bi1];
-                    var c1 = blk1.indexOf(":");
-                    if (c1 < 0)
-                        continue;
-                    var pname1 = blk1.substring(0, c1);
-                    var csv1 = blk1.substring(c1 + 1);
-                    if (!_pd1[pname1])
-                        _pd1[pname1] = {};
-                    else
-                        _pd1[pname1] = Object.assign({}, _pd1[pname1]);
-                    var parts1 = csv1.split(",");
-                    var arr1 = [];
-                    for (var di = 0; di < 7; di++)
-                        arr1.push(di < parts1.length ? (parseFloat(parts1[di]) || 0) : 0);
-                    _pd1[pname1].daily = arr1;
-                }
-                profileData = _pd1;
-                break;
-            }
+            root.applyAccountList(id, val, "daily");
+            return true;
         case "PROFILE_DAILY_COSTS":
-            {
-                var _pd2 = Object.assign({}, profileData);
-                var blocks2 = val.split("|");
-                for (var bi2 = 0; bi2 < blocks2.length; bi2++) {
-                    var blk2 = blocks2[bi2];
-                    var c2 = blk2.indexOf(":");
-                    if (c2 < 0)
-                        continue;
-                    var pname2 = blk2.substring(0, c2);
-                    var csv2 = blk2.substring(c2 + 1);
-                    if (!_pd2[pname2])
-                        _pd2[pname2] = {};
-                    else
-                        _pd2[pname2] = Object.assign({}, _pd2[pname2]);
-                    var parts2 = csv2.split(",");
-                    var arr2 = [];
-                    for (var dci = 0; dci < 7; dci++)
-                        arr2.push(dci < parts2.length ? (parseFloat(parts2[dci]) || 0) : 0);
-                    _pd2[pname2].dailyCosts = arr2;
-                }
-                profileData = _pd2;
-                break;
-            }
+            root.applyAccountList(id, val, "dailyCosts");
+            return true;
         case "PROFILE_WEEK_MODELS":
-            {
-                var _pd3 = Object.assign({}, profileData);
-                var blocks3 = val.split("|");
-                for (var bi3 = 0; bi3 < blocks3.length; bi3++) {
-                    var blk3 = blocks3[bi3];
-                    var c3 = blk3.indexOf(":");
-                    if (c3 < 0)
-                        continue;
-                    var pname3 = blk3.substring(0, c3);
-                    var mcsv = blk3.substring(c3 + 1);
-                    if (!_pd3[pname3])
-                        _pd3[pname3] = {};
-                    else
-                        _pd3[pname3] = Object.assign({}, _pd3[pname3]);
-                    var wms = [];
-                    if (mcsv.length > 0) {
-                        var mentries = mcsv.split(",");
-                        for (var mi = 0; mi < mentries.length; mi++) {
-                            var eq = mentries[mi].indexOf("=");
-                            if (eq < 0)
-                                continue;
-                            wms.push({
-                                modelName: mentries[mi].substring(0, eq),
-                                modelTokens: parseInt(mentries[mi].substring(eq + 1)) || 0
-                            });
-                        }
-                    }
-                    _pd3[pname3].weekModels = wms;
-                }
-                profileData = _pd3;
-                break;
-            }
+            root.applyAccountModels(id, val);
+            return true;
         }
+        return false;
     }
 
-    function parseChatgptLine(line) {
-        var idx = line.indexOf("=");
-        if (idx < 0)
-            return;
-        var key = line.substring(0, idx);
-        var val = line.substring(idx + 1);
-
-        switch (key) {
-        case "PLAN_TYPE":
-            chatgptPlanType = val;
-            break;
-        case "PRIMARY_UTIL":
-            chatgptPrimaryUtil = parseFloat(val) || 0;
-            break;
-        case "PRIMARY_RESET":
-            chatgptPrimaryResetMs = root.parseResetMs(val);
-            break;
-        case "PRIMARY_WINDOW_SECONDS":
-            chatgptPrimaryWindowSeconds = parseFloat(val) || 0;
-            break;
-        case "SECONDARY_UTIL":
-            chatgptSecondaryUtil = parseFloat(val) || 0;
-            break;
-        case "SECONDARY_RESET":
-            chatgptSecondaryResetMs = root.parseResetMs(val);
-            break;
-        case "SECONDARY_WINDOW_SECONDS":
-            chatgptSecondaryWindowSeconds = parseFloat(val) || 0;
-            break;
-        case "CREDITS_BALANCE":
-            chatgptCreditsBalance = parseFloat(val) || 0;
-            break;
-        case "CREDITS_HAS":
-            chatgptCreditsHas = (val === "true");
-            break;
-        case "CREDS_STATUS":
-            chatgptCredsStatus = val;
-            break;
-        case "WEEK_TOKENS":
-            chatgptWeekTokens = parseFloat(val) || 0;
-            break;
-        case "WEEK_MESSAGES":
-            chatgptWeekMessages = parseInt(val) || 0;
-            break;
-        case "WEEK_SESSIONS":
-            chatgptWeekSessions = parseInt(val) || 0;
-            break;
-        case "MONTH_TOKENS":
-            chatgptMonthTokens = parseFloat(val) || 0;
-            break;
-        case "DAILY":
-            var cgParts = val.split(",");
-            var cgArr = [];
-            for (var cgi = 0; cgi < 7; cgi++)
-                cgArr.push(cgi < cgParts.length ? (parseFloat(cgParts[cgi]) || 0) : 0);
-            chatgptDailyTokens = cgArr;
-            break;
-        case "WEEK_MODELS":
-            chatgptModelListData.clear();
-            if (val.length > 0) {
-                var cgwmpairs = val.split(",");
-                for (var cgwmi = 0; cgwmi < cgwmpairs.length; cgwmi++) {
-                    var cgwmeq = cgwmpairs[cgwmi].indexOf("=");
-                    if (cgwmeq >= 0)
-                        chatgptModelListData.append({
-                            modelName: cgwmpairs[cgwmi].substring(0, cgwmeq),
-                            modelTokens: parseInt(cgwmpairs[cgwmi].substring(cgwmeq + 1)) || 0
-                        });
-                }
-            }
-            break;
-        case "ALLTIME_SESSIONS":
-            chatgptAlltimeSessions = parseInt(val) || 0;
-            break;
-        case "ALLTIME_MESSAGES":
-            chatgptAlltimeMessages = parseInt(val) || 0;
-            break;
-        case "FIRST_SESSION":
-            chatgptFirstSession = val;
-            break;
+    function parseWindowKey(d, id, which, key, val) {
+        var w = d.windows[which];
+        if (!w)
+            return false;
+        if (key === w.util) {
+            root.updateSource(id, function (st) {
+                root.setWindow(st, which, "util", parseFloat(val) || 0);
+            });
+            return true;
         }
-    }
-
-    function parseZaiLine(line) {
-        var idx = line.indexOf("=");
-        if (idx < 0)
-            return;
-        var key = line.substring(0, idx);
-        var val = line.substring(idx + 1);
-
-        switch (key) {
-        case "PLAN_TYPE":
-            zaiPlanType = val;
-            break;
-        case "PRIMARY_UTIL":
-            zaiPrimaryUtil = parseFloat(val) || 0;
-            break;
-        case "PRIMARY_RESET":
-            zaiPrimaryResetMs = root.parseResetMs(val);
-            break;
-        case "PRIMARY_WINDOW_SECONDS":
-            zaiPrimaryWindowSeconds = parseFloat(val) || 0;
-            break;
-        case "SECONDARY_UTIL":
-            zaiSecondaryUtil = parseFloat(val) || 0;
-            break;
-        case "SECONDARY_RESET":
-            zaiSecondaryResetMs = root.parseResetMs(val);
-            break;
-        case "SECONDARY_WINDOW_SECONDS":
-            zaiSecondaryWindowSeconds = parseFloat(val) || 0;
-            break;
-        case "CREDS_STATUS":
-            zaiCredsStatus = val;
-            break;
-        case "WEEK_TOKENS":
-            zaiWeekTokens = parseFloat(val) || 0;
-            break;
-        case "WEEK_CALLS":
-            zaiWeekCalls = parseInt(val) || 0;
-            break;
-        case "MONTH_TOKENS":
-            zaiMonthTokens = parseFloat(val) || 0;
-            break;
-        case "DAILY":
-            var zaiParts = val.split(",");
-            var zaiArr = [];
-            for (var zi = 0; zi < 7; zi++)
-                zaiArr.push(zi < zaiParts.length ? (parseFloat(zaiParts[zi]) || 0) : 0);
-            zaiDailyTokens = zaiArr;
-            break;
-        case "WEEK_MODELS":
-            zaiModelListData.clear();
-            if (val.length > 0) {
-                var zwmpairs = val.split(",");
-                for (var zwmi = 0; zwmi < zwmpairs.length; zwmi++) {
-                    var zwmeq = zwmpairs[zwmi].indexOf("=");
-                    if (zwmeq >= 0)
-                        zaiModelListData.append({
-                            modelName: zwmpairs[zwmi].substring(0, zwmeq),
-                            modelTokens: parseInt(zwmpairs[zwmi].substring(zwmeq + 1)) || 0
-                        });
-                }
-            }
-            break;
-        case "ACCOUNTS":
-            zaiAccounts = val.length > 0 ? val.split(",") : [];
-            break;
+        if (key === w.reset) {
+            root.updateSource(id, function (st) {
+                root.setWindow(st, which, "resetMs", root.parseResetMs(val));
+            });
+            return true;
         }
-    }
-
-    // --- Data fetching ---
-
-    // Pick up an added/removed profile now instead of waiting for the refresh timer
-    onCustomProfilesChanged: {
-        if (!root.enableClaude)
-            return;
-        if (usageProcess.running)
-            customProfilesRefreshPending = true;
-        else
-            usageProcess.running = true;
-    }
-
-    onCustomChatgptAccountsChanged: {
-        if (!root.enableChatgpt)
-            return;
-        if (chatgptProcess.running)
-            chatgptAccountsRefreshPending = true;
-        else
-            chatgptProcess.running = true;
-    }
-
-    onCustomZaiAccountsChanged: {
-        if (!root.enableZai)
-            return;
-        if (zaiProcess.running)
-            zaiAccountsRefreshPending = true;
-        else
-            zaiProcess.running = true;
-    }
-
-    Process {
-        id: usageProcess
-        // Wrapped in `timeout` as a watchdog. The refresh timer below skips a tick
-        // while `running` is true, so a single run that never exits (a hung
-        // `claude --version`, a stalled curl/find) freezes the widget on stale
-        // values until the plugin is reloaded. Killing the run lets onExited fire.
-        command: ["timeout", "120", "bash", root.scriptPath].concat(root.customProfiles.filter(p => p && p.name && p.path).map(p => p.name + "=" + p.path))
-        running: false
-
-        stdout: SplitParser {
-            onRead: data => root.parseLine(data.trim())
+        if (w.windowSecondsKey && key === w.windowSecondsKey) {
+            root.updateSource(id, function (st) {
+                root.setWindow(st, which, "windowSeconds", parseFloat(val) || 0);
+            });
+            return true;
         }
+        return false;
+    }
 
-        onExited: (exitCode, exitStatus) => {
-            if (exitCode === 0) {
-                root.isLoading = false;
-                root.refreshEpoch++;
-            }
-            if (root.customProfilesRefreshPending) {
-                root.customProfilesRefreshPending = false;
-                Qt.callLater(function() {
-                    if (!usageProcess.running)
-                        usageProcess.running = true;
+    function parseDaily(val) {
+        var parts = val.split(",");
+        var arr = [];
+        for (var i = 0; i < 7; i++)
+            arr.push(i < parts.length ? (parseFloat(parts[i]) || 0) : 0);
+        return arr;
+    }
+
+    function parseModels(val) {
+        var out = [];
+        if (!val || val.length === 0)
+            return out;
+        var pairs = val.split(",");
+        for (var i = 0; i < pairs.length; i++) {
+            var eq = pairs[i].indexOf("=");
+            if (eq >= 0)
+                out.push({
+                    modelName: pairs[i].substring(0, eq),
+                    modelTokens: parseInt(pairs[i].substring(eq + 1)) || 0
                 });
-            }
         }
+        return out;
     }
 
-    Process {
-        id: chatgptProcess
-        command: ["timeout", "120", "bash", root.chatgptScriptPath].concat(root.customChatgptAccounts.filter(a => a && a.name && a.path).map(a => a.name + "=" + a.path))
-        running: false
+    // --- Per-Account overlay state ---
 
-        stdout: SplitParser {
-            onRead: data => root.parseChatgptLine(data.trim())
+    // "name:a,b,c|name2:..." — a per-Account 7-day series.
+    function parseAccountSeries(val) {
+        var out = {};
+        var blocks = val.split("|");
+        for (var i = 0; i < blocks.length; i++) {
+            var colon = blocks[i].indexOf(":");
+            if (colon < 0)
+                continue;
+            out[blocks[i].substring(0, colon)] = root.parseDaily(blocks[i].substring(colon + 1));
         }
-
-        onExited: (exitCode, exitStatus) => {
-            if (root.chatgptAccountsRefreshPending) {
-                root.chatgptAccountsRefreshPending = false;
-                Qt.callLater(function() {
-                    if (!chatgptProcess.running)
-                        chatgptProcess.running = true;
-                });
-            }
-        }
+        return out;
     }
 
-    // Accounts are passed as `name=api-key` rather than `name=path`: Z.ai has
-    // no local config directory to point at, the key is the credential.
-    Process {
-        id: zaiProcess
-        command: ["timeout", "120", "bash", root.zaiScriptPath].concat(root.customZaiAccounts.filter(a => a && a.name && a.key).map(a => a.name + "=" + a.key))
-        running: false
-
-        stdout: SplitParser {
-            onRead: data => root.parseZaiLine(data.trim())
+    // "name:value,name2:value2" — a per-Account scalar.
+    function parseAccountScalars(val) {
+        var out = {};
+        var entries = val.split(",");
+        for (var i = 0; i < entries.length; i++) {
+            var colon = entries[i].indexOf(":");
+            if (colon < 0)
+                continue;
+            out[entries[i].substring(0, colon)] = entries[i].substring(colon + 1);
         }
-
-        onExited: (exitCode, exitStatus) => {
-            if (root.zaiAccountsRefreshPending) {
-                root.zaiAccountsRefreshPending = false;
-                Qt.callLater(function() {
-                    if (!zaiProcess.running)
-                        zaiProcess.running = true;
-                });
-            }
-        }
+        return out;
     }
 
-    Timer {
-        interval: root.refreshInterval
-        running: true
-        repeat: true
-        triggeredOnStart: true
-        onTriggered: {
-            if (root.enableClaude && !usageProcess.running)
-                usageProcess.running = true;
-            if (root.enableChatgpt && !chatgptProcess.running)
-                chatgptProcess.running = true;
-            if (root.enableZai && !zaiProcess.running)
-                zaiProcess.running = true;
+    // "name:model=123,model2=456|name2:..." — per-Account model breakdowns.
+    function parseAccountModels(val) {
+        var out = {};
+        var blocks = val.split("|");
+        for (var i = 0; i < blocks.length; i++) {
+            var colon = blocks[i].indexOf(":");
+            if (colon < 0)
+                continue;
+            out[blocks[i].substring(0, colon)] = root.parseModels(blocks[i].substring(colon + 1));
         }
+        return out;
     }
 
-    // Shells out to the CLI's own login command — the same mechanism the CLI
-    // uses for itself, confirmed against CodexBar's approach (see map Notes).
-    // No stdout pattern-matching for a "success" marker: the CLI's login flow
-    // exits 0 on success and non-zero on failure/cancel, so exit code alone
-    // is enough to decide whether to re-fetch usage.
-    // `command` is set (with PATH widened) by startLogin() below, not here —
-    // Quickshell's own PATH is a bare `/usr/local/bin:/usr/bin` and won't
-    // find a `claude` installed under ~/.local/bin, ~/.npm-global/bin, etc,
-    // which left this Process failing to spawn and the button stuck on
-    // "Logging in…" forever (no exit ever fires to clear loginInProgress).
-    Process {
-        id: loginProcess
-        running: false
-
-        onExited: (exitCode, exitStatus) => {
-            root.loginInProgress = false;
-            if (!usageProcess.running)
-                usageProcess.running = true;
-        }
+    function mutateAccounts(id, mutate) {
+        var next = Object.assign({}, root.accountData);
+        var forSource = Object.assign({}, next[id] || {});
+        mutate(function (name) {
+            if (!forSource[name])
+                forSource[name] = {};
+            else
+                forSource[name] = Object.assign({}, forSource[name]);
+            return forSource[name];
+        });
+        next[id] = forSource;
+        root.accountData = next;
     }
 
-    function startChatgptLogin() {
-        if (chatgptLoginProcess.running)
-            return;
-        root.chatgptLoginInProgress = true;
-        chatgptLoginProcess.running = true;
+    function applyAccounts(id, val) {
+        var names = val.length > 0 ? val.split(",") : [];
+        root.updateSource(id, function (st) {
+            st.accounts = names;
+        });
+        // Drop a selection that no longer exists so the tab falls back to the
+        // aggregate rather than showing an empty overlay.
+        var sel = root.selectedAccount[id] || "all";
+        if (sel !== "all" && names.indexOf(sel) < 0)
+            root.selectAccount(id, "all");
     }
 
-    // Same spirit as loginProcess above: `codex login` is the CLI's own
-    // OAuth flow (starts a local callback server, prints/opens the browser
-    // URL) — confirmed it doesn't block on a tty when run headless. Exit
-    // code alone drives the re-fetch, same as Claude's login action.
-    // Routed through `bash -c` with PATH widened for the same reason as
-    // loginProcess above — `codex` is typically under ~/.npm-global/bin,
-    // which isn't on Quickshell's own PATH.
-    Process {
-        id: chatgptLoginProcess
-        command: ["bash", "-c", "PATH=\"$PATH:" + root.cliSearchPathAdditions + "\" exec codex login"]
-        running: false
-
-        onExited: (exitCode, exitStatus) => {
-            root.chatgptLoginInProgress = false;
-            if (!chatgptProcess.running)
-                chatgptProcess.running = true;
-        }
+    function applyAccountField(id, val, field) {
+        var scalars = root.parseAccountScalars(val);
+        root.mutateAccounts(id, function (acct) {
+            for (var name in scalars)
+                acct(name)[field] = scalars[name];
+        });
     }
 
-    // --- Taskbar pills (show 5h utilization) ---
-
-    horizontalBarPill: Component {
-        Row {
-            spacing: Theme.spacingXS
-
-            Canvas {
-                id: hRing
-                width: root.iconSize
-                height: root.iconSize
-                anchors.verticalCenter: parent.verticalCenter
-                renderStrategy: Canvas.Cooperative
-                visible: root.claudeVisible
-
-                property real percent: root.fiveHourUtil
-                onPercentChanged: requestPaint()
-                onWidthChanged: requestPaint()
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.reset();
-                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
-
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                    ctx.lineWidth = lw;
-                    ctx.strokeStyle = Theme.surfaceVariant;
-                    ctx.stroke();
-
-                    var pct = percent / 100;
-                    if (pct > 0) {
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                        ctx.lineWidth = lw;
-                        ctx.strokeStyle = root.progressColor(percent);
-                        ctx.lineCap = "round";
-                        ctx.stroke();
-                    }
-                }
-            }
-
-            StyledText {
-                text: Math.round(root.fiveHourUtil) + "%" + (root.pillOverPace ? " ↑" : "")
-                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                color: root.pillOverPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.claudeVisible
-            }
-
-            Rectangle {
-                width: 1
-                height: root.iconSize * 0.7
-                anchors.verticalCenter: parent.verticalCenter
-                color: Theme.outline
-                opacity: 0.5
-                visible: root.claudeVisible && root.chatgptVisible
-            }
-
-            Canvas {
-                id: hRingGpt
-                width: root.iconSize
-                height: root.iconSize
-                anchors.verticalCenter: parent.verticalCenter
-                renderStrategy: Canvas.Cooperative
-                visible: root.chatgptVisible
-
-                property real percent: root.chatgptPrimaryUtil
-                onPercentChanged: requestPaint()
-                onWidthChanged: requestPaint()
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.reset();
-                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
-
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                    ctx.lineWidth = lw;
-                    ctx.strokeStyle = Theme.surfaceVariant;
-                    ctx.stroke();
-
-                    var pct = percent / 100;
-                    if (pct > 0) {
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                        ctx.lineWidth = lw;
-                        ctx.strokeStyle = root.progressColor(percent);
-                        ctx.lineCap = "round";
-                        ctx.stroke();
-                    }
-                }
-            }
-
-            StyledText {
-                text: Math.round(root.chatgptPrimaryUtil) + "%" + (root.chatgptPillOverPace ? " ↑" : "")
-                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                color: root.chatgptPillOverPace ? root.paceColor(root.chatgptPrimaryPace.status) : Theme.surfaceText
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.chatgptVisible
-            }
-
-            Rectangle {
-                width: 1
-                height: root.iconSize * 0.7
-                anchors.verticalCenter: parent.verticalCenter
-                color: Theme.outline
-                opacity: 0.5
-                visible: (root.claudeVisible || root.chatgptVisible) && root.zaiVisible
-            }
-
-            Canvas {
-                id: hRingZai
-                width: root.iconSize
-                height: root.iconSize
-                anchors.verticalCenter: parent.verticalCenter
-                renderStrategy: Canvas.Cooperative
-                visible: root.zaiVisible
-
-                property real percent: root.zaiPrimaryUtil
-                onPercentChanged: requestPaint()
-                onWidthChanged: requestPaint()
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.reset();
-                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
-
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                    ctx.lineWidth = lw;
-                    ctx.strokeStyle = Theme.surfaceVariant;
-                    ctx.stroke();
-
-                    var pct = percent / 100;
-                    if (pct > 0) {
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                        ctx.lineWidth = lw;
-                        ctx.strokeStyle = root.progressColor(percent);
-                        ctx.lineCap = "round";
-                        ctx.stroke();
-                    }
-                }
-            }
-
-            StyledText {
-                text: Math.round(root.zaiPrimaryUtil) + "%" + (root.zaiPillOverPace ? " ↑" : "")
-                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                color: root.zaiPillOverPace ? root.paceColor(root.zaiPrimaryPace.status) : Theme.surfaceText
-                anchors.verticalCenter: parent.verticalCenter
-                visible: root.zaiVisible
-            }
-        }
+    function applyAccountNumber(id, val, field) {
+        var scalars = root.parseAccountScalars(val);
+        root.mutateAccounts(id, function (acct) {
+            for (var name in scalars)
+                acct(name)[field] = parseFloat(scalars[name]) || 0;
+        });
     }
 
-    verticalBarPill: Component {
-        Column {
-            spacing: Theme.spacingXS || 4
-
-            Canvas {
-                id: vRing
-                width: root.iconSize
-                height: root.iconSize
-                anchors.horizontalCenter: parent.horizontalCenter
-                renderStrategy: Canvas.Cooperative
-                visible: root.claudeVisible
-
-                property real percent: root.fiveHourUtil
-                onPercentChanged: requestPaint()
-                onWidthChanged: requestPaint()
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.reset();
-                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
-
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                    ctx.lineWidth = lw;
-                    ctx.strokeStyle = Theme.surfaceVariant;
-                    ctx.stroke();
-
-                    var pct = percent / 100;
-                    if (pct > 0) {
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                        ctx.lineWidth = lw;
-                        ctx.strokeStyle = root.progressColor(percent);
-                        ctx.lineCap = "round";
-                        ctx.stroke();
-                    }
-                }
-            }
-
-            StyledText {
-                text: Math.round(root.fiveHourUtil) + "%" + (root.pillOverPace ? " ↑" : "")
-                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                color: root.pillOverPace ? root.paceColor(root.pillFivePace.status) : Theme.surfaceText
-                anchors.horizontalCenter: parent.horizontalCenter
-                visible: root.claudeVisible
-            }
-
-            Rectangle {
-                width: root.iconSize * 0.7
-                height: 1
-                anchors.horizontalCenter: parent.horizontalCenter
-                color: Theme.outline
-                opacity: 0.5
-                visible: root.claudeVisible && root.chatgptVisible
-            }
-
-            Canvas {
-                id: vRingGpt
-                width: root.iconSize
-                height: root.iconSize
-                anchors.horizontalCenter: parent.horizontalCenter
-                renderStrategy: Canvas.Cooperative
-                visible: root.chatgptVisible
-
-                property real percent: root.chatgptPrimaryUtil
-                onPercentChanged: requestPaint()
-                onWidthChanged: requestPaint()
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.reset();
-                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
-
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                    ctx.lineWidth = lw;
-                    ctx.strokeStyle = Theme.surfaceVariant;
-                    ctx.stroke();
-
-                    var pct = percent / 100;
-                    if (pct > 0) {
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                        ctx.lineWidth = lw;
-                        ctx.strokeStyle = root.progressColor(percent);
-                        ctx.lineCap = "round";
-                        ctx.stroke();
-                    }
-                }
-            }
-
-            StyledText {
-                text: Math.round(root.chatgptPrimaryUtil) + "%" + (root.chatgptPillOverPace ? " ↑" : "")
-                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                color: root.chatgptPillOverPace ? root.paceColor(root.chatgptPrimaryPace.status) : Theme.surfaceText
-                anchors.horizontalCenter: parent.horizontalCenter
-                visible: root.chatgptVisible
-            }
-
-            Rectangle {
-                width: root.iconSize * 0.7
-                height: 1
-                anchors.horizontalCenter: parent.horizontalCenter
-                color: Theme.outline
-                opacity: 0.5
-                visible: (root.claudeVisible || root.chatgptVisible) && root.zaiVisible
-            }
-
-            Canvas {
-                id: vRingZai
-                width: root.iconSize
-                height: root.iconSize
-                anchors.horizontalCenter: parent.horizontalCenter
-                renderStrategy: Canvas.Cooperative
-                visible: root.zaiVisible
-
-                property real percent: root.zaiPrimaryUtil
-                onPercentChanged: requestPaint()
-                onWidthChanged: requestPaint()
-
-                onPaint: {
-                    var ctx = getContext("2d");
-                    ctx.reset();
-                    var cx = width / 2, cy = height / 2, r = width * 0.375, lw = width * 0.125;
-
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                    ctx.lineWidth = lw;
-                    ctx.strokeStyle = Theme.surfaceVariant;
-                    ctx.stroke();
-
-                    var pct = percent / 100;
-                    if (pct > 0) {
-                        ctx.beginPath();
-                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                        ctx.lineWidth = lw;
-                        ctx.strokeStyle = root.progressColor(percent);
-                        ctx.lineCap = "round";
-                        ctx.stroke();
-                    }
-                }
-            }
-
-            StyledText {
-                text: Math.round(root.zaiPrimaryUtil) + "%" + (root.zaiPillOverPace ? " ↑" : "")
-                font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
-                color: root.zaiPillOverPace ? root.paceColor(root.zaiPrimaryPace.status) : Theme.surfaceText
-                anchors.horizontalCenter: parent.horizontalCenter
-                visible: root.zaiVisible
-            }
-        }
+    function applyAccountBool(id, val, field) {
+        var scalars = root.parseAccountScalars(val);
+        root.mutateAccounts(id, function (acct) {
+            for (var name in scalars)
+                acct(name)[field] = scalars[name] === "true";
+        });
     }
 
-    // --- Popout ---
-
-    // Profile selector components — declared at root scope for Loader access
-    Component {
-        id: profileTabsComponent
-        Row {
-            spacing: Theme.spacingXS
-
-            Repeater {
-                model: profileListModel
-                delegate: Rectangle {
-                    width: tabLabel.implicitWidth + Theme.spacingM * 2
-                    height: 32
-                    radius: 16
-                    color: root.selectedProfile === name ? Theme.primary : Theme.surfaceVariant
-
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 120
-                        }
-                    }
-
-                    StyledText {
-                        id: tabLabel
-                        anchors.centerIn: parent
-                        text: name === "all" ? root.tr("All") : name
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.weight: root.selectedProfile === name ? Font.Medium : Font.Normal
-                        color: root.selectedProfile === name ? Theme.primaryText : Theme.surfaceVariantText
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.selectedProfile = name
-                    }
-                }
-            }
-        }
+    function applyAccountList(id, val, field) {
+        var series = root.parseAccountSeries(val);
+        root.mutateAccounts(id, function (acct) {
+            for (var name in series)
+                acct(name)[field] = series[name];
+        });
     }
 
-    Component {
-        id: profileDropdownComponent
-        Rectangle {
-            // Note: z:100 on popup is scoped to subtree; cards below may overlap when open.
-            // Acceptable for >5 profiles (rare case). Full modal overlay is out of scope.
-            width: parent ? parent.width : 0
-            height: 36
-            radius: 8
-            color: Theme.surfaceVariant
-
-            Row {
-                anchors.fill: parent
-                anchors.leftMargin: Theme.spacingM
-                anchors.rightMargin: Theme.spacingM
-                spacing: Theme.spacingXS
-
-                StyledText {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.tr("Profile") + ":"
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                }
-
-                StyledText {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.selectedProfile === "all" ? root.tr("All") : root.selectedProfile
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.weight: Font.Medium
-                    color: Theme.surfaceText
-                }
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: profileDropdownPopup.visible = !profileDropdownPopup.visible
-            }
-
-            MouseArea {
-                id: profileDropdownOverlay
-                visible: profileDropdownPopup.visible
-                anchors.fill: root
-                z: 99
-                onClicked: profileDropdownPopup.visible = false
-            }
-
-            Rectangle {
-                id: profileDropdownPopup
-                visible: false
-                z: 100
-                anchors.top: parent.bottom
-                anchors.topMargin: 4
-                anchors.left: parent.left
-                width: parent.width
-                height: dropdownCol.implicitHeight + Theme.spacingS * 2
-                radius: 8
-                color: Theme.surfaceContainer
-
-                Column {
-                    id: dropdownCol
-                    anchors.fill: parent
-                    anchors.margins: Theme.spacingS
-                    spacing: 2
-
-                    Repeater {
-                        model: profileListModel
-                        delegate: Rectangle {
-                            width: parent.width
-                            height: 28
-                            radius: 4
-                            color: root.selectedProfile === name ? Theme.primary : "transparent"
-
-                            StyledText {
-                                anchors.verticalCenter: parent.verticalCenter
-                                anchors.left: parent.left
-                                anchors.leftMargin: Theme.spacingXS
-                                text: name === "all" ? root.tr("All") : name
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: root.selectedProfile === name ? Theme.primaryText : Theme.surfaceText
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    root.selectedProfile = name;
-                                    profileDropdownPopup.visible = false;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    popoutContent: Component {
-        PopoutComponent {
-            headerText: root.tr("AI Usage")
-            showCloseButton: true
-
-            Column {
-                width: parent.width - Theme.spacingM * 2
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Theme.spacingL
-
-                // --- Source tab strip ---
-                // Only one Source's cards render at a time, keeping the popout
-                // short on small screens (both stacked visible was too tall).
-                // Hidden entirely when only one Source is visible — nothing to
-                // switch between (both-hidden already hides the whole pill).
-                Row {
-                    width: parent.width
-                    spacing: Theme.spacingXS
-                    visible: root.popoutSourceTabs.length > 1
-
-                    Repeater {
-                        model: root.popoutSourceTabs
-                        delegate: Rectangle {
-                            width: (parent.width - Theme.spacingXS * (root.popoutSourceTabs.length - 1)) / root.popoutSourceTabs.length
-                            height: 32
-                            radius: 16
-                            color: root.popoutSourceTab === modelData.key ? Theme.primary : Theme.surfaceVariant
-
-                            Behavior on color {
-                                ColorAnimation {
-                                    duration: 120
-                                }
-                            }
-
-                            StyledText {
-                                anchors.centerIn: parent
-                                text: modelData.label
-                                font.pixelSize: Theme.fontSizeSmall
-                                font.weight: root.popoutSourceTab === modelData.key ? Font.Medium : Font.Normal
-                                color: root.popoutSourceTab === modelData.key ? Theme.primaryText : Theme.surfaceVariantText
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.popoutSourceTab = modelData.key
-                            }
-                        }
-                    }
-                }
-
-                // --- Claude section ---
-                Column {
-                    width: parent.width
-                    spacing: Theme.spacingL
-                    visible: root.popoutSourceTab === "claude"
-
-                    Column {
-                        width: parent.width
-                        spacing: 2
-
-                        StyledText {
-                            text: root.tr("Claude")
-                            font.pixelSize: Theme.fontSizeLarge
-                            font.weight: Font.Bold
-                            color: Theme.surfaceText
-                        }
-                        StyledText {
-                            width: parent.width
-                            text: {
-                                var label = root.formatSubscription(root.displaySubscriptionType, root.displayRateLimitTier);
-                                return label ? root.tr("Subscription") + ": " + label : "";
-                            }
-                            visible: text !== ""
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-
-                    // --- Profile selector (tabs ≤5 entries, dropdown >5) ---
-                    // Hidden when only one real profile (e.g. default only, no CCS instances)
-                    // count > 2 means "All" + at least 2 real profiles
-                    Item {
-                        width: parent.width
-                        height: profileSelectorLoader.height
-                        visible: profileListModel.count > 2
-
-                        Loader {
-                            id: profileSelectorLoader
-                            width: parent.width
-                            // Explicit height binding — Loader defaults to 0 without this
-                            height: item ? item.implicitHeight : 0
-                            sourceComponent: profileListModel.count <= 5 ? profileTabsComponent : profileDropdownComponent
-                        }
-                    }
-
-                    // --- Credentials unavailable: login action ---
-                    // Shown instead of silently sitting at 0% (the bug this ticket fixes)
-                    // whenever the selected profile's credentials are missing or expired.
-                    StyledRect {
-                        width: parent.width
-                        height: credsWarningContent.implicitHeight + Theme.spacingM * 2
-                        visible: root.displayCredsStatus === "missing" || root.displayCredsStatus === "expired"
-                        color: Theme.surfaceContainerHigh
-                        border.width: 1
-                        border.color: Theme.error || Theme.primary
-
-                        Row {
-                            id: credsWarningContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingM
-
-                            Column {
-                                width: parent.width - loginButton.width - parent.spacing
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingXS
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.displayCredsStatus === "missing" ? root.tr("Not logged in") : root.tr("Session expired")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.tr("Usage data unavailable until you log in.")
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-
-                            Rectangle {
-                                id: loginButton
-                                width: loginButtonLabel.implicitWidth + Theme.spacingM * 2
-                                height: 32
-                                radius: 16
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: Theme.primary
-                                opacity: root.loginInProgress ? 0.6 : 1
-
-                                StyledText {
-                                    id: loginButtonLabel
-                                    anchors.centerIn: parent
-                                    text: root.loginInProgress ? root.tr("Logging in…") : root.tr("Log in")
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: Font.Medium
-                                    color: Theme.primaryText
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: !root.loginInProgress
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.startLogin(root.selectedProfile)
-                                }
-                            }
-                        }
-                    }
-
-                    // --- 5h Rate Window card ---
-                    StyledRect {
-                        width: parent.width
-                        height: fiveHourContent.implicitHeight + Theme.spacingS * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Row {
-                            id: fiveHourContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingS
-                            spacing: Theme.spacingM
-
-                            Canvas {
-                                id: fiveHourRing
-                                width: 100
-                                height: 100
-                                anchors.verticalCenter: parent.verticalCenter
-                                renderStrategy: Canvas.Cooperative
-
-                                property real percent: root.displayFiveHourUtil
-                                onPercentChanged: requestPaint()
-                                property var pace: root.fiveHourPace
-                                onPaceChanged: requestPaint()
-
-                                onPaint: {
-                                    var ctx = getContext("2d");
-                                    ctx.reset();
-                                    var cx = width / 2, cy = height / 2, r = 38, lw = 8;
-
-                                    ctx.beginPath();
-                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                                    ctx.lineWidth = lw;
-                                    ctx.strokeStyle = Theme.surfaceVariant;
-                                    ctx.stroke();
-
-                                    var pct = percent / 100;
-                                    if (pct > 0) {
-                                        ctx.beginPath();
-                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                                        ctx.lineWidth = lw;
-                                        ctx.strokeStyle = root.progressColor(percent);
-                                        ctx.lineCap = "round";
-                                        ctx.stroke();
-                                    }
-
-                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
-                                }
-
-                                StyledText {
-                                    anchors.centerIn: parent
-                                    text: Math.round(root.displayFiveHourUtil) + "%"
-                                    font.pixelSize: Theme.fontSizeXLarge
-                                    font.weight: Font.DemiBold
-                                    color: Theme.surfaceText
-                                }
-                            }
-
-                            Column {
-                                width: Math.max(0, parent.width - fiveHourRing.width - parent.spacing)
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.tr("5h Rate Window")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: Math.round(root.displayFiveHourUtil) + "% " + root.tr("used")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: root.progressColor(root.displayFiveHourUtil)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.paceLabel(root.fiveHourPace)
-                                    visible: root.showPacing && text !== ""
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: root.paceColor(root.fiveHourPace.status)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.displayFiveHourCountdown ? root.tr("Resets in") + " " + root.displayFiveHourCountdown : ""
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: Theme.surfaceVariantText
-                                    visible: root.displayFiveHourCountdown !== ""
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                        }
-                    }
-
-                    // --- 7-Day Usage card ---
-                    StyledRect {
-                        width: parent.width
-                        height: sevenDayContent.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Row {
-                            id: sevenDayContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingM
-
-                            Canvas {
-                                id: weeklySmallRing
-                                width: 72
-                                height: 72
-                                anchors.verticalCenter: parent.verticalCenter
-                                renderStrategy: Canvas.Cooperative
-
-                                property real percent: root.displaySevenDayUtil
-                                onPercentChanged: requestPaint()
-                                property var pace: root.sevenDayPace
-                                onPaceChanged: requestPaint()
-
-                                onPaint: {
-                                    var ctx = getContext("2d");
-                                    ctx.reset();
-                                    var cx = width / 2, cy = height / 2, r = 28, lw = 6;
-
-                                    ctx.beginPath();
-                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                                    ctx.lineWidth = lw;
-                                    ctx.strokeStyle = Theme.surfaceVariant;
-                                    ctx.stroke();
-
-                                    var pct = percent / 100;
-                                    if (pct > 0) {
-                                        ctx.beginPath();
-                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                                        ctx.lineWidth = lw;
-                                        ctx.strokeStyle = root.progressColor(percent);
-                                        ctx.lineCap = "round";
-                                        ctx.stroke();
-                                    }
-
-                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
-                                }
-
-                                StyledText {
-                                    anchors.centerIn: parent
-                                    text: Math.round(root.displaySevenDayUtil) + "%"
-                                    font.pixelSize: 14
-                                    font.weight: Font.DemiBold
-                                    color: Theme.surfaceText
-                                }
-                            }
-
-                            Column {
-                                width: Math.max(0, parent.width - weeklySmallRing.width - parent.spacing)
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingXS
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.tr("7-Day Usage") + " · " + Math.round(root.displaySevenDayUtil) + "%"
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.paceLabel(root.sevenDayPace)
-                                    visible: root.showPacing && text !== ""
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: root.paceColor(root.sevenDayPace.status)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: {
-                                        var parts = [];
-                                        if (root.displayWeekSessions > 0)
-                                            parts.push(root.displayWeekSessions + " " + root.tr("sessions"));
-                                        if (root.displayWeekMessages > 0)
-                                            parts.push(root.displayWeekMessages + " " + root.tr("msgs"));
-                                        return parts.join(" · ");
-                                    }
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    visible: text !== ""
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.displaySevenDayCountdown ? root.tr("Resets in") + " " + root.displaySevenDayCountdown : ""
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    visible: root.displaySevenDayCountdown !== ""
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Token Consumption card ---
-                    StyledRect {
-                        width: parent.width
-                        height: consumptionCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Column {
-                            id: consumptionCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingM
-
-                            StyledText {
-                                text: root.tr("Token Consumption")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Row {
-                                width: parent.width
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("Today")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatTokens(root.displayDailyTokens[root.todayIndex])
-                                        font.pixelSize: Theme.fontSizeLarge
-                                        font.weight: Font.DemiBold
-                                        color: Theme.primary
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatCost(root.displayTodayCost)
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        visible: root.displayTodayCost > 0
-                                    }
-                                }
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("Week")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatTokens(root.displayWeekTokens)
-                                        font.pixelSize: Theme.fontSizeLarge
-                                        font.weight: Font.DemiBold
-                                        color: Theme.surfaceText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatCost(root.displayWeekCost)
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        visible: root.displayWeekCost > 0
-                                    }
-                                }
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("Month")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatTokens(root.displayMonthTokens)
-                                        font.pixelSize: Theme.fontSizeLarge
-                                        font.weight: Font.DemiBold
-                                        color: Theme.surfaceText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatCost(root.displayMonthCost)
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        visible: root.displayMonthCost > 0
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Daily activity card ---
-                    StyledRect {
-                        width: parent.width
-                        height: dailyCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Column {
-                            id: dailyCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingS
-
-                            StyledText {
-                                text: root.tr("Daily Activity")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Item {
-                                width: parent.width
-                                height: 70
-
-                                Row {
-                                    id: chartRow
-                                    anchors.fill: parent
-                                    spacing: 4
-
-                                    Repeater {
-                                        model: 7
-                                        delegate: Column {
-                                            width: (chartRow.width - 6 * 4) / 7
-                                            height: chartRow.height
-                                            spacing: 2
-
-                                            Item {
-                                                width: parent.width
-                                                height: parent.height - dayLabel.height - 2
-
-                                                // Background bar: total tokens (always shown)
-                                                Rectangle {
-                                                    id: totalBar
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                    width: Math.max(parent.width - 4, 4)
-                                                    height: root.maxDaily > 0 ? Math.max(root.dailyTokens[index] / root.maxDaily * parent.height, root.dailyTokens[index] > 0 ? 3 : 0) : 0
-                                                    radius: 2
-                                                    color: root.selectedProfile === "all" ? (index === root.todayIndex ? Theme.primary : Theme.surfaceVariant) : Theme.surfaceVariant
-                                                    opacity: root.hoveredDay >= 0 && index !== root.hoveredDay ? 0.4 : 1.0
-
-                                                    Behavior on opacity {
-                                                        NumberAnimation {
-                                                            duration: 120
-                                                        }
-                                                    }
-                                                }
-
-                                                // Overlay bar: profile tokens (shown only when a profile is selected)
-                                                Rectangle {
-                                                    visible: root.selectedProfile !== "all" && root.profileDailyTokens.length > 0
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                    width: Math.max(parent.width - 4, 4)
-                                                    height: root.maxDaily > 0 && root.profileDailyTokens.length > index ? Math.max(root.profileDailyTokens[index] / root.maxDaily * parent.height, root.profileDailyTokens[index] > 0 ? 3 : 0) : 0
-                                                    radius: 2
-                                                    color: Theme.primary
-                                                    opacity: root.hoveredDay >= 0 && index !== root.hoveredDay ? 0.4 : 1.0
-
-                                                    Behavior on opacity {
-                                                        NumberAnimation {
-                                                            duration: 120
-                                                        }
-                                                    }
-                                                }
-
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    enabled: root.dailyTokens[index] > 0
-                                                    onEntered: root.hoveredDay = index
-                                                    onExited: root.hoveredDay = -1
-                                                }
-                                            }
-
-                                            StyledText {
-                                                id: dayLabel
-                                                text: root.dayLabels[index]
-                                                font.pixelSize: 11
-                                                color: index === root.hoveredDay ? Theme.primary : index === root.todayIndex ? Theme.primary : Theme.surfaceVariantText
-                                                anchors.horizontalCenter: parent.horizontalCenter
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Tooltip on hover — child of StyledRect to avoid clip issues
-                        Rectangle {
-                            id: chartTooltip
-                            visible: root.hoveredDay >= 0 && root.dailyTokens[root.hoveredDay] > 0
-                            z: 10
-
-                            x: {
-                                var colW = (chartRow.width - 6 * 4) / 7;
-                                var cx = root.hoveredDay * (colW + 4) + colW / 2 - width / 2;
-                                var chartX = chartRow.mapToItem(chartTooltip.parent, 0, 0).x;
-                                var raw = chartX + cx;
-                                return Math.max(Theme.spacingM, Math.min(raw, parent.width - width - Theme.spacingM));
-                            }
-                            y: {
-                                var chartY = chartRow.mapToItem(chartTooltip.parent, 0, 0).y;
-                                return chartY - height - 2;
-                            }
-
-                            width: tooltipCol.width + Theme.spacingS * 2
-                            height: tooltipCol.height + Theme.spacingXS * 2
-                            radius: 4
-                            color: Theme.surfaceContainer
-
-                            Column {
-                                id: tooltipCol
-                                anchors.centerIn: parent
-                                spacing: 1
-
-                                // Line 1: total tokens (with "total" suffix when a profile is selected)
-                                StyledText {
-                                    text: {
-                                        if (root.hoveredDay < 0)
-                                            return "";
-                                        var t = root.formatTokens(root.dailyTokens[root.hoveredDay]);
-                                        return root.selectedProfile !== "all" ? t + " " + root.tr("total") : t;
-                                    }
-                                    font.pixelSize: 11
-                                    font.weight: Font.DemiBold
-                                    color: Theme.surfaceText
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                }
-
-                                // Line 2: profile tokens (only when a profile is selected and has data)
-                                StyledText {
-                                    visible: root.selectedProfile !== "all" && root.hoveredDay >= 0 && root.profileDailyTokens.length > root.hoveredDay && root.profileDailyTokens[root.hoveredDay] > 0
-                                    text: {
-                                        if (root.hoveredDay < 0 || root.profileDailyTokens.length <= root.hoveredDay)
-                                            return "";
-                                        return root.formatTokens(root.profileDailyTokens[root.hoveredDay]) + " " + root.selectedProfile;
-                                    }
-                                    font.pixelSize: 11
-                                    color: Theme.primary
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                }
-
-                                // Line 3: total cost (always shown when > 0, uses aggregate dailyCosts)
-                                StyledText {
-                                    visible: root.hoveredDay >= 0 && root.dailyCosts[root.hoveredDay] > 0
-                                    text: root.hoveredDay >= 0 ? root.formatCost(root.dailyCosts[root.hoveredDay]) : ""
-                                    font.pixelSize: 11
-                                    color: Theme.surfaceVariantText
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Model breakdown card ---
-                    StyledRect {
-                        width: parent.width
-                        height: modelCardCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-                        visible: {
-                            if (root.selectedProfile === "all")
-                                return modelListData.count > 0;
-                            var pd = root.profileData[root.selectedProfile];
-                            return pd && pd.weekModels && pd.weekModels.length > 0;
-                        }
-
-                        Column {
-                            id: modelCardCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingS
-
-                            StyledText {
-                                text: root.tr("Models This Week")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Column {
-                                id: modelCol
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                Repeater {
-                                    id: modelRepeater
-                                    model: {
-                                        if (root.selectedProfile === "all")
-                                            return modelListData;
-                                        var pd = root.profileData[root.selectedProfile];
-                                        return (pd && pd.weekModels) ? pd.weekModels : [];
-                                    }
-                                    delegate: Column {
-                                        width: modelCol.width
-                                        spacing: 3
-
-                                        // When model is a ListModel, role names are direct properties.
-                                        // When model is a JS array, values are accessed via modelData.
-                                        // `real`, not `int`: a weekly per-model total passes the signed
-                                        // 32-bit range (2.1B tokens), and `int` wraps it negative.
-                                        property string _modelName: modelListData === modelRepeater.model ? modelName : (modelData ? modelData.modelName : "")
-                                        property real _modelTokens: modelListData === modelRepeater.model ? modelTokens : (modelData ? (modelData.modelTokens || 0) : 0)
-
-                                        Row {
-                                            width: parent.width
-                                            spacing: Theme.spacingXS
-
-                                            StyledText {
-                                                text: root.shortModelName(_modelName)
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceText
-                                            }
-                                            StyledText {
-                                                text: root.formatTokens(_modelTokens)
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceVariantText
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            width: parent.width
-                                            height: 4
-                                            radius: 2
-                                            color: Theme.surfaceVariant
-
-                                            Rectangle {
-                                                width: root.displayWeekTokens > 0 ? parent.width * Math.min(_modelTokens / root.displayWeekTokens, 1) : 0
-                                                height: parent.height
-                                                radius: 2
-                                                color: Theme.primary
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // --- All-time footer card ---
-                    StyledRect {
-                        width: parent.width
-                        height: allTimeRow.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-                        visible: root.selectedProfile === "all" && (root.alltimeSessions > 0 || root.alltimeMessages > 0)
-
-                        Row {
-                            id: allTimeRow
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingS
-
-                            DankIcon {
-                                id: allTimeIcon
-                                name: "calendar_today"
-                                size: 14
-                                color: Theme.surfaceVariantText
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            StyledText {
-                                width: Math.max(0, parent.width - allTimeIcon.width - parent.spacing)
-                                text: {
-                                    var parts = [];
-                                    if (root.firstSession && root.firstSession !== "unknown")
-                                        parts.push(root.tr("Since") + " " + root.firstSession);
-                                    parts.push(root.alltimeSessions + " " + root.tr("sessions"));
-                                    parts.push(root.alltimeMessages.toLocaleString() + " " + root.tr("msgs"));
-                                    return parts.join("  ·  ");
-                                }
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                wrapMode: Text.WordWrap
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                    }
-                } // end Claude section Column
-
-                // --- ChatGPT section ---
-                Column {
-                    width: parent.width
-                    spacing: Theme.spacingL
-                    visible: root.popoutSourceTab === "chatgpt"
-
-                    Column {
-                        width: parent.width
-                        spacing: 2
-
-                        StyledText {
-                            text: root.tr("ChatGPT")
-                            font.pixelSize: Theme.fontSizeLarge
-                            font.weight: Font.Bold
-                            color: Theme.surfaceText
-                        }
-                        StyledText {
-                            width: parent.width
-                            text: root.chatgptPlanType && root.chatgptPlanType !== "unknown" ? root.tr("Plan") + ": " + root.chatgptPlanType.replace(/\b\w/g, function (c) {
-                                return c.toUpperCase();
-                            }) : ""
-                            visible: text !== ""
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-
-                    // --- Credentials unavailable: login action ---
-                    StyledRect {
-                        width: parent.width
-                        height: chatgptCredsWarningContent.implicitHeight + Theme.spacingM * 2
-                        visible: root.chatgptCredsStatus === "missing" || root.chatgptCredsStatus === "expired"
-                        color: Theme.surfaceContainerHigh
-                        border.width: 1
-                        border.color: Theme.error || Theme.primary
-
-                        Row {
-                            id: chatgptCredsWarningContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingM
-
-                            Column {
-                                width: parent.width - chatgptLoginButton.width - parent.spacing
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingXS
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.chatgptCredsStatus === "missing" ? root.tr("Not logged in") : root.tr("Session expired")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.tr("Usage data unavailable until you log in.")
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-
-                            Rectangle {
-                                id: chatgptLoginButton
-                                width: chatgptLoginButtonLabel.implicitWidth + Theme.spacingM * 2
-                                height: 32
-                                radius: 16
-                                anchors.verticalCenter: parent.verticalCenter
-                                color: Theme.primary
-                                opacity: root.chatgptLoginInProgress ? 0.6 : 1
-
-                                StyledText {
-                                    id: chatgptLoginButtonLabel
-                                    anchors.centerIn: parent
-                                    text: root.chatgptLoginInProgress ? root.tr("Logging in…") : root.tr("Log in")
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    font.weight: Font.Medium
-                                    color: Theme.primaryText
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: !root.chatgptLoginInProgress
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.startChatgptLogin()
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Primary window card ---
-                    StyledRect {
-                        width: parent.width
-                        height: chatgptPrimaryContent.implicitHeight + Theme.spacingS * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Row {
-                            id: chatgptPrimaryContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingS
-                            spacing: Theme.spacingM
-
-                            Canvas {
-                                id: chatgptPrimaryRing
-                                width: 100
-                                height: 100
-                                anchors.verticalCenter: parent.verticalCenter
-                                renderStrategy: Canvas.Cooperative
-
-                                property real percent: root.chatgptPrimaryUtil
-                                onPercentChanged: requestPaint()
-                                property var pace: root.chatgptPrimaryPace
-                                onPaceChanged: requestPaint()
-
-                                onPaint: {
-                                    var ctx = getContext("2d");
-                                    ctx.reset();
-                                    var cx = width / 2, cy = height / 2, r = 38, lw = 8;
-
-                                    ctx.beginPath();
-                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                                    ctx.lineWidth = lw;
-                                    ctx.strokeStyle = Theme.surfaceVariant;
-                                    ctx.stroke();
-
-                                    var pct = percent / 100;
-                                    if (pct > 0) {
-                                        ctx.beginPath();
-                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                                        ctx.lineWidth = lw;
-                                        ctx.strokeStyle = root.progressColor(percent);
-                                        ctx.lineCap = "round";
-                                        ctx.stroke();
-                                    }
-
-                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
-                                }
-
-                                StyledText {
-                                    anchors.centerIn: parent
-                                    text: Math.round(root.chatgptPrimaryUtil) + "%"
-                                    font.pixelSize: Theme.fontSizeXLarge
-                                    font.weight: Font.DemiBold
-                                    color: Theme.surfaceText
-                                }
-                            }
-
-                            Column {
-                                width: Math.max(0, parent.width - chatgptPrimaryRing.width - parent.spacing)
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.chatgptPrimaryWindowLabel
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: Math.round(root.chatgptPrimaryUtil) + "% " + root.tr("used")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: root.progressColor(root.chatgptPrimaryUtil)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.paceLabel(root.chatgptPrimaryPace)
-                                    visible: root.showPacing && text !== ""
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: root.paceColor(root.chatgptPrimaryPace.status)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.chatgptPrimaryCountdown ? root.tr("Resets in") + " " + root.chatgptPrimaryCountdown : ""
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: Theme.surfaceVariantText
-                                    visible: root.chatgptPrimaryCountdown !== ""
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Secondary window card ---
-                    StyledRect {
-                        width: parent.width
-                        height: chatgptSecondaryContent.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Row {
-                            id: chatgptSecondaryContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingM
-
-                            Canvas {
-                                id: chatgptSecondaryRing
-                                width: 72
-                                height: 72
-                                anchors.verticalCenter: parent.verticalCenter
-                                renderStrategy: Canvas.Cooperative
-
-                                property real percent: root.chatgptSecondaryUtil
-                                onPercentChanged: requestPaint()
-                                property var pace: root.chatgptSecondaryPace
-                                onPaceChanged: requestPaint()
-
-                                onPaint: {
-                                    var ctx = getContext("2d");
-                                    ctx.reset();
-                                    var cx = width / 2, cy = height / 2, r = 28, lw = 6;
-
-                                    ctx.beginPath();
-                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                                    ctx.lineWidth = lw;
-                                    ctx.strokeStyle = Theme.surfaceVariant;
-                                    ctx.stroke();
-
-                                    var pct = percent / 100;
-                                    if (pct > 0) {
-                                        ctx.beginPath();
-                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                                        ctx.lineWidth = lw;
-                                        ctx.strokeStyle = root.progressColor(percent);
-                                        ctx.lineCap = "round";
-                                        ctx.stroke();
-                                    }
-
-                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
-                                }
-
-                                StyledText {
-                                    anchors.centerIn: parent
-                                    text: Math.round(root.chatgptSecondaryUtil) + "%"
-                                    font.pixelSize: 14
-                                    font.weight: Font.DemiBold
-                                    color: Theme.surfaceText
-                                }
-                            }
-
-                            Column {
-                                width: Math.max(0, parent.width - chatgptSecondaryRing.width - parent.spacing)
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingXS
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.chatgptSecondaryWindowLabel + " · " + Math.round(root.chatgptSecondaryUtil) + "%"
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.paceLabel(root.chatgptSecondaryPace)
-                                    visible: root.showPacing && text !== ""
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: root.paceColor(root.chatgptSecondaryPace.status)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.chatgptSecondaryCountdown ? root.tr("Resets in") + " " + root.chatgptSecondaryCountdown : ""
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    visible: root.chatgptSecondaryCountdown !== ""
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Token Consumption card (from local session files) ---
-                    StyledRect {
-                        width: parent.width
-                        height: chatgptConsumptionCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Column {
-                            id: chatgptConsumptionCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingM
-
-                            StyledText {
-                                text: root.tr("Token Consumption")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Row {
-                                width: parent.width
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("Week")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatTokens(root.chatgptWeekTokens)
-                                        font.pixelSize: Theme.fontSizeLarge
-                                        font.weight: Font.DemiBold
-                                        color: Theme.primary
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                }
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("Month")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatTokens(root.chatgptMonthTokens)
-                                        font.pixelSize: Theme.fontSizeLarge
-                                        font.weight: Font.DemiBold
-                                        color: Theme.surfaceText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                }
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("This Week")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.chatgptWeekSessions + " " + root.tr("sessions")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.weight: Font.DemiBold
-                                        color: Theme.surfaceText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.chatgptWeekMessages + " " + root.tr("msgs")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Daily activity card ---
-                    StyledRect {
-                        width: parent.width
-                        height: chatgptDailyCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Column {
-                            id: chatgptDailyCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingS
-
-                            StyledText {
-                                text: root.tr("Daily Activity")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Item {
-                                width: parent.width
-                                height: 70
-
-                                Row {
-                                    id: chatgptChartRow
-                                    anchors.fill: parent
-                                    spacing: 4
-
-                                    Repeater {
-                                        model: 7
-                                        delegate: Column {
-                                            width: (chatgptChartRow.width - 6 * 4) / 7
-                                            height: chatgptChartRow.height
-                                            spacing: 2
-
-                                            Item {
-                                                width: parent.width
-                                                height: parent.height - chatgptDayLabel.height - 2
-
-                                                Rectangle {
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                    width: Math.max(parent.width - 4, 4)
-                                                    height: root.chatgptMaxDaily > 0 ? Math.max(root.chatgptDailyTokens[index] / root.chatgptMaxDaily * parent.height, root.chatgptDailyTokens[index] > 0 ? 3 : 0) : 0
-                                                    radius: 2
-                                                    color: index === root.todayIndex ? Theme.primary : Theme.surfaceVariant
-                                                    opacity: root.chatgptHoveredDay >= 0 && index !== root.chatgptHoveredDay ? 0.4 : 1.0
-
-                                                    Behavior on opacity {
-                                                        NumberAnimation {
-                                                            duration: 120
-                                                        }
-                                                    }
-                                                }
-
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    enabled: root.chatgptDailyTokens[index] > 0
-                                                    onEntered: root.chatgptHoveredDay = index
-                                                    onExited: root.chatgptHoveredDay = -1
-                                                }
-                                            }
-
-                                            StyledText {
-                                                id: chatgptDayLabel
-                                                text: root.dayLabels[index]
-                                                font.pixelSize: 11
-                                                color: index === root.chatgptHoveredDay ? Theme.primary : index === root.todayIndex ? Theme.primary : Theme.surfaceVariantText
-                                                anchors.horizontalCenter: parent.horizontalCenter
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            id: chatgptChartTooltip
-                            visible: root.chatgptHoveredDay >= 0 && root.chatgptDailyTokens[root.chatgptHoveredDay] > 0
-                            z: 10
-
-                            x: {
-                                var colW = (chatgptChartRow.width - 6 * 4) / 7;
-                                var cx = root.chatgptHoveredDay * (colW + 4) + colW / 2 - width / 2;
-                                var chartX = chatgptChartRow.mapToItem(chatgptChartTooltip.parent, 0, 0).x;
-                                var raw = chartX + cx;
-                                return Math.max(Theme.spacingM, Math.min(raw, parent.width - width - Theme.spacingM));
-                            }
-                            y: {
-                                var chartY = chatgptChartRow.mapToItem(chatgptChartTooltip.parent, 0, 0).y;
-                                return chartY - height - 2;
-                            }
-
-                            width: chatgptTooltipText.implicitWidth + Theme.spacingS * 2
-                            height: chatgptTooltipText.implicitHeight + Theme.spacingXS * 2
-                            radius: 4
-                            color: Theme.surfaceContainer
-
-                            StyledText {
-                                id: chatgptTooltipText
-                                anchors.centerIn: parent
-                                text: root.chatgptHoveredDay >= 0 ? root.formatTokens(root.chatgptDailyTokens[root.chatgptHoveredDay]) : ""
-                                font.pixelSize: 11
-                                font.weight: Font.DemiBold
-                                color: Theme.surfaceText
-                            }
-                        }
-                    }
-
-                    // --- Model breakdown card ---
-                    StyledRect {
-                        width: parent.width
-                        height: chatgptModelCardCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-                        visible: chatgptModelListData.count > 0
-
-                        Column {
-                            id: chatgptModelCardCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingS
-
-                            StyledText {
-                                text: root.tr("Models This Week")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Column {
-                                id: chatgptModelCol
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                Repeater {
-                                    model: chatgptModelListData
-                                    delegate: Column {
-                                        width: chatgptModelCol.width
-                                        spacing: 3
-
-                                        Row {
-                                            width: parent.width
-                                            spacing: Theme.spacingXS
-
-                                            StyledText {
-                                                text: root.shortModelName(modelName)
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceText
-                                            }
-                                            StyledText {
-                                                text: root.formatTokens(modelTokens)
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceVariantText
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            width: parent.width
-                                            height: 4
-                                            radius: 2
-                                            color: Theme.surfaceVariant
-
-                                            Rectangle {
-                                                width: root.chatgptWeekTokens > 0 ? parent.width * Math.min(modelTokens / root.chatgptWeekTokens, 1) : 0
-                                                height: parent.height
-                                                radius: 2
-                                                color: Theme.primary
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // --- All-time footer card ---
-                    StyledRect {
-                        width: parent.width
-                        height: chatgptAllTimeRow.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-                        visible: root.chatgptAlltimeSessions > 0 || root.chatgptAlltimeMessages > 0
-
-                        Row {
-                            id: chatgptAllTimeRow
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingS
-
-                            DankIcon {
-                                id: chatgptAllTimeIcon
-                                name: "calendar_today"
-                                size: 14
-                                color: Theme.surfaceVariantText
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            StyledText {
-                                width: Math.max(0, parent.width - chatgptAllTimeIcon.width - parent.spacing)
-                                text: {
-                                    var parts = [];
-                                    if (root.chatgptFirstSession && root.chatgptFirstSession !== "unknown")
-                                        parts.push(root.tr("Since") + " " + root.chatgptFirstSession);
-                                    parts.push(root.chatgptAlltimeSessions + " " + root.tr("sessions"));
-                                    parts.push(root.chatgptAlltimeMessages.toLocaleString() + " " + root.tr("msgs"));
-                                    return parts.join("  ·  ");
-                                }
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                wrapMode: Text.WordWrap
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                        }
-                    }
-                }
-
-                // --- Z.ai section ---
-                Column {
-                    width: parent.width
-                    spacing: Theme.spacingL
-                    visible: root.popoutSourceTab === "zai"
-
-                    Column {
-                        width: parent.width
-                        spacing: 2
-
-                        StyledText {
-                            text: root.tr("Z.ai")
-                            font.pixelSize: Theme.fontSizeLarge
-                            font.weight: Font.Bold
-                            color: Theme.surfaceText
-                        }
-                        StyledText {
-                            width: parent.width
-                            text: root.zaiPlanType && root.zaiPlanType !== "unknown" ? root.tr("Plan") + ": " + root.zaiPlanType.replace(/\b\w/g, function (c) {
-                                return c.toUpperCase();
-                            }) : ""
-                            visible: text !== ""
-                            font.pixelSize: Theme.fontSizeSmall
-                            color: Theme.surfaceVariantText
-                            wrapMode: Text.WordWrap
-                        }
-                    }
-
-                    // --- Credentials unavailable ---
-                    // Text-only, unlike the other two Sources: Z.ai has no CLI
-                    // login flow to shell out to, the fix is an API key in the
-                    // plugin settings.
-                    StyledRect {
-                        width: parent.width
-                        height: zaiCredsWarningContent.implicitHeight + Theme.spacingM * 2
-                        visible: root.zaiCredsStatus === "missing" || root.zaiCredsStatus === "expired"
-                        color: Theme.surfaceContainerHigh
-                        border.width: 1
-                        border.color: Theme.error || Theme.primary
-
-                        Column {
-                            id: zaiCredsWarningContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingXS
-
-                            StyledText {
-                                width: parent.width
-                                text: root.zaiCredsStatus === "missing" ? root.tr("API key rejected") : root.tr("Session expired")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                                wrapMode: Text.WordWrap
-                            }
-                            StyledText {
-                                width: parent.width
-                                text: root.zaiCredsStatus === "missing" ? root.tr("Check your Z.ai API key in the plugin settings.") : root.tr("Usage data unavailable until you log in.")
-                                font.pixelSize: Theme.fontSizeSmall
-                                color: Theme.surfaceVariantText
-                                wrapMode: Text.WordWrap
-                            }
-                        }
-                    }
-
-                    // --- Primary window card ---
-                    StyledRect {
-                        width: parent.width
-                        height: zaiPrimaryContent.implicitHeight + Theme.spacingS * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Row {
-                            id: zaiPrimaryContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingS
-                            spacing: Theme.spacingM
-
-                            Canvas {
-                                id: zaiPrimaryRing
-                                width: 100
-                                height: 100
-                                anchors.verticalCenter: parent.verticalCenter
-                                renderStrategy: Canvas.Cooperative
-
-                                property real percent: root.zaiPrimaryUtil
-                                onPercentChanged: requestPaint()
-                                property var pace: root.zaiPrimaryPace
-                                onPaceChanged: requestPaint()
-
-                                onPaint: {
-                                    var ctx = getContext("2d");
-                                    ctx.reset();
-                                    var cx = width / 2, cy = height / 2, r = 38, lw = 8;
-
-                                    ctx.beginPath();
-                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                                    ctx.lineWidth = lw;
-                                    ctx.strokeStyle = Theme.surfaceVariant;
-                                    ctx.stroke();
-
-                                    var pct = percent / 100;
-                                    if (pct > 0) {
-                                        ctx.beginPath();
-                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                                        ctx.lineWidth = lw;
-                                        ctx.strokeStyle = root.progressColor(percent);
-                                        ctx.lineCap = "round";
-                                        ctx.stroke();
-                                    }
-
-                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
-                                }
-
-                                StyledText {
-                                    anchors.centerIn: parent
-                                    text: Math.round(root.zaiPrimaryUtil) + "%"
-                                    font.pixelSize: Theme.fontSizeXLarge
-                                    font.weight: Font.DemiBold
-                                    color: Theme.surfaceText
-                                }
-                            }
-
-                            Column {
-                                width: Math.max(0, parent.width - zaiPrimaryRing.width - parent.spacing)
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingS
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.zaiPrimaryWindowLabel
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: Math.round(root.zaiPrimaryUtil) + "% " + root.tr("used")
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: root.progressColor(root.zaiPrimaryUtil)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.paceLabel(root.zaiPrimaryPace)
-                                    visible: root.showPacing && text !== ""
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: root.paceColor(root.zaiPrimaryPace.status)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.zaiPrimaryCountdown ? root.tr("Resets in") + " " + root.zaiPrimaryCountdown : ""
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    color: Theme.surfaceVariantText
-                                    visible: root.zaiPrimaryCountdown !== ""
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Secondary window card ---
-                    StyledRect {
-                        width: parent.width
-                        height: zaiSecondaryContent.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Row {
-                            id: zaiSecondaryContent
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingM
-
-                            Canvas {
-                                id: zaiSecondaryRing
-                                width: 72
-                                height: 72
-                                anchors.verticalCenter: parent.verticalCenter
-                                renderStrategy: Canvas.Cooperative
-
-                                property real percent: root.zaiSecondaryUtil
-                                onPercentChanged: requestPaint()
-                                property var pace: root.zaiSecondaryPace
-                                onPaceChanged: requestPaint()
-
-                                onPaint: {
-                                    var ctx = getContext("2d");
-                                    ctx.reset();
-                                    var cx = width / 2, cy = height / 2, r = 28, lw = 6;
-
-                                    ctx.beginPath();
-                                    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                                    ctx.lineWidth = lw;
-                                    ctx.strokeStyle = Theme.surfaceVariant;
-                                    ctx.stroke();
-
-                                    var pct = percent / 100;
-                                    if (pct > 0) {
-                                        ctx.beginPath();
-                                        ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 2 * Math.PI * Math.min(pct, 1));
-                                        ctx.lineWidth = lw;
-                                        ctx.strokeStyle = root.progressColor(percent);
-                                        ctx.lineCap = "round";
-                                        ctx.stroke();
-                                    }
-
-                                    root.drawPaceTick(ctx, cx, cy, r, lw, pace);
-                                }
-
-                                StyledText {
-                                    anchors.centerIn: parent
-                                    text: Math.round(root.zaiSecondaryUtil) + "%"
-                                    font.pixelSize: 14
-                                    font.weight: Font.DemiBold
-                                    color: Theme.surfaceText
-                                }
-                            }
-
-                            Column {
-                                width: Math.max(0, parent.width - zaiSecondaryRing.width - parent.spacing)
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: Theme.spacingXS
-
-                                StyledText {
-                                    width: parent.width
-                                    text: root.zaiSecondaryWindowLabel + " · " + Math.round(root.zaiSecondaryUtil) + "%"
-                                    font.pixelSize: Theme.fontSizeMedium
-                                    font.weight: Font.Medium
-                                    color: Theme.surfaceText
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.paceLabel(root.zaiSecondaryPace)
-                                    visible: root.showPacing && text !== ""
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: root.paceColor(root.zaiSecondaryPace.status)
-                                    wrapMode: Text.WordWrap
-                                }
-                                StyledText {
-                                    width: parent.width
-                                    text: root.zaiSecondaryCountdown ? root.tr("Resets in") + " " + root.zaiSecondaryCountdown : ""
-                                    font.pixelSize: Theme.fontSizeSmall
-                                    color: Theme.surfaceVariantText
-                                    visible: root.zaiSecondaryCountdown !== ""
-                                    wrapMode: Text.WordWrap
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Token Consumption card (from the model-usage API) ---
-                    StyledRect {
-                        width: parent.width
-                        height: zaiConsumptionCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Column {
-                            id: zaiConsumptionCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingM
-
-                            StyledText {
-                                text: root.tr("Token Consumption")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Row {
-                                width: parent.width
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("Week")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatTokens(root.zaiWeekTokens)
-                                        font.pixelSize: Theme.fontSizeLarge
-                                        font.weight: Font.DemiBold
-                                        color: Theme.primary
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                }
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("Month")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.formatTokens(root.zaiMonthTokens)
-                                        font.pixelSize: Theme.fontSizeLarge
-                                        font.weight: Font.DemiBold
-                                        color: Theme.surfaceText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                }
-
-                                Column {
-                                    width: parent.width / 3
-                                    spacing: 4
-
-                                    StyledText {
-                                        text: root.tr("This Week")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        color: Theme.surfaceVariantText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                    StyledText {
-                                        text: root.zaiWeekCalls + " " + root.tr("Model calls")
-                                        font.pixelSize: Theme.fontSizeSmall
-                                        font.weight: Font.DemiBold
-                                        color: Theme.surfaceText
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // --- Daily activity card ---
-                    StyledRect {
-                        width: parent.width
-                        height: zaiDailyCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-
-                        Column {
-                            id: zaiDailyCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingS
-
-                            StyledText {
-                                text: root.tr("Daily Activity")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Item {
-                                width: parent.width
-                                height: 70
-
-                                Row {
-                                    id: zaiChartRow
-                                    anchors.fill: parent
-                                    spacing: 4
-
-                                    Repeater {
-                                        model: 7
-                                        delegate: Column {
-                                            width: (zaiChartRow.width - 6 * 4) / 7
-                                            height: zaiChartRow.height
-                                            spacing: 2
-
-                                            Item {
-                                                width: parent.width
-                                                height: parent.height - zaiDayLabel.height - 2
-
-                                                Rectangle {
-                                                    anchors.bottom: parent.bottom
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                    width: Math.max(parent.width - 4, 4)
-                                                    height: root.zaiMaxDaily > 0 ? Math.max(root.zaiDailyTokens[index] / root.zaiMaxDaily * parent.height, root.zaiDailyTokens[index] > 0 ? 3 : 0) : 0
-                                                    radius: 2
-                                                    color: index === root.todayIndex ? Theme.primary : Theme.surfaceVariant
-                                                    opacity: root.zaiHoveredDay >= 0 && index !== root.zaiHoveredDay ? 0.4 : 1.0
-
-                                                    Behavior on opacity {
-                                                        NumberAnimation {
-                                                            duration: 120
-                                                        }
-                                                    }
-                                                }
-
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    enabled: root.zaiDailyTokens[index] > 0
-                                                    onEntered: root.zaiHoveredDay = index
-                                                    onExited: root.zaiHoveredDay = -1
-                                                }
-                                            }
-
-                                            StyledText {
-                                                id: zaiDayLabel
-                                                text: root.dayLabels[index]
-                                                font.pixelSize: 11
-                                                color: index === root.zaiHoveredDay ? Theme.primary : index === root.todayIndex ? Theme.primary : Theme.surfaceVariantText
-                                                anchors.horizontalCenter: parent.horizontalCenter
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Rectangle {
-                            id: zaiChartTooltip
-                            visible: root.zaiHoveredDay >= 0 && root.zaiDailyTokens[root.zaiHoveredDay] > 0
-                            z: 10
-
-                            x: {
-                                var colW = (zaiChartRow.width - 6 * 4) / 7;
-                                var cx = root.zaiHoveredDay * (colW + 4) + colW / 2 - width / 2;
-                                var chartX = zaiChartRow.mapToItem(zaiChartTooltip.parent, 0, 0).x;
-                                var raw = chartX + cx;
-                                return Math.max(Theme.spacingM, Math.min(raw, parent.width - width - Theme.spacingM));
-                            }
-                            y: {
-                                var chartY = zaiChartRow.mapToItem(zaiChartTooltip.parent, 0, 0).y;
-                                return chartY - height - 2;
-                            }
-
-                            width: zaiTooltipText.implicitWidth + Theme.spacingS * 2
-                            height: zaiTooltipText.implicitHeight + Theme.spacingXS * 2
-                            radius: 4
-                            color: Theme.surfaceContainer
-
-                            StyledText {
-                                id: zaiTooltipText
-                                anchors.centerIn: parent
-                                text: root.zaiHoveredDay >= 0 ? root.formatTokens(root.zaiDailyTokens[root.zaiHoveredDay]) : ""
-                                font.pixelSize: 11
-                                font.weight: Font.DemiBold
-                                color: Theme.surfaceText
-                            }
-                        }
-                    }
-
-                    // --- Model breakdown card ---
-                    StyledRect {
-                        width: parent.width
-                        height: zaiModelCardCol.implicitHeight + Theme.spacingM * 2
-                        color: Theme.surfaceContainerHigh
-                        visible: zaiModelListData.count > 0
-
-                        Column {
-                            id: zaiModelCardCol
-                            anchors.fill: parent
-                            anchors.margins: Theme.spacingM
-                            spacing: Theme.spacingS
-
-                            StyledText {
-                                text: root.tr("Models This Week")
-                                font.pixelSize: Theme.fontSizeMedium
-                                font.weight: Font.Medium
-                                color: Theme.surfaceText
-                            }
-
-                            Column {
-                                id: zaiModelCol
-                                width: parent.width
-                                spacing: Theme.spacingS
-
-                                Repeater {
-                                    model: zaiModelListData
-                                    delegate: Column {
-                                        width: zaiModelCol.width
-                                        spacing: 3
-
-                                        Row {
-                                            width: parent.width
-                                            spacing: Theme.spacingXS
-
-                                            StyledText {
-                                                // Z.ai reports display-ready names ("GLM-4.6"),
-                                                // so no capitalization pass here.
-                                                text: modelName
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceText
-                                            }
-                                            StyledText {
-                                                text: root.formatTokens(modelTokens)
-                                                font.pixelSize: Theme.fontSizeSmall
-                                                color: Theme.surfaceVariantText
-                                            }
-                                        }
-
-                                        Rectangle {
-                                            width: parent.width
-                                            height: 4
-                                            radius: 2
-                                            color: Theme.surfaceVariant
-
-                                            Rectangle {
-                                                width: root.zaiWeekTokens > 0 ? parent.width * Math.min(modelTokens / root.zaiWeekTokens, 1) : 0
-                                                height: parent.height
-                                                radius: 2
-                                                color: Theme.primary
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Bottom padding to match sides (compensates Column spacing)
-                Item {
-                    width: 1
-                    height: 1
-                }
-            }
-        }
+    function applyAccountModels(id, val) {
+        var models = root.parseAccountModels(val);
+        root.mutateAccounts(id, function (acct) {
+            for (var name in models)
+                acct(name).weekModels = models[name];
+        });
     }
 }

@@ -3,12 +3,28 @@
 var strings = {
     "AI Usage":
         { fr: "Utilisation de l'IA", es: "Uso de IA" },
+    "Sources":
+        { fr: "Sources", es: "Fuentes" },
+    "Account":
+        { fr: "Compte", es: "Cuenta" },
+    "Choose which Sources appear, and in what order. This sets both the taskbar ring order and the popout tab order.":
+        {
+            fr: "Choisissez les fournisseurs à afficher et leur ordre. Cela détermine l'ordre des anneaux dans la barre des tâches et celui des onglets.",
+            es: "Elige qué proveedores se muestran y en qué orden. Esto determina el orden de los anillos en la barra de tareas y el de las pestañas."
+        },
+    "Monitor the usage of your AI coding subscriptions. Rate limits and subscription tiers are detected automatically.":
+        {
+            fr: "Surveillez l'utilisation de vos abonnements d'IA de codage. Les limites de débit et les niveaux d'abonnement sont détectés automatiquement.",
+            es: "Supervisa el uso de tus suscripciones de IA para programar. Los límites de velocidad y los niveles de suscripción se detectan automáticamente."
+        },
     "Claude":
         { fr: "Claude", es: "Claude" },
     "ChatGPT":
         { fr: "ChatGPT", es: "ChatGPT" },
     "Z.ai":
         { fr: "Z.ai", es: "Z.ai" },
+    "opencode Go":
+        { fr: "opencode Go", es: "opencode Go" },
     "Model calls":
         { fr: "appels de modèle", es: "llamadas al modelo" },
     "Plan":
@@ -136,6 +152,13 @@ var strings = {
             fr: "Suivez d'autres comptes Z.ai par clé d'API. Une clé présente dans la configuration de l'agent pi (~/.pi/agent/models.json) est détectée automatiquement comme « default ».",
             es: "Haz seguimiento de otras cuentas de Z.ai mediante su clave de API. Una clave presente en la configuración del agente pi (~/.pi/agent/models.json) se detecta automáticamente como «default»."
         },
+    "Custom opencode Accounts":
+        { fr: "Comptes opencode personnalisés", es: "Cuentas de opencode personalizadas" },
+    "Track extra opencode Go Accounts by API key. An API key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".":
+        {
+            fr: "Suivez d'autres clés opencode Go par clé d'API. Une clé présente dans le magasin d'authentification de l'agent pi (~/.pi/agent/auth.json) est détectée automatiquement comme « default ».",
+            es: "Haz seguimiento de otras claves de opencode Go mediante su clave de API. Una clave presente en el almacén de autenticación del agente pi (~/.pi/agent/auth.json) se detecta automáticamente como «default»."
+        },
     "API key":
         { fr: "Clé d'API", es: "Clave de API" },
     "Name":
@@ -169,6 +192,23 @@ var strings = {
         {
             fr: "Vérifiez votre clé d'API Z.ai dans les paramètres du plugin.",
             es: "Comprueba tu clave de API de Z.ai en los ajustes del plugin."
+        },
+    "Check your opencode Go key in the plugin settings.":
+        {
+            fr: "Vérifiez votre clé opencode Go dans les paramètres du plugin.",
+            es: "Comprueba tu clave de opencode Go en los ajustes del plugin."
+        },
+    "Usage endpoint unavailable":
+        { fr: "Point d'accès d'utilisation indisponible", es: "Punto de acceso de uso no disponible" },
+    "opencode's usage endpoint could not be reached. Showing the last known values.":
+        {
+            fr: "Le point d'accès d'utilisation d'opencode est injoignable. Affichage des dernières valeurs connues.",
+            es: "No se pudo contactar con el punto de acceso de uso de opencode. Se muestran los últimos valores conocidos."
+        },
+    "opencode's usage endpoint could not be reached. No usage data to show yet.":
+        {
+            fr: "Le point d'accès d'utilisation d'opencode est injoignable. Aucune donnée d'utilisation à afficher pour le moment.",
+            es: "No se pudo contactar con el punto de acceso de uso de opencode. Aún no hay datos de uso que mostrar."
         },
     "Log in":
         { fr: "Se connecter", es: "Iniciar sesión" },
