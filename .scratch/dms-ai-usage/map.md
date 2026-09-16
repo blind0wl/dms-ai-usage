@@ -6,6 +6,10 @@ A working DankMaterialShell (DMS/Quickshell) toolbar plugin, installed and runni
 
 **Destination amendment (this round):** the fork isn't staying personal — it's intended to go back as a **PR to upstream** `dms-claudecode`. This adds a real constraint the original destination didn't carry: the plugin must work correctly for installers who don't share this dev machine's config (both Sources set up). Neither Claude nor ChatGPT can be assumed present; each must degrade to "not installed, hidden" cleanly, not just "not logged in yet."
 
+## Spec
+
+[Source registry and the opencode Go Source](spec.md) — `Status: ready-for-agent`. One spec covering the whole feature: making Sources data so a provider is a descriptor rather than a fourth hardcoded copy, the settings list that decides which Sources appear and in what order, and the opencode Go Source built on top. The registry half is built on `refactor/source-registry`; the opencode Go half is not started and needs one recorded response body from the Go usage endpoint before its parser can be written.
+
 ## Notes
 
 - **This map carries execution.** Tickets include real implementation work (Task type), not only decisions. Resolve build tickets by doing the work and recording what was built/verified.
