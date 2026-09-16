@@ -164,6 +164,12 @@ check(new Set(ids).size === ids.length, "Source ids are unique");
 check(reg.byId("nope") === null, "byId returns null for an unknown id");
 check(reg.byId(ids[0]) === reg.SOURCES[0], "byId returns the matching descriptor");
 
+// --- Renderer contract ---
+// A Section hides itself when it does not apply, but a Loader does not inherit
+// that and a Column lays out a Loader on its height alone. Without the mirror,
+// every hidden card leaves a blank gap and pushes the cards below it down.
+check(/visible:\s*item\s*\?\s*item\.visible\s*:\s*true/.test(tab), "SourceTab's section Loader mirrors the Section's visible so hidden cards collapse");
+
 // --- Settings list rules ---
 check(JSON.stringify(reg.resolveList(undefined)) === JSON.stringify(ids), "absent list enables every Source in registry order");
 check(reg.resolveList(null).length === ids.length, "null list enables every Source");

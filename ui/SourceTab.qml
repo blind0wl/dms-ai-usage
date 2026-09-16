@@ -49,6 +49,14 @@ Column {
             width: root.width
             sourceComponent: root.componentFor(modelData.type)
 
+            // A Section hides itself when it does not apply (a login card with
+            // credentials present, a status card with the endpoint up, an
+            // account selector with little to select). A Loader does not inherit
+            // that, and a Column lays out a Loader on its height alone, so
+            // without this every hidden card would leave a blank gap and push
+            // the cards below it down.
+            visible: item ? item.visible : true
+
             // Declarative bindings rather than assignments in onLoaded, so the
             // cards stay reactive and there is no window where the item exists
             // without its context.
