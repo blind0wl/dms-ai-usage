@@ -112,13 +112,20 @@ PluginComponent {
         return d.id;
     })
 
-    // Empty until ensureActiveTab picks the first visible Source, which is the
-    // first one in the configured order. Hardcoding an id here ignored that
-    // order, and left nothing selected when the id named a Source that was off.
-    // After the user picks a tab, this holds their choice for the session.
+    // Empty until the user picks a tab. The popout prefers that choice, and
+    // otherwise falls back to the first visible Source, which is the first one
+    // in the configured order. Deriving the active id rather than storing it
+    // means the popout can never come up with nothing selected.
     property string popoutSourceTab: ""
 
-    readonly property var activeDescriptor: Sources.byId(popoutSourceTab)
+    readonly property string activeSourceId: {
+        var ids = root.visibleIds;
+        if (root.popoutSourceTab && ids.indexOf(root.popoutSourceTab) >= 0)
+            return root.popoutSourceTab;
+        return ids.length > 0 ? ids[0] : "";
+    }
+
+    readonly property var activeDescriptor: Sources.byId(root.activeSourceId)
 
     onVisibleIdsChanged: {
         root.ensureActiveTab();
@@ -733,7 +740,7 @@ PluginComponent {
                             width: (parent.width - Theme.spacingXS * (root.visibleDescriptors.length - 1)) / root.visibleDescriptors.length
                             height: 32
                             radius: 16
-                            color: root.popoutSourceTab === modelData.id ? Theme.primary : Theme.surfaceVariant
+                            color: root.activeSourceId === modelData.id ? Theme.primary : Theme.surfaceVariant
 
                             Behavior on color {
                                 ColorAnimation {
@@ -745,8 +752,8 @@ PluginComponent {
                                 anchors.centerIn: parent
                                 text: root.tr(modelData.labelKey)
                                 font.pixelSize: Theme.fontSizeSmall
-                                font.weight: root.popoutSourceTab === modelData.id ? Font.Medium : Font.Normal
-                                color: root.popoutSourceTab === modelData.id ? Theme.primaryText : Theme.surfaceVariantText
+                                font.weight: root.activeSourceId === modelData.id ? Font.Medium : Font.Normal
+                                color: root.activeSourceId === modelData.id ? Theme.primaryText : Theme.surfaceVariantText
                             }
 
                             MouseArea {
