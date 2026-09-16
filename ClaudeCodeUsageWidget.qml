@@ -112,7 +112,11 @@ PluginComponent {
         return d.id;
     })
 
-    property string popoutSourceTab: "claude"
+    // Empty until ensureActiveTab picks the first visible Source, which is the
+    // first one in the configured order. Hardcoding an id here ignored that
+    // order, and left nothing selected when the id named a Source that was off.
+    // After the user picks a tab, this holds their choice for the session.
+    property string popoutSourceTab: ""
 
     readonly property var activeDescriptor: Sources.byId(popoutSourceTab)
 
