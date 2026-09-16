@@ -30,14 +30,18 @@ PluginSettings {
 
     function loadSourceOrder() {
         sourceOrderLoaded = false;
-        sourceOrder = Sources.resolveList(root.loadValue("sources", null));
+        sourceOrder = Sources.resolveList(root.loadValue("sources", null), root.loadValue("sourcesKnown", null));
         sourceOrderLoaded = true;
     }
 
+    // `sources` is the enabled order. `sourcesKnown` is every registry id the
+    // user has been shown, and is what lets a disabled Source stay disabled
+    // while a Source added by an update still appears on its own.
     function saveSourceOrder() {
         if (!sourceOrderLoaded)
             return;
         root.saveValue("sources", sourceOrder);
+        root.saveValue("sourcesKnown", Sources.ids());
     }
 
     function isEnabled(id) {
@@ -149,7 +153,7 @@ PluginSettings {
 
         StyledText {
             width: parent.width
-            text: root.tr("Choose which providers appear, and in what order. This sets both the taskbar ring order and the popout tab order.")
+            text: root.tr("Choose which Sources appear, and in what order. This sets both the taskbar ring order and the popout tab order.")
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap

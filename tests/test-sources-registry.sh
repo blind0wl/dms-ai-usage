@@ -187,6 +187,14 @@ check(reg.resolveList(["ghost"]).length === ids.length, "unknown ids are dropped
 check(reg.resolveList(["ghost", ids[1]])[0] === ids[1], "a dropped id does not displace a real one");
 check(reg.resolveList([ids[0], ids[0]]).length === ids.length, "a duplicated id is not repeated");
 
+// With a `known` set, an omitted id the user has seen stays off, and only an id
+// they have never seen is appended. This is what makes switching one Source off
+// stick while a Source added by an update still appears on its own.
+const switchedOff = [ids[1], ids[2], ids[3]];
+check(JSON.stringify(reg.resolveList(switchedOff, ids)) === JSON.stringify(switchedOff), "a Source in `known` but absent from the list stays switched off");
+check(JSON.stringify(reg.resolveList([], ids)) === "[]", "an empty list stays empty even with a known set");
+check(JSON.stringify(reg.resolveList([ids[0]], [ids[0]])) === JSON.stringify(ids), "a registry id absent from both the list and `known` is appended as newly added");
+
 console.log(results.join("\n"));
 NODE
 

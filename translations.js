@@ -7,7 +7,7 @@ var strings = {
         { fr: "Sources", es: "Fuentes" },
     "Account":
         { fr: "Compte", es: "Cuenta" },
-    "Choose which providers appear, and in what order. This sets both the taskbar ring order and the popout tab order.":
+    "Choose which Sources appear, and in what order. This sets both the taskbar ring order and the popout tab order.":
         {
             fr: "Choisissez les fournisseurs à afficher et leur ordre. Cela détermine l'ordre des anneaux dans la barre des tâches et celui des onglets.",
             es: "Elige qué proveedores se muestran y en qué orden. Esto determina el orden de los anillos en la barra de tareas y el de las pestañas."
@@ -154,7 +154,7 @@ var strings = {
         },
     "Custom opencode Accounts":
         { fr: "Comptes opencode personnalisés", es: "Cuentas de opencode personalizadas" },
-    "Track extra opencode Go keys by API key. A key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".":
+    "Track extra opencode Go Accounts by API key. An API key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".":
         {
             fr: "Suivez d'autres clés opencode Go par clé d'API. Une clé présente dans le magasin d'authentification de l'agent pi (~/.pi/agent/auth.json) est détectée automatiquement comme « default ».",
             es: "Haz seguimiento de otras claves de opencode Go mediante su clave de API. Una clave presente en el almacén de autenticación del agente pi (~/.pi/agent/auth.json) se detecta automáticamente como «default»."

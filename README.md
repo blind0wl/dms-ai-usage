@@ -25,7 +25,7 @@ A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) 
     - [claude-code-profiles](https://github.com/felipeadeildo/claude-code-profiles) profiles in `~/.ccp/profiles/*.env` (the `CLAUDE_CONFIG_DIR` declared in each `.env` is used)
     - Any directory you add manually under **Custom Profiles** in the plugin settings
   - **ChatGPT accounts** — any account you add manually under **Custom ChatGPT Accounts** in the plugin settings
-  - **opencode Go keys** — any key you add manually under **Custom opencode Accounts** in the plugin settings
+  - **opencode Go accounts** — any account you add manually under **Custom opencode Accounts** in the plugin settings
   - Profile/account overlay on each Source's daily activity chart: grey bars show total usage, colored bars show the selected profile/account's share
 - **Login action** when a Source's credentials are missing or expired — a card in that Source's popout starts `claude auth login --claudeai` (Claude) or a `codex` refresh (ChatGPT), then re-fetches on completion. API-key Sources (Z.ai, opencode Go) get a card pointing at the plugin settings instead
 - **Graceful degradation**: a Source with no binary installed hides entirely; one with a missing/expired token or a rejected API key stays visible with a login card instead of silently showing zeros. opencode Go's undocumented endpoint adds a third state. When the endpoint fails rather than rejecting the key, the tab says so without sending you to settings, drops the ring from the pill, and marks the last known values as stale instead of showing them as current

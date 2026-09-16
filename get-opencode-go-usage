@@ -134,7 +134,11 @@ fetch_account_usage() {
     # state of its own rather than missing credentials. Nothing is known about
     # the key, so no usage is reported instead of inventing zeros as a
     # confirmed reading.
-    if [ "$http" != "200" ] || ! echo "$body" | jq -e '.usage.rolling and .usage.weekly' >/dev/null 2>&1; then
+    # The two Window objects must carry their fields, not just exist. An empty
+    # `{}` for each passes a bare presence check and would then default to a
+    # successful zero reading, which is exactly the fabricated reading this
+    # state exists to avoid.
+    if [ "$http" != "200" ] || ! echo "$body" | jq -e '(.usage.rolling.percent != null) and (.usage.weekly.percent != null)' >/dev/null 2>&1; then
         creds_status="unavailable"
         write_out
         return

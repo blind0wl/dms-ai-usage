@@ -101,6 +101,11 @@ echo 500 > "$MOCK_DIR/k500.code"
 echo '{}' > "$MOCK_DIR/ktimeout.json"
 echo 000 > "$MOCK_DIR/ktimeout.code"
 
+# HTTP 200 but each Window is an empty object: the keys exist and carry no
+# fields, so this is an unreadable body, not a zero reading.
+echo '{"usage":{"rolling":{},"weekly":{}}}' > "$MOCK_DIR/kempty.json"
+echo 200 > "$MOCK_DIR/kempty.code"
+
 # HTTP 200 but not the captured shape: the endpoint answered with something the
 # parser cannot read, which is still not a rejected key.
 echo '{"nope":true}' > "$MOCK_DIR/kgarbage.json"
@@ -157,7 +162,7 @@ echo "=== Test 2b: Failed endpoint has a status of its own ==="
 # ============================================================
 # The endpoint, not the key, failed. That is a different state from a rejected
 # key. The user cannot fix it in settings, so it must not report missing.
-for name in 404 500 timeout garbage; do
+for name in 404 500 timeout garbage empty; do
     key="k${name}"
     H=$(new_home "home-ep-$name")
     write_pi_key "$H" "$key"

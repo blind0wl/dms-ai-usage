@@ -38,7 +38,7 @@ PluginComponent {
     // The ordered list of enabled Sources. Order drives the pill rings and the
     // popout tabs. An absent value turns everything on; unknown ids are dropped
     // and newly added Sources appended, so a stale stored list heals itself.
-    property var sourceOrder: Sources.resolveList(pluginData.sources)
+    property var sourceOrder: Sources.resolveList(pluginData.sources, pluginData.sourcesKnown)
 
     // --- Runtime state ---
     // sourceData and selectedAccount are keyed by Source id. accountData is
@@ -256,15 +256,20 @@ PluginComponent {
                 resetMs: pd.sevenDayReset !== undefined ? root.parseResetMs(pd.sevenDayReset) : base.secondary.resetMs,
                 windowSeconds: base.secondary.windowSeconds
             };
-            st.dailyTokens = pd.daily || base.dailyTokens;
-            st.dailyCosts = pd.dailyCosts || base.dailyCosts;
+            // The daily chart keeps the aggregate in dailyTokens and dailyCosts,
+            // so its grey bars stay the total and the cost tooltip stays the day
+            // total, and carries the Account's own series separately for the
+            // coloured share.
             st.accountDaily = pd.daily || [];
             st.models = pd.weekModels || [];
             // All-time figures are only tracked in aggregate.
             st.alltime = { sessions: 0, messages: 0, firstSession: "" };
         }
 
-        st.todayTokens = (st.dailyTokens && st.dailyTokens[root.todayIndex]) || 0;
+        // The Today figure follows the selected Account when there is one, and
+        // the aggregate otherwise.
+        var todaySeries = pd && pd.daily ? pd.daily : st.dailyTokens;
+        st.todayTokens = (todaySeries && todaySeries[root.todayIndex]) || 0;
         return st;
     }
 

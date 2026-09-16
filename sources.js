@@ -32,8 +32,7 @@ var SOURCES = [
                 util: "SEVEN_DAY_UTIL",
                 reset: "SEVEN_DAY_RESET",
                 windowSeconds: 604800,
-                labelKey: "7-Day Usage",
-                counts: true
+                labelKey: "7-Day Usage"
             }
         },
         accounts: {
@@ -56,7 +55,7 @@ var SOURCES = [
             { type: "accounts" },
             { type: "login" },
             { type: "windows", which: "primary" },
-            { type: "windows", which: "secondary" },
+            { type: "windows", which: "secondary", counts: true },
             {
                 type: "stats",
                 columns: [
@@ -172,7 +171,7 @@ var SOURCES = [
             argField: "key",
             labelKey: "Account",
             titleKey: "Custom opencode Accounts",
-            descriptionKey: "Track extra opencode Go keys by API key. A key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".",
+            descriptionKey: "Track extra opencode Go Accounts by API key. An API key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".",
             fieldLabelKey: "API key",
             placeholder: ""
         },
@@ -281,35 +280,50 @@ function ids() {
     });
 }
 
-// Reconciles a persisted Source list against the registry. Unknown ids are
-// dropped, registry ids missing from the list are appended, and the caller's
-// order is preserved. Returns an array of ids.
+// Reconciles a persisted Source list against the registry. Unknown ids and
+// duplicates are dropped and the caller's order is preserved. Registry ids the
+// list omits are *not* added here; resolveList decides which omissions mean a
+// deliberately disabled Source and which mean a newly added one.
 function reconcileList(stored) {
-    var known = ids();
+    var knownIds = ids();
     var out = [];
     if (Array.isArray(stored)) {
         for (var i = 0; i < stored.length; i++) {
-            if (known.indexOf(stored[i]) >= 0 && out.indexOf(stored[i]) < 0)
+            if (knownIds.indexOf(stored[i]) >= 0 && out.indexOf(stored[i]) < 0)
                 out.push(stored[i]);
         }
-    }
-    for (var j = 0; j < known.length; j++) {
-        if (out.indexOf(known[j]) < 0)
-            out.push(known[j]);
     }
     return out;
 }
 
 // The ordered list of enabled Sources, from whatever was persisted.
 //
-// An absent value means the user has never configured the list, so every Source
-// starts on. An explicitly empty list means they turned them all off, and is
-// respected rather than refilled, otherwise the last Source could never be
-// switched off.
-function resolveList(stored) {
+// An absent list means the user has never configured it, so every Source starts
+// on. An explicitly empty list means they turned them all off, and is respected
+// so the last Source can be switched off.
+//
+// `known` is the set of registry ids the user has already been shown. It is what
+// separates a Source they deliberately switched off from one the registry gained
+// since they last saved: a Source that is absent but known stays off, while one
+// they have never seen is appended, enabled. Without it, an omission is
+// ambiguous, so every missing id is appended and no Source can be switched off.
+function resolveList(stored, known) {
     if (stored === null || stored === undefined)
         return ids();
     if (Array.isArray(stored) && stored.length === 0)
         return [];
-    return reconcileList(stored);
+
+    var enabled = reconcileList(stored);
+    var seen = Array.isArray(known) ? known : null;
+    var all = ids();
+    for (var i = 0; i < all.length; i++) {
+        if (enabled.indexOf(all[i]) >= 0)
+            continue;
+        // No `known` means the caller has no memory of earlier registry ids, so
+        // a missing id is treated as newly added and switched on. This keeps a
+        // config written before `known` existed working the way it did.
+        if (seen === null || seen.indexOf(all[i]) < 0)
+            enabled.push(all[i]);
+    }
+    return enabled;
 }
