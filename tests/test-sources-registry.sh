@@ -166,9 +166,15 @@ check(reg.byId(ids[0]) === reg.SOURCES[0], "byId returns the matching descriptor
 
 // --- Renderer contract ---
 // A Section hides itself when it does not apply, but a Loader does not inherit
-// that and a Column lays out a Loader on its height alone. Without the mirror,
-// every hidden card leaves a blank gap and pushes the cards below it down.
-check(/visible:\s*item\s*\?\s*item\.visible\s*:\s*true/.test(tab), "SourceTab's section Loader mirrors the Section's visible so hidden cards collapse");
+// that and a Column lays out a Loader on its height alone. The renderer mirrors
+// each Section's own `shown` rather than `visible`, because QML reports
+// `visible` as false on every item while an ancestor is hidden and the popout
+// primes its content hidden.
+check(/visible:\s*item\s*\?\s*item\.shown\s*!==\s*false\s*:\s*true/.test(tab), "SourceTab's section Loader mirrors the Section's shown so hidden cards collapse");
+for (const name of ["AccountsSection", "LoginSection", "StatusSection", "WindowsSection", "ModelsSection", "AlltimeSection"]) {
+    const sectionSource = fs.readFileSync(path.join(root, `ui/${name}.qml`), "utf8");
+    check(/property bool shown:/.test(sectionSource), `${name} declares shown so the renderer can collapse it`);
+}
 
 // --- Settings list rules ---
 check(JSON.stringify(reg.resolveList(undefined)) === JSON.stringify(ids), "absent list enables every Source in registry order");

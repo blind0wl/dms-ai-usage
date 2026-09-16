@@ -20,11 +20,14 @@ StyledRect {
 
     readonly property var models: source && source.models ? source.models : []
     readonly property real weekTokens: source ? (source.weekTokens || 0) : 0
+    // The Section's own intent to show. The renderer reads this rather than
+    // `visible`, which QML reports as false while an ancestor is hidden.
+    readonly property bool shown: models.length > 0
 
     width: parent.width
     height: modelCardCol.implicitHeight + Theme.spacingM * 2
     color: Theme.surfaceContainerHigh
-    visible: models.length > 0
+    visible: shown
 
     function displayName(name) {
         return nameStyle === "short" ? api.shortModelName(name) : name;

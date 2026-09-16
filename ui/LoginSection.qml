@@ -22,6 +22,9 @@ StyledRect {
     readonly property bool missing: source && source.credsStatus === "missing"
     readonly property bool expired: source && source.credsStatus === "expired"
     readonly property bool isCli: login && login.kind === "cli"
+    // The Section's own intent to show. The renderer reads this rather than
+    // `visible`, which QML reports as false while an ancestor is hidden.
+    readonly property bool shown: missing || expired
     readonly property string title: {
         if (isCli)
             return missing ? api.tr("Not logged in") : api.tr("Session expired");
@@ -34,7 +37,7 @@ StyledRect {
     }
 
     width: parent.width
-    visible: missing || expired
+    visible: shown
     height: content.implicitHeight + Theme.spacingM * 2
     color: Theme.surfaceContainerHigh
     border.width: 1

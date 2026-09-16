@@ -21,11 +21,14 @@ StyledRect {
         messages: 0,
         firstSession: ""
     })
+    // The Section's own intent to show. The renderer reads this rather than
+    // `visible`, which QML reports as false while an ancestor is hidden.
+    readonly property bool shown: alltime.sessions > 0 || alltime.messages > 0
 
     width: parent.width
     height: allTimeRow.implicitHeight + Theme.spacingM * 2
     color: Theme.surfaceContainerHigh
-    visible: alltime.sessions > 0 || alltime.messages > 0
+    visible: shown
 
     Row {
         id: allTimeRow

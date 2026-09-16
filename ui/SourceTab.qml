@@ -55,7 +55,13 @@ Column {
             // that, and a Column lays out a Loader on its height alone, so
             // without this every hidden card would leave a blank gap and push
             // the cards below it down.
-            visible: item ? item.visible : true
+            //
+            // It reads `shown`, not `visible`. QML reports `visible` as false on
+            // every item while an ancestor is hidden, and the popout primes its
+            // content hidden, so mirroring `visible` hid every card and the body
+            // stayed collapsed once the popout opened. `shown` is the Section's
+            // own intent and ignores ancestors.
+            visible: item ? item.shown !== false : true
 
             // Declarative bindings rather than assignments in onLoaded, so the
             // cards stay reactive and there is no window where the item exists

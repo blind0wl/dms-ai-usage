@@ -18,11 +18,14 @@ Item {
     readonly property string label: ctx && ctx.descriptor && ctx.descriptor.accounts ? api.tr(ctx.descriptor.accounts.labelKey) : ""
 
     readonly property bool useTabs: accounts.length <= 5
+    // The Section's own intent to show. The renderer reads this rather than
+    // `visible`, which QML reports as false while an ancestor is hidden.
+    readonly property bool shown: accounts.length > 2
 
     width: parent.width
     height: selectorLoader.height
     // count > 2 means the aggregate plus at least two real Accounts.
-    visible: accounts.length > 2
+    visible: shown
 
     function labelFor(name) {
         return name === "all" ? api.tr("All") : name;

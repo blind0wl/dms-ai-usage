@@ -32,9 +32,12 @@ StyledRect {
     // reading to fall back on the card stays, flagged stale by the status card
     // that sits above it.
     readonly property bool noFallback: source && source.credsStatus === "unavailable" && source.hasData !== true
+    // The Section's own intent to show. The renderer reads this rather than
+    // `visible`, which QML reports as false while an ancestor is hidden.
+    readonly property bool shown: !noFallback
 
     width: parent.width
-    visible: !noFallback
+    visible: shown
     height: content.implicitHeight + (compact ? Theme.spacingM * 2 : Theme.spacingS * 2)
     color: Theme.surfaceContainerHigh
 

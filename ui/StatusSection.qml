@@ -23,6 +23,9 @@ StyledRect {
     // so it says so rather than claiming to show last known values.
     readonly property bool hasData: source && source.hasData === true
     readonly property bool unavailable: source && source.credsStatus === "unavailable"
+    // The Section's own intent to show. The renderer reads this rather than
+    // `visible`, which QML reports as false while an ancestor is hidden.
+    readonly property bool shown: unavailable
 
     readonly property string title: {
         if (status && status.titleKey)
@@ -38,7 +41,7 @@ StyledRect {
     }
 
     width: parent.width
-    visible: unavailable
+    visible: shown
     height: content.implicitHeight + Theme.spacingM * 2
     color: Theme.surfaceContainerHigh
     border.width: 1
