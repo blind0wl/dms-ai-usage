@@ -183,12 +183,21 @@ var SOURCES = [
             titleKey: "API key rejected",
             bodyKey: "Check your opencode Go key in the plugin settings."
         },
+        // The endpoint is undocumented, so it can fail in ways the user cannot
+        // fix. That state gets its own card, deliberately without a settings
+        // pointer, and the Window cards stay as the last known values.
+        status: {
+            titleKey: "Usage endpoint unavailable",
+            bodyKey: "opencode's usage endpoint could not be reached. Showing the last known values.",
+            emptyBodyKey: "opencode's usage endpoint could not be reached. No usage data to show yet."
+        },
         planStyle: "plan",
         // The response carries no plan name and no spend, so the tab holds the
         // Source name and its two Window cards, with no stats, chart or models.
         sections: [
             { type: "header" },
             { type: "login" },
+            { type: "status" },
             { type: "windows", which: "primary" },
             { type: "windows", which: "secondary" }
         ]

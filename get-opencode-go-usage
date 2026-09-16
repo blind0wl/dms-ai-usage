@@ -128,11 +128,14 @@ fetch_account_usage() {
         return
     fi
 
-    # Anything else without a parseable body is a failed endpoint, not a zero
-    # reading. Nothing is known about the key, so report no usage rather than
-    # inventing zeros as a confirmed reading.
-    if ! echo "$body" | jq -e '.usage.rolling and .usage.weekly' >/dev/null 2>&1; then
-        creds_status="missing"
+    # Everything else is the endpoint failing rather than the key: a 404, a
+    # 5xx, a timeout that leaves no status line, or a body that does not carry
+    # the two Windows. The user cannot fix any of those in settings, so it is a
+    # state of its own rather than missing credentials. Nothing is known about
+    # the key, so no usage is reported instead of inventing zeros as a
+    # confirmed reading.
+    if [ "$http" != "200" ] || ! echo "$body" | jq -e '.usage.rolling and .usage.weekly' >/dev/null 2>&1; then
+        creds_status="unavailable"
         write_out
         return
     fi
@@ -211,10 +214,15 @@ done
 
 ACCOUNTS=$(IFS=,; echo "${ACCOUNT_NAMES[*]}")
 
+# A failed endpoint reports CREDS_STATUS but no Window values at all, so the
+# widget can keep its last-good reading and label it stale rather than reading
+# the zeros below as a fresh measurement.
 echo "PLAN_TYPE=${PLAN_TYPE}"
-echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
-echo "PRIMARY_RESET=${PRIMARY_RESET}"
-echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
-echo "SECONDARY_RESET=${SECONDARY_RESET}"
+if [ "$CREDS_STATUS" != "unavailable" ]; then
+    echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
+    echo "PRIMARY_RESET=${PRIMARY_RESET}"
+    echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
+    echo "SECONDARY_RESET=${SECONDARY_RESET}"
+fi
 echo "CREDS_STATUS=${CREDS_STATUS}"
 echo "ACCOUNTS=${ACCOUNTS}"

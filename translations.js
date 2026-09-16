@@ -198,6 +198,18 @@ var strings = {
             fr: "Vérifiez votre clé opencode Go dans les paramètres du plugin.",
             es: "Comprueba tu clave de opencode Go en los ajustes del plugin."
         },
+    "Usage endpoint unavailable":
+        { fr: "Point d'accès d'utilisation indisponible", es: "Punto de acceso de uso no disponible" },
+    "opencode's usage endpoint could not be reached. Showing the last known values.":
+        {
+            fr: "Le point d'accès d'utilisation d'opencode est injoignable. Affichage des dernières valeurs connues.",
+            es: "No se pudo contactar con el punto de acceso de uso de opencode. Se muestran los últimos valores conocidos."
+        },
+    "opencode's usage endpoint could not be reached. No usage data to show yet.":
+        {
+            fr: "Le point d'accès d'utilisation d'opencode est injoignable. Aucune donnée d'utilisation à afficher pour le moment.",
+            es: "No se pudo contactar con el punto de acceso de uso de opencode. Aún no hay datos de uso que mostrar."
+        },
     "Log in":
         { fr: "Se connecter", es: "Iniciar sesión" },
     "Logging in…":

@@ -24,6 +24,8 @@ Column {
             return accountsComponent;
         case "login":
             return loginComponent;
+        case "status":
+            return statusComponent;
         case "windows":
             return windowsComponent;
         case "stats":
@@ -79,6 +81,11 @@ Column {
     Component {
         id: loginComponent
         LoginSection {}
+    }
+
+    Component {
+        id: statusComponent
+        StatusSection {}
     }
 
     Component {

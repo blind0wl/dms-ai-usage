@@ -89,6 +89,23 @@ cat > "$MOCK_DIR/k3.json" << 'EOF'
 EOF
 echo 200 > "$MOCK_DIR/k3.code"
 
+# Endpoint failures: none of these are the key's fault, so none may report a
+# rejected key. A 404, a 5xx, a dropped connection and a body that does not
+# carry the two Windows are all the same state.
+echo '{"error":"Not Found"}' > "$MOCK_DIR/k404.json"
+echo 404 > "$MOCK_DIR/k404.code"
+
+echo '{"error":"Internal Server Error"}' > "$MOCK_DIR/k500.json"
+echo 500 > "$MOCK_DIR/k500.code"
+
+echo '{}' > "$MOCK_DIR/ktimeout.json"
+echo 000 > "$MOCK_DIR/ktimeout.code"
+
+# HTTP 200 but not the captured shape: the endpoint answered with something the
+# parser cannot read, which is still not a rejected key.
+echo '{"nope":true}' > "$MOCK_DIR/kgarbage.json"
+echo 200 > "$MOCK_DIR/kgarbage.code"
+
 # ============================================================
 echo "=== Test 1: The captured response drives the two modelled Windows ==="
 # ============================================================
@@ -134,6 +151,45 @@ echo 200 > "$MOCK_DIR/k2b.code"
 H2B=$(new_home home2b)
 write_pi_key "$H2B" k2b
 assert_eq "$(val "$(run_script "$H2B")" CREDS_STATUS)" "missing" "CREDS_STATUS=missing when the body carries an AuthError"
+
+# ============================================================
+echo "=== Test 2b: Failed endpoint has a status of its own ==="
+# ============================================================
+# The endpoint, not the key, failed. That is a different state from a rejected
+# key. The user cannot fix it in settings, so it must not report missing.
+for name in 404 500 timeout garbage; do
+    key="k${name}"
+    H=$(new_home "home-ep-$name")
+    write_pi_key "$H" "$key"
+    OUT=$(run_script "$H")
+
+    assert_eq "$(val "$OUT" CREDS_STATUS)" "unavailable" "a failed endpoint ($name) reports CREDS_STATUS=unavailable"
+    # A rejected key stays missing, so the two failure modes never blur.
+    if [ "$(val "$OUT" CREDS_STATUS)" = "missing" ]; then
+        fail "a failed endpoint ($name) must not report missing credentials"
+    else
+        pass "a failed endpoint ($name) is distinct from missing credentials"
+    fi
+
+    # No Window values at all, so the widget keeps its last good reading and
+    # labels it stale rather than reading the failure as a fresh zero.
+    assert_no_key "$OUT" "PRIMARY_UTIL" "a failed endpoint ($name) reports no PRIMARY_UTIL"
+    assert_no_key "$OUT" "PRIMARY_RESET" "a failed endpoint ($name) reports no PRIMARY_RESET"
+    assert_no_key "$OUT" "SECONDARY_UTIL" "a failed endpoint ($name) reports no SECONDARY_UTIL"
+    assert_no_key "$OUT" "SECONDARY_RESET" "a failed endpoint ($name) reports no SECONDARY_RESET"
+
+    # The key was still discovered, and the run still reports its shape.
+    assert_eq "$(val "$OUT" ACCOUNTS)" "default" "a failed endpoint ($name) still reports the discovered Account"
+    assert_eq "$(val "$OUT" PLAN_TYPE)" "unknown" "a failed endpoint ($name) still reports a plan line"
+done
+
+# A rejected key is the one endpoint status that still emits the Window keys,
+# because the widget shows it behind a settings card rather than as stale data.
+H2C=$(new_home home2c)
+write_pi_key "$H2C" k2
+OUT2C=$(run_script "$H2C")
+assert_eq "$(val "$OUT2C" CREDS_STATUS)" "missing" "a rejected key reports missing, not unavailable"
+assert_eq "$(val "$OUT2C" PRIMARY_UTIL)" "0" "a rejected key still emits PRIMARY_UTIL for the settings card path"
 
 # ============================================================
 echo "=== Test 3: No key anywhere — not_installed ==="

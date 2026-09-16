@@ -75,3 +75,10 @@ Credentials a Source needs are absent or expired, but the Source is installed. A
 missing Source stays visible and offers a login action, so it does not silently
 sit at zero.
 _Avoid_: not installed, logged out, unauthenticated
+
+**Unavailable**:
+A Source whose credentials are present but whose data could not be fetched
+because its endpoint failed, timed out or answered with an unexpected body. The
+user cannot fix it, so the Source does not point at settings and the widget
+marks its last known values stale instead of showing them as current.
+_Avoid_: missing, not installed, error, offline

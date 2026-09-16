@@ -93,6 +93,25 @@ PluginComponent {
         return d.id;
     })
 
+    // Sources that still hold a current reading get a Pill Ring. A Source whose
+    // endpoint is unavailable keeps its popout tab but drops out of the Pill,
+    // so a stale percentage is never shown as though it were current.
+    readonly property var pillDescriptors: {
+        void (sourceData);
+        var out = [];
+        for (var i = 0; i < visibleDescriptors.length; i++) {
+            var d = visibleDescriptors[i];
+            var st = sourceData[d.id];
+            if (!st || st.credsStatus !== "unavailable")
+                out.push(d);
+        }
+        return out;
+    }
+
+    readonly property var pillIds: pillDescriptors.map(function (d) {
+        return d.id;
+    })
+
     property string popoutSourceTab: "claude"
 
     readonly property var activeDescriptor: Sources.byId(popoutSourceTab)
@@ -101,6 +120,8 @@ PluginComponent {
         root.ensureActiveTab();
         root.updatePillVisibility();
     }
+
+    onPillIdsChanged: root.updatePillVisibility()
 
     function ensureActiveTab() {
         var ids = root.visibleIds;
@@ -111,7 +132,7 @@ PluginComponent {
     }
 
     function updatePillVisibility() {
-        if (root.visibleIds.length === 0)
+        if (root.pillIds.length === 0)
             root.setVisibilityOverride(false);
         else
             root.clearVisibilityOverride();
@@ -127,6 +148,10 @@ PluginComponent {
     function emptyState() {
         return {
             credsStatus: "unknown",
+            // True once a fetch has reported a good reading. An endpoint failure
+            // with nothing to fall back on shows no Window cards at all rather
+            // than a fabricated zero.
+            hasData: false,
             plan: "",
             planTier: "",
             extraUsageEnabled: false,
@@ -578,7 +603,7 @@ PluginComponent {
             spacing: Theme.spacingXS
 
             Repeater {
-                model: root.visibleDescriptors
+                model: root.pillDescriptors
 
                 delegate: Row {
                     id: hGroup
@@ -629,7 +654,7 @@ PluginComponent {
             spacing: Theme.spacingXS || 4
 
             Repeater {
-                model: root.visibleDescriptors
+                model: root.pillDescriptors
 
                 delegate: Column {
                     id: vGroup
@@ -958,6 +983,16 @@ PluginComponent {
 
     // --- Script output parsing ---
 
+    // Applies a CREDS_STATUS value to one Source's state. A good reading is the
+    // only thing that counts as data; an endpoint failure reports no Window
+    // values, so the last good reading survives in state and the status card
+    // above it marks those values as stale rather than current.
+    function applyCredsStatus(st, val) {
+        st.credsStatus = val;
+        if (val === "ok")
+            st.hasData = true;
+    }
+
     function parseLine(id, line) {
         if (!line)
             return;
@@ -997,7 +1032,7 @@ PluginComponent {
                 st.extraUsageEnabled = (val === "true");
                 break;
             case "CREDS_STATUS":
-                st.credsStatus = val;
+                root.applyCredsStatus(st, val);
                 break;
             case "WEEK_MESSAGES":
                 st.weekMessages = parseInt(val) || 0;

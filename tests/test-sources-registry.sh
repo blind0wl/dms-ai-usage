@@ -130,6 +130,32 @@ for (const d of reg.SOURCES) {
         check(tr[d.accounts.descriptionKey] !== undefined, `${tag} account description is translated`);
         check(tr[d.accounts.fieldLabelKey] !== undefined, `${tag} account field label is translated`);
     }
+
+    // A status Section is a failed endpoint, not a credential problem. Its copy
+    // must be complete and translated, and must never send the user to settings:
+    // the whole point is that they cannot fix it there.
+    let sawStatusSection = false;
+    for (const s of d.sections)
+        if (s.type === "status")
+            sawStatusSection = true;
+    if (sawStatusSection)
+        check(d.status !== undefined, `${tag} has a status section so declares status copy`);
+    if (d.status) {
+        for (const key of [d.status.titleKey, d.status.bodyKey, d.status.emptyBodyKey]) {
+            check(typeof key === "string" && key.length > 0, `${tag} status copy is a non-empty string`);
+            check(tr[key] !== undefined, `${tag} status copy "${key}" is translated`);
+        }
+        const copies = [d.status.titleKey, d.status.bodyKey, d.status.emptyBodyKey];
+        for (const key of copies) {
+            for (const language of ["en", "fr", "es"]) {
+                const text = language === "en" ? key : tr[key] && tr[key][language];
+                check(typeof text === "string" && !/settings|paramètres|ajustes/i.test(text), `${tag} status copy "${key}" does not direct the user to settings (${language})`);
+            }
+        }
+        check(d.status.bodyKey !== d.status.emptyBodyKey, `${tag} status copy distinguishes last known values from no data`);
+    }
+    if (d.status)
+        check(sawStatusSection, `${tag} declares status copy so has a status section`);
 }
 
 // --- Identity ---

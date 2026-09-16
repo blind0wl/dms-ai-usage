@@ -27,7 +27,14 @@ StyledRect {
     readonly property string countdown: api.countdown(source, which)
     readonly property string title: compact ? label + " · " + Math.round(util) + "%" : label
 
+    // An endpoint failure with no last good reading has nothing to fall back
+    // on, so the card is dropped rather than drawing a fabricated zero. With a
+    // reading to fall back on the card stays, flagged stale by the status card
+    // that sits above it.
+    readonly property bool noFallback: source && source.credsStatus === "unavailable" && source.hasData !== true
+
     width: parent.width
+    visible: !noFallback
     height: content.implicitHeight + (compact ? Theme.spacingM * 2 : Theme.spacingS * 2)
     color: Theme.surfaceContainerHigh
 
