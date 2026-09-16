@@ -619,6 +619,7 @@ PluginComponent {
                 delegate: Row {
                     id: hGroup
                     required property var modelData
+                    required property int index
 
                     spacing: Theme.spacingXS
 
@@ -670,6 +671,7 @@ PluginComponent {
                 delegate: Column {
                     id: vGroup
                     required property var modelData
+                    required property int index
 
                     spacing: Theme.spacingXS || 4
 
