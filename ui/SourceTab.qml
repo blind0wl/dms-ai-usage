@@ -1,16 +1,18 @@
 import QtQuick
 import qs.Common
 
-// Renders one Source's popout tab from its descriptor's Section list.
+// Renders one Popout tab's Section list. A Source's tab and the Overview's tab
+// are both just an ordered list of Sections, so this stays the only renderer
+// (ADR 0003).
 //
-// Each Section component takes a `section` (its own descriptor entry) and a
-// shared `ctx` (the resolved Source state plus the formatters and actions it
-// needs). Both are bound rather than assigned, so the cards stay reactive when
-// the underlying state changes.
+// Each Section component takes a `section` (its own entry in that list) and a
+// shared `ctx`: the resolved Source state for a Source's tab, the ranking for the
+// Overview's, plus the formatters and actions either needs. Both are bound rather
+// than assigned, so the Sections stay reactive when the underlying state changes.
 Column {
     id: root
 
-    property var descriptor: null
+    property var tab: null
     property var ctx: null
 
     width: parent.width
@@ -36,12 +38,14 @@ Column {
             return modelsComponent;
         case "alltime":
             return alltimeComponent;
+        case "overview":
+            return overviewComponent;
         }
         return null;
     }
 
     Repeater {
-        model: root.descriptor ? root.descriptor.sections : []
+        model: root.tab ? root.tab.sections : []
 
         delegate: Loader {
             id: sectionLoader
@@ -125,5 +129,10 @@ Column {
     Component {
         id: alltimeComponent
         AlltimeSection {}
+    }
+
+    Component {
+        id: overviewComponent
+        OverviewSection {}
     }
 }

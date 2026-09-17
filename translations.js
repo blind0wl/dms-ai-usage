@@ -117,6 +117,8 @@ var strings = {
         },
     "Overview":
         { fr: "Vue d'ensemble", es: "Vista general" },
+    "stale":
+        { fr: "obsolète", es: "obsoleta" },
     "Show the Overview tab, ranking your Sources by their tightest Window. It appears once two or more Sources are visible.":
         {
             fr: "Afficher l'onglet Vue d'ensemble, qui classe vos sources par fenêtre la plus contrainte. Il apparaît à partir de deux sources visibles.",
