@@ -719,9 +719,9 @@ PluginComponent {
         }
     }
 
-    // Everything a Section needs beyond its own descriptor entry. The Overview's
-    // tab is not a Source, so its Sections read the ranking instead of one
-    // Source's state, and no non-Source travels under the Descriptor name.
+    // Everything a Section needs beyond its own entry in the tab's Section list.
+    // The Overview's tab is not a Source, so its Sections read the ranking instead
+    // of one Source's state, and no non-Source travels under the Descriptor name.
     function contextFor(id) {
         if (id === Sources.OVERVIEW_TAB.id) {
             return {
