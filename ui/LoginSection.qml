@@ -95,7 +95,7 @@ StyledRect {
                 anchors.fill: parent
                 enabled: !root.inProgress
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.api.startLogin(root.login.action)
+                onClicked: root.api.startLogin(root.ctx.source.id)
             }
         }
     }

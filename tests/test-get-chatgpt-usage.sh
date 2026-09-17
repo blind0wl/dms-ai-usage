@@ -104,7 +104,7 @@ ENV1=$(setup_env "test1")
 write_auth "$ENV1/.codex" 9999999999 "$(date -Iseconds)"
 OUTPUT1=$(run_script "$ENV1")
 
-EXPECTED_KEYS="PLAN_TYPE PRIMARY_UTIL PRIMARY_RESET PRIMARY_WINDOW_SECONDS SECONDARY_UTIL SECONDARY_RESET SECONDARY_WINDOW_SECONDS CREDITS_BALANCE CREDITS_HAS CREDS_STATUS WEEK_TOKENS WEEK_MESSAGES WEEK_SESSIONS MONTH_TOKENS DAILY WEEK_MODELS ACCOUNTS PROFILE_SUBSCRIPTION PROFILE_FIVE_HOUR_UTIL PROFILE_FIVE_HOUR_RESET PROFILE_SEVEN_DAY_UTIL PROFILE_SEVEN_DAY_RESET PROFILE_CREDS_STATUS PROFILE_WEEK_TOKENS PROFILE_MONTH_TOKENS PROFILE_WEEK_MESSAGES PROFILE_WEEK_SESSIONS PROFILE_DAILY PROFILE_WEEK_MODELS"
+EXPECTED_KEYS="PLAN_TYPE PRIMARY_UTIL PRIMARY_RESET PRIMARY_WINDOW_SECONDS SECONDARY_UTIL SECONDARY_RESET SECONDARY_WINDOW_SECONDS CREDITS_BALANCE CREDITS_HAS CREDS_STATUS WEEK_TOKENS WEEK_MESSAGES WEEK_SESSIONS MONTH_TOKENS DAILY WEEK_MODELS ACCOUNTS PROFILE_SUBSCRIPTION PROFILE_PRIMARY_UTIL PROFILE_PRIMARY_RESET PROFILE_SECONDARY_UTIL PROFILE_SECONDARY_RESET PROFILE_CREDS_STATUS PROFILE_WEEK_TOKENS PROFILE_MONTH_TOKENS PROFILE_WEEK_MESSAGES PROFILE_WEEK_SESSIONS PROFILE_DAILY PROFILE_WEEK_MODELS"
 for key in $EXPECTED_KEYS; do
     if echo "$OUTPUT1" | grep -q "^${key}="; then
         pass "key $key present"
@@ -369,12 +369,13 @@ OUTPUT14=$(HOME="$ENV14" CODEX_HOME="$ENV14/.codex" PATH="$multi_curl_dir:$TMPDI
 assert_eq "$(echo "$OUTPUT14" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "ACCOUNTS lists both Accounts"
 assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_SUBSCRIPTION=" | cut -d= -f2)" "default:plus,work:pro" "PROFILE_SUBSCRIPTION carries each Account's plan"
 assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_CREDS_STATUS=" | cut -d= -f2)" "default:ok,work:ok" "PROFILE_CREDS_STATUS carries each Account's own status"
-# The primary Window is only Claude's five-hour slot by name; #29 replaces these
-# Claude-shaped keys with ones each descriptor declares.
-assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_FIVE_HOUR_UTIL=" | cut -d= -f2)" "default:42,work:7" "PROFILE_FIVE_HOUR_UTIL carries each Account's primary Window"
-assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_FIVE_HOUR_RESET=" | cut -d= -f2)" "default:2099-01-01T00:00:00Z,work:2099-02-01T00:00:00Z" "PROFILE_FIVE_HOUR_RESET carries each Account's primary reset"
-assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_SEVEN_DAY_UTIL=" | cut -d= -f2)" "default:15,work:3" "PROFILE_SEVEN_DAY_UTIL carries each Account's secondary Window"
-assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_SEVEN_DAY_RESET=" | cut -d= -f2)" "default:2099-01-07T00:00:00Z,work:2099-02-07T00:00:00Z" "PROFILE_SEVEN_DAY_RESET carries each Account's secondary reset"
+# The per-Account keys are named for ChatGPT's own Windows: primary and
+# secondary, whose lengths the API reports.
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_PRIMARY_UTIL=" | cut -d= -f2)" "default:42,work:7" "PROFILE_PRIMARY_UTIL carries each Account's primary Window"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_PRIMARY_RESET=" | cut -d= -f2)" "default:2099-01-01T00:00:00Z,work:2099-02-01T00:00:00Z" "PROFILE_PRIMARY_RESET carries each Account's primary reset"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_SECONDARY_UTIL=" | cut -d= -f2)" "default:15,work:3" "PROFILE_SECONDARY_UTIL carries each Account's secondary Window"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_SECONDARY_RESET=" | cut -d= -f2)" "default:2099-01-07T00:00:00Z,work:2099-02-07T00:00:00Z" "PROFILE_SECONDARY_RESET carries each Account's secondary reset"
+assert_no_match "$OUTPUT14" "^PROFILE_FIVE_HOUR_|^PROFILE_SEVEN_DAY_" "the Claude-shaped per-Account Window keys are gone"
 assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_WEEK_TOKENS=" | cut -d= -f2)" "default:100,work:300" "PROFILE_WEEK_TOKENS carries each Account's own weekly tokens"
 assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_MONTH_TOKENS=" | cut -d= -f2)" "default:100,work:300" "PROFILE_MONTH_TOKENS carries each Account's own monthly tokens"
 assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_WEEK_MESSAGES=" | cut -d= -f2)" "default:1,work:1" "PROFILE_WEEK_MESSAGES carries each Account's own message count"
@@ -400,8 +401,8 @@ OUTPUT15=$(run_script "$ENV15" "work=$ENV15/work")
 
 assert_eq "$(echo "$OUTPUT15" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "a rejected Account stays listed in ACCOUNTS"
 assert_eq "$(echo "$OUTPUT15" | grep "^PROFILE_CREDS_STATUS=" | cut -d= -f2)" "default:ok,work:missing" "the Account whose credentials were rejected is reported as missing beside the healthy one"
-assert_eq "$(echo "$OUTPUT15" | grep "^PROFILE_FIVE_HOUR_UTIL=" | cut -d= -f2)" "default:42,work:0" "the rejected Account's own primary Window is reported, not masked by the healthy Account's"
-assert_eq "$(echo "$OUTPUT15" | grep "^PROFILE_SEVEN_DAY_UTIL=" | cut -d= -f2)" "default:15,work:0" "the rejected Account's own secondary Window is reported, not masked by the healthy Account's"
+assert_eq "$(echo "$OUTPUT15" | grep "^PROFILE_PRIMARY_UTIL=" | cut -d= -f2)" "default:42,work:0" "the rejected Account's own primary Window is reported, not masked by the healthy Account's"
+assert_eq "$(echo "$OUTPUT15" | grep "^PROFILE_SECONDARY_UTIL=" | cut -d= -f2)" "default:15,work:0" "the rejected Account's own secondary Window is reported, not masked by the healthy Account's"
 
 # ============================================================
 echo ""

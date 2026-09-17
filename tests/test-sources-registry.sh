@@ -62,11 +62,6 @@ const implemented = new Set();
 for (const m of tab.matchAll(/case "([a-z]+)":/g))
     implemented.add(m[1]);
 
-// Properties the widget exposes for Account argument sources.
-const accountSettingKeys = new Set();
-for (const m of widget.matchAll(/property var (\w*[Aa]ccounts?\w*|\w*[Pp]rofiles\w*): pluginData/g))
-    accountSettingKeys.add(m[1]);
-
 const results = [];
 const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
 
@@ -88,6 +83,9 @@ for (const d of reg.SOURCES) {
         check(typeof w.reset === "string" && w.reset.length > 0, `${tag} ${which} names a reset key`);
         const hasLength = typeof w.windowSeconds === "number" || typeof w.windowSecondsKey === "string";
         check(hasLength, `${tag} ${which} declares a window length or the key for one`);
+        // The Account-scoped form of the same slot. A Source's per-Account
+        // Window keys are descriptor data, not shared with Claude's naming.
+        check(w.account !== undefined && typeof w.account.util === "string" && typeof w.account.reset === "string", `${tag} ${which} names its per-Account util and reset keys`);
         if (w.labelKey)
             check(tr[w.labelKey] !== undefined, `${tag} ${which} label "${w.labelKey}" is translated`);
     }
@@ -123,9 +121,17 @@ for (const d of reg.SOURCES) {
     if (sawAccountsSection)
         check(d.accounts !== undefined, `${tag} has an accounts section so declares account settings`);
     if (d.accounts) {
+        check(sawAccountsSection, `${tag} declares account settings so renders an accounts section`);
         check(/^w*[Aa]ccounts?$|^custom\w+$/.test(d.accounts.settingKey), `${tag} account settingKey looks like a settings key`);
-        check(widget.indexOf(`property var ${d.accounts.settingKey}`) >= 0, `${tag} account settingKey "${d.accounts.settingKey}" is a property the widget reads`);
+        check(widget.indexOf("pluginData[d.accounts.settingKey]") >= 0, `${tag} account settingKey is resolved generically by the widget`);
         check(["path", "key"].indexOf(d.accounts.argField) >= 0, `${tag} account argField is path or key`);
+        check(typeof d.accounts.listKey === "string" && d.accounts.listKey.length > 0, `${tag} account declares the output key that lists its Accounts`);
+        check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its non-Window output fields`);
+        for (const [key, spec] of Object.entries(d.accounts.fields || {})) {
+            check(/^PROFILE_/.test(key), `${tag} account field "${key}" is a per-Account key`);
+            check(typeof spec.field === "string" && spec.field.length > 0, `${tag} account field "${key}" names an overlay field`);
+            check(["text", "number", "boolean", "series", "models"].indexOf(spec.type) >= 0, `${tag} account field "${key}" has a known reader`);
+        }
         check(tr[d.accounts.titleKey] !== undefined, `${tag} account title is translated`);
         check(tr[d.accounts.descriptionKey] !== undefined, `${tag} account description is translated`);
         check(tr[d.accounts.fieldLabelKey] !== undefined, `${tag} account field label is translated`);
@@ -174,6 +180,23 @@ check(/visible:\s*item\s*\?\s*item\.shown\s*!==\s*false\s*:\s*true/.test(tab), "
 for (const name of ["AccountsSection", "LoginSection", "StatusSection", "WindowsSection", "ModelsSection", "AlltimeSection"]) {
     const sectionSource = fs.readFileSync(path.join(root, `ui/${name}.qml`), "utf8");
     check(/property bool shown:/.test(sectionSource), `${name} declares shown so the renderer can collapse it`);
+}
+
+// --- The widget holds no per-Source branches ---
+// ADR-0001: a Source is data. The Account setting key, the Account output keys
+// and the login action all come from the descriptor, so a Source added to the
+// registry needs no edit here and none of these strings should appear in the
+// widget.
+check(widget.indexOf("PROFILE_") < 0, "the widget names no Account output keys; they are descriptor data");
+check(widget.indexOf("fiveHour") < 0 && widget.indexOf("sevenDay") < 0, "the widget holds no Claude-shaped Account fields");
+for (const key of ["customProfiles", "customChatgptAccounts", "customZaiAccounts", "customOpencodeAccounts"])
+    check(widget.indexOf(`"${key}"`) < 0, `the widget does not hardcode the setting key "${key}"`);
+check(widget.indexOf("claudeLogin") < 0 && widget.indexOf("chatgptLogin") < 0, "the widget hardcodes no login action ids");
+for (const d of reg.SOURCES) {
+    if (d.login && d.login.kind === "cli") {
+        check(typeof d.login.program === "string" && d.login.program.length > 0, `descriptor "${d.id}" cli login names its program`);
+        check(Array.isArray(d.login.args), `descriptor "${d.id}" cli login declares its args`);
+    }
 }
 
 // --- Settings list rules ---

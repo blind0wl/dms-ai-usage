@@ -29,10 +29,21 @@ PluginComponent {
     // --- Settings ---
     property int refreshInterval: (pluginData.refreshInterval || 2) * 60000
     property bool showPacing: pluginData.showPacing !== false
-    property var customProfiles: pluginData.customProfiles || []
-    property var customChatgptAccounts: pluginData.customChatgptAccounts || []
-    property var customZaiAccounts: pluginData.customZaiAccounts || []
-    property var customOpencodeAccounts: pluginData.customOpencodeAccounts || []
+    // Every Source's custom Account list, keyed by the setting key its
+    // descriptor declares. One binding rather than a property and a change
+    // handler per Source, so a Source added to the registry needs no widget
+    // edit; pluginData is reassigned whole when settings are saved, which
+    // re-evaluates this binding.
+    property var accountSettings: {
+        var out = {};
+        for (var i = 0; i < Sources.SOURCES.length; i++) {
+            var d = Sources.SOURCES[i];
+            if (d.accounts)
+                out[d.accounts.settingKey] = pluginData[d.accounts.settingKey] || [];
+        }
+        return out;
+    }
+    property var lastAccountSettings: ({})
     property real usdEurRate: 0
 
     // The ordered list of enabled Sources. Order drives the pill rings and the
@@ -226,13 +237,13 @@ PluginComponent {
             if (pd.extraUsageEnabled !== undefined)
                 st.extraUsageEnabled = pd.extraUsageEnabled;
             st.primary = {
-                util: pd.fiveHourUtil !== undefined ? pd.fiveHourUtil : base.primary.util,
-                resetMs: pd.fiveHourReset !== undefined ? root.parseResetMs(pd.fiveHourReset) : base.primary.resetMs,
+                util: pd.primaryUtil !== undefined ? pd.primaryUtil : base.primary.util,
+                resetMs: pd.primaryReset !== undefined ? root.parseResetMs(pd.primaryReset) : base.primary.resetMs,
                 windowSeconds: base.primary.windowSeconds
             };
             st.secondary = {
-                util: pd.sevenDayUtil !== undefined ? pd.sevenDayUtil : base.secondary.util,
-                resetMs: pd.sevenDayReset !== undefined ? root.parseResetMs(pd.sevenDayReset) : base.secondary.resetMs,
+                util: pd.secondaryUtil !== undefined ? pd.secondaryUtil : base.secondary.util,
+                resetMs: pd.secondaryReset !== undefined ? root.parseResetMs(pd.secondaryReset) : base.secondary.resetMs,
                 windowSeconds: base.secondary.windowSeconds
             };
             // The daily chart keeps the aggregate in dailyTokens and dailyCosts,
@@ -310,15 +321,7 @@ PluginComponent {
     }
 
     function settingList(key) {
-        if (key === "customProfiles")
-            return root.customProfiles;
-        if (key === "customChatgptAccounts")
-            return root.customChatgptAccounts;
-        if (key === "customZaiAccounts")
-            return root.customZaiAccounts;
-        if (key === "customOpencodeAccounts")
-            return root.customOpencodeAccounts;
-        return [];
+        return root.accountSettings[key] || [];
     }
 
     function accountArgs(id) {
@@ -366,18 +369,29 @@ PluginComponent {
             root.requestFetch(root.visibleIds[i]);
     }
 
-    function accountsChanged(settingKey) {
+    // Refetch a Source whose Account list changed, so a newly added Account
+    // appears without waiting for the next poll. pluginData changes for every
+    // setting, so compare the lists rather than refetching on any save.
+    onAccountSettingsChanged: {
+        var prev = root.lastAccountSettings;
+        var next = root.accountSettings;
+        root.lastAccountSettings = next;
+        // The binding can be evaluated while the component is still being
+        // built, before sourceOrder exists. onSourceOrderChanged fetches
+        // everything at that point anyway.
+        if (!root.sourceOrder)
+            return;
         for (var i = 0; i < Sources.SOURCES.length; i++) {
             var d = Sources.SOURCES[i];
-            if (d.accounts && d.accounts.settingKey === settingKey && root.sourceOrder.indexOf(d.id) >= 0)
+            if (!d.accounts)
+                continue;
+            var key = d.accounts.settingKey;
+            if (JSON.stringify(prev[key]) === JSON.stringify(next[key]))
+                continue;
+            if (root.sourceOrder.indexOf(d.id) >= 0)
                 root.requestFetch(d.id);
         }
     }
-
-    onCustomProfilesChanged: root.accountsChanged("customProfiles")
-    onCustomChatgptAccountsChanged: root.accountsChanged("customChatgptAccounts")
-    onCustomZaiAccountsChanged: root.accountsChanged("customZaiAccounts")
-    onCustomOpencodeAccountsChanged: root.accountsChanged("customOpencodeAccounts")
 
     // Toggling a Source on fetches immediately rather than waiting a tick.
     onSourceOrderChanged: {
@@ -480,46 +494,49 @@ PluginComponent {
 
     // --- CLI logins ---
 
-    function startLogin(action) {
-        if (action === "claudeLogin") {
-            if (claudeLoginProcess.running)
-                return;
-            var profile = root.selectedAccount["claude"] || "all";
-            var dir = root.configDirForProfile(profile);
-            var envPrefix = dir ? "CLAUDE_CONFIG_DIR=" + root.shellQuote(dir) + " " : "";
-            claudeLoginProcess.command = ["bash", "-c", envPrefix + "PATH=\"$PATH:" + root.cliSearchPathAdditions + "\" exec claude auth login --claudeai"];
-            root.setLoginInProgress("claude", true);
-            claudeLoginProcess.running = true;
-        } else if (action === "chatgptLogin") {
-            if (chatgptLoginProcess.running)
-                return;
-            root.setLoginInProgress("chatgpt", true);
-            chatgptLoginProcess.running = true;
+    property string loginSourceId: ""
+
+    // `command` is built rather than declared, because Quickshell's own PATH is
+    // a bare `/usr/local/bin:/usr/bin` and would not find a `claude` under
+    // ~/.local/bin or ~/.npm-global/bin, leaving the button stuck on
+    // "Logging in…" because the Process never spawned and never exited. The
+    // program, its args and any environment come from the descriptor, so a new
+    // Source's login needs no Process or branch here.
+    function loginCommandFor(d, id) {
+        var cmd = "";
+        if (d.login.env && d.login.env.accountField) {
+            var value = root.accountFieldFor(id, root.selectedAccount[id] || "all", d.login.env.accountField);
+            if (value)
+                cmd = d.login.env.settingKey + "=" + root.shellQuote(value) + " ";
         }
+        cmd += 'PATH="$PATH:' + root.cliSearchPathAdditions + '" exec ' + d.login.program;
+        var args = d.login.args || [];
+        for (var i = 0; i < args.length; i++)
+            cmd += " " + args[i];
+        return ["bash", "-c", cmd];
     }
 
-    // `command` is set by startLogin rather than declared, because Quickshell's
-    // own PATH is a bare `/usr/local/bin:/usr/bin` and would not find a `claude`
-    // under ~/.local/bin or ~/.npm-global/bin, leaving the button stuck on
-    // "Logging in…" because the Process never spawned and never exited.
+    function startLogin(id) {
+        var d = Sources.byId(id);
+        if (!d || !d.login || d.login.kind !== "cli")
+            return;
+        if (loginProcess.running)
+            return;
+        loginProcess.command = root.loginCommandFor(d, id);
+        root.loginSourceId = id;
+        root.setLoginInProgress(id, true);
+        loginProcess.running = true;
+    }
+
     Process {
-        id: claudeLoginProcess
+        id: loginProcess
         running: false
 
         onExited: (exitCode, exitStatus) => {
-            root.setLoginInProgress("claude", false);
-            root.requestFetch("claude");
-        }
-    }
-
-    Process {
-        id: chatgptLoginProcess
-        command: ["bash", "-c", "PATH=\"$PATH:" + root.cliSearchPathAdditions + "\" exec codex login"]
-        running: false
-
-        onExited: (exitCode, exitStatus) => {
-            root.setLoginInProgress("chatgpt", false);
-            root.requestFetch("chatgpt");
+            var id = root.loginSourceId;
+            root.loginSourceId = "";
+            root.setLoginInProgress(id, false);
+            root.requestFetch(id);
         }
     }
 
@@ -573,8 +590,8 @@ PluginComponent {
             return root.paceColor(status);
         }
 
-        function startLogin(action) {
-            root.startLogin(action);
+        function startLogin(id) {
+            root.startLogin(id);
         }
 
         function selectAccount(id, name) {
@@ -975,17 +992,21 @@ PluginComponent {
         return subLabel || tierLabel;
     }
 
-    // Resolves the CLAUDE_CONFIG_DIR to log into for a given Account name.
-    // "all"/"default" (or unrecognized names, e.g. auto-discovered ccs/ccp
-    // profiles the widget doesn't know the path for) fall back to "" — the login
-    // command's own default (~/.claude).
-    function configDirForProfile(name) {
+    // The value of one field on a named Account of a Source, from the Account's
+    // entry in the plugin settings. "all"/"default" (or unrecognized names)
+    // fall back to "" — the login command's own default — so logging in as the
+    // aggregate never redirects the CLI away from its detected config.
+    function accountFieldFor(id, name, field) {
         if (!name || name === "all" || name === "default")
             return "";
-        for (var i = 0; i < root.customProfiles.length; i++) {
-            var p = root.customProfiles[i];
-            if (p && p.name === name && p.path)
-                return p.path;
+        var d = Sources.byId(id);
+        if (!d || !d.accounts)
+            return "";
+        var list = root.settingList(d.accounts.settingKey);
+        for (var i = 0; i < list.length; i++) {
+            var a = list[i];
+            if (a && a.name === name && a[field])
+                return a[field];
         }
         return "";
     }
@@ -1023,16 +1044,19 @@ PluginComponent {
         if (!d)
             return;
 
-        // Window keys are named by the descriptor, so what each Source calls its
-        // primary and secondary windows does not matter here. The Account keys
-        // are handled here too rather than in the switch below, because they
-        // write a different map and nesting two state writes would let the
-        // outer one clobber the inner.
+        // Every key that belongs to an Account is named by the descriptor: the
+        // list of Accounts, the two Window slots' Account keys, and the rest of
+        // the Account overlay fields. They write a different map from the
+        // Source's own state, so they are dispatched before the switch below.
+        if (d.accounts && key === d.accounts.listKey) {
+            root.applyAccounts(id, val);
+            return;
+        }
         if (root.parseWindowKey(d, id, "primary", key, val))
             return;
         if (root.parseWindowKey(d, id, "secondary", key, val))
             return;
-        if (root.parseAccountKey(id, key, val))
+        if (root.parseAccountKey(d, id, key, val))
             return;
 
         root.updateSource(id, function (st) {
@@ -1097,76 +1121,28 @@ PluginComponent {
             case "USD_EUR_RATE":
                 root.usdEurRate = parseFloat(val) || 0;
                 break;
-            case "ACCOUNTS":
-                st.accounts = val.length > 0 ? val.split(",") : [];
-                break;
             }
         });
     }
 
-    // Account keys write the per-Account overlay map rather than the Source's
-    // own state, so they are dispatched separately. Returns true when handled.
-    function parseAccountKey(id, key, val) {
-        switch (key) {
-        case "PROFILES":
-            root.applyAccounts(id, val);
-            return true;
-        case "PROFILE_SUBSCRIPTION":
-            root.applyAccountField(id, val, "subscriptionType");
-            return true;
-        case "PROFILE_TIER":
-            root.applyAccountField(id, val, "rateLimitTier");
-            return true;
-        case "PROFILE_CREDS_STATUS":
-            root.applyAccountField(id, val, "credsStatus");
-            return true;
-        case "PROFILE_FIVE_HOUR_RESET":
-            root.applyAccountField(id, val, "fiveHourReset");
-            return true;
-        case "PROFILE_SEVEN_DAY_RESET":
-            root.applyAccountField(id, val, "sevenDayReset");
-            return true;
-        case "PROFILE_WEEK_TOKENS":
-            root.applyAccountNumber(id, val, "weekTokens");
-            return true;
-        case "PROFILE_MONTH_TOKENS":
-            root.applyAccountNumber(id, val, "monthTokens");
-            return true;
-        case "PROFILE_WEEK_MESSAGES":
-            root.applyAccountNumber(id, val, "weekMessages");
-            return true;
-        case "PROFILE_WEEK_SESSIONS":
-            root.applyAccountNumber(id, val, "weekSessions");
-            return true;
-        case "PROFILE_FIVE_HOUR_UTIL":
-            root.applyAccountNumber(id, val, "fiveHourUtil");
-            return true;
-        case "PROFILE_SEVEN_DAY_UTIL":
-            root.applyAccountNumber(id, val, "sevenDayUtil");
-            return true;
-        case "PROFILE_TODAY_COST":
-            root.applyAccountNumber(id, val, "todayCost");
-            return true;
-        case "PROFILE_WEEK_COST":
-            root.applyAccountNumber(id, val, "weekCost");
-            return true;
-        case "PROFILE_MONTH_COST":
-            root.applyAccountNumber(id, val, "monthCost");
-            return true;
-        case "PROFILE_EXTRA_USAGE":
-            root.applyAccountBool(id, val, "extraUsageEnabled");
-            return true;
-        case "PROFILE_DAILY":
-            root.applyAccountList(id, val, "daily");
-            return true;
-        case "PROFILE_DAILY_COSTS":
-            root.applyAccountList(id, val, "dailyCosts");
-            return true;
-        case "PROFILE_WEEK_MODELS":
-            root.applyAccountModels(id, val);
-            return true;
-        }
-        return false;
+    // The per-Account output keys a Source declares in its descriptor's
+    // `accounts.fields` map. The field names are the overlay's own, so no
+    // Source's Window shape leaks into this adapter. Returns true when handled.
+    function parseAccountKey(d, id, key, val) {
+        var spec = d.accounts && d.accounts.fields ? d.accounts.fields[key] : null;
+        if (!spec)
+            return false;
+        if (spec.type === "number")
+            root.applyAccountNumber(id, val, spec.field);
+        else if (spec.type === "boolean")
+            root.applyAccountBool(id, val, spec.field);
+        else if (spec.type === "series")
+            root.applyAccountList(id, val, spec.field);
+        else if (spec.type === "models")
+            root.applyAccountModels(id, val, spec.field);
+        else
+            root.applyAccountField(id, val, spec.field);
+        return true;
     }
 
     function parseWindowKey(d, id, which, key, val) {
@@ -1189,6 +1165,17 @@ PluginComponent {
             root.updateSource(id, function (st) {
                 root.setWindow(st, which, "windowSeconds", parseFloat(val) || 0);
             });
+            return true;
+        }
+        // The Account-scoped form of the same slot. Each Source names these in
+        // its descriptor, because what one calls its five-hour Window another
+        // calls its primary.
+        if (w.account && key === w.account.util) {
+            root.applyAccountNumber(id, val, which + "Util");
+            return true;
+        }
+        if (w.account && key === w.account.reset) {
+            root.applyAccountField(id, val, which + "Reset");
             return true;
         }
         return false;
@@ -1317,11 +1304,11 @@ PluginComponent {
         });
     }
 
-    function applyAccountModels(id, val) {
+    function applyAccountModels(id, val, field) {
         var models = root.parseAccountModels(val);
         root.mutateAccounts(id, function (acct) {
             for (var name in models)
-                acct(name).weekModels = models[name];
+                acct(name)[field] = models[name];
         });
     }
 }

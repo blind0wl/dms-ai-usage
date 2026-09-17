@@ -39,10 +39,10 @@ ALLTIME_MESSAGES=0
 FIRST_SESSION=unknown
 ACCOUNTS=
 PROFILE_SUBSCRIPTION=
-PROFILE_FIVE_HOUR_UTIL=
-PROFILE_FIVE_HOUR_RESET=
-PROFILE_SEVEN_DAY_UTIL=
-PROFILE_SEVEN_DAY_RESET=
+PROFILE_PRIMARY_UTIL=
+PROFILE_PRIMARY_RESET=
+PROFILE_SECONDARY_UTIL=
+PROFILE_SECONDARY_RESET=
 PROFILE_CREDS_STATUS=
 PROFILE_WEEK_TOKENS=
 PROFILE_MONTH_TOKENS=
@@ -527,16 +527,15 @@ echo "ALLTIME_SESSIONS=${ALLTIME_SESSIONS}"
 echo "ALLTIME_MESSAGES=${ALLTIME_MESSAGES}"
 echo "FIRST_SESSION=${FIRST_SESSION}"
 echo "ACCOUNTS=${ACCOUNTS}"
-# The Popout's account adapter reads these PROFILE_* keys and overlays them on
-# the selected Account. The names are Claude's: the primary Window maps to the
-# five-hour pair and the secondary to the seven-day pair, even though ChatGPT
-# reports its own lengths, so read no window length into the name. #29 replaces
-# them with keys each descriptor declares.
+# The per-Account keys the ChatGPT descriptor declares. ChatGPT's Windows are
+# primary and secondary with lengths the API reports, so they are named for
+# their own slots rather than borrowed from Claude's five-hour and seven-day
+# ones.
 echo "PROFILE_SUBSCRIPTION=${ACCOUNT_PLAN_LIST}"
-echo "PROFILE_FIVE_HOUR_UTIL=${ACCOUNT_PRIMARY_UTIL_LIST}"
-echo "PROFILE_FIVE_HOUR_RESET=${ACCOUNT_PRIMARY_RESET_LIST}"
-echo "PROFILE_SEVEN_DAY_UTIL=${ACCOUNT_SECONDARY_UTIL_LIST}"
-echo "PROFILE_SEVEN_DAY_RESET=${ACCOUNT_SECONDARY_RESET_LIST}"
+echo "PROFILE_PRIMARY_UTIL=${ACCOUNT_PRIMARY_UTIL_LIST}"
+echo "PROFILE_PRIMARY_RESET=${ACCOUNT_PRIMARY_RESET_LIST}"
+echo "PROFILE_SECONDARY_UTIL=${ACCOUNT_SECONDARY_UTIL_LIST}"
+echo "PROFILE_SECONDARY_RESET=${ACCOUNT_SECONDARY_RESET_LIST}"
 echo "PROFILE_CREDS_STATUS=${ACCOUNT_CREDS_STATUS_LIST}"
 echo "PROFILE_WEEK_TOKENS=${ACCOUNT_WEEK_TOKENS_LIST}"
 echo "PROFILE_MONTH_TOKENS=${ACCOUNT_MONTH_TOKENS_LIST}"
