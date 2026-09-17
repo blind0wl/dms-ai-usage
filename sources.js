@@ -425,3 +425,113 @@ function resolveList(stored, known) {
     }
     return enabled;
 }
+
+// The Source's Tightest Window: whichever of its Windows carries the highest
+// Utilisation, so the limit that will stop the user first is the one a row
+// names. Which Window that is varies by Source and over time, so callers read
+// `window` rather than assuming a slot. A tie goes to the primary Window, the
+// slot the Pill's Ring already draws.
+//
+// Returns { window, util, resetMs }, or null when the state carries no Window
+// reading at all.
+function tightestWindow(state) {
+    if (!state)
+        return null;
+    var slots = ["primary", "secondary"];
+    var best = null;
+    for (var i = 0; i < slots.length; i++) {
+        var w = state[slots[i]];
+        if (!w || typeof w.util !== "number")
+            continue;
+        if (best === null || w.util > best.util)
+            best = { window: slots[i], util: w.util, resetMs: w.resetMs || 0 };
+    }
+    return best;
+}
+
+// One Overview row. It carries everything the Overview tab draws, so the tab is
+// a dumb repeater and every ranking rule stays testable here.
+//
+// A Source that has reported a reading is ranked, except a Missing one:
+// credentials can lapse after a good fetch, and the row offers the login
+// affordance instead of a stale bar. An Unavailable Source keeps its last known
+// reading and flags it stale, because a stale reading is still a reading. A
+// Source with no reading yet carries no Tightest Window, so the row cannot
+// draw a fabricated zero.
+//
+// Returns null for a Not installed Source: it stays hidden everywhere else, so
+// it produces no row here either.
+function overviewRow(state) {
+    if (!state || !state.id || state.credsStatus === "not_installed")
+        return null;
+
+    var d = byId(state.id);
+    var missing = state.credsStatus === "missing" || state.credsStatus === "expired";
+    var unavailable = state.credsStatus === "unavailable";
+    var hasReading = state.hasData === true;
+    var tightest = hasReading ? tightestWindow(state) : null;
+    var which = tightest ? tightest.window : null;
+    var declared = which && d && d.windows[which] ? d.windows[which] : null;
+    var win = which ? state[which] || {} : {};
+
+    return {
+        id: state.id,
+        // The display name stays a key: translation is the renderer's job.
+        labelKey: d ? d.labelKey : state.id,
+        // Which Window was tightest, and the label the descriptor gives it. The
+        // label follows the Window; when the descriptor names none, windowSeconds
+        // lets the renderer fall back to its own duration formatting.
+        window: which,
+        windowLabelKey: declared && declared.labelKey ? declared.labelKey : null,
+        windowSeconds: win.windowSeconds || (declared && declared.windowSeconds) || 0,
+        util: tightest ? tightest.util : 0,
+        resetMs: tightest ? tightest.resetMs : 0,
+        // Ranked means the row holds a current-enough reading to sort by.
+        ranked: hasReading && !missing,
+        // Stale marks an Unavailable Source's last known reading as not current.
+        stale: hasReading && unavailable,
+        // Missing and Unavailable are the two degraded states, and each renders
+        // differently: a login affordance, or a dimmed stale bar.
+        missing: missing,
+        unavailable: unavailable,
+        degraded: missing || unavailable
+    };
+}
+
+// The Overview's rows, in the order the tab renders them.
+//
+// `states` is the ordered list of visible Sources in settings order, each
+// carrying its own Source id (stateFor() sets it). Settings order is what ties
+// fall back to, so rows do not jitter between fetches. Ranked rows come first,
+// by Tightest Window Utilisation descending, so the scarcest budget is the top
+// line; every Source with no reading follows them in settings order.
+//
+// Fewer than two rows means there is nothing to compare, so the Overview is
+// absent: a comparison of one is noise.
+function overviewRows(states) {
+    if (!Array.isArray(states))
+        return [];
+
+    var ranked = [];
+    var unranked = [];
+    for (var i = 0; i < states.length; i++) {
+        var row = overviewRow(states[i]);
+        if (!row)
+            continue;
+        if (row.ranked)
+            ranked.push({ row: row, at: i });
+        else
+            unranked.push(row);
+    }
+
+    ranked.sort(function (a, b) {
+        if (b.row.util !== a.row.util)
+            return b.row.util - a.row.util;
+        return a.at - b.at;
+    });
+
+    var out = ranked.map(function (entry) {
+        return entry.row;
+    }).concat(unranked);
+    return out.length >= 2 ? out : [];
+}

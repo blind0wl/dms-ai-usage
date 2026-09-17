@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -249,6 +249,133 @@ const switchedOff = [ids[1], ids[2], ids[3]];
 check(JSON.stringify(reg.resolveList(switchedOff, ids)) === JSON.stringify(switchedOff), "a Source in `known` but absent from the list stays switched off");
 check(JSON.stringify(reg.resolveList([], ids)) === "[]", "an empty list stays empty even with a known set");
 check(JSON.stringify(reg.resolveList([ids[0]], [ids[0]])) === JSON.stringify(ids), "a registry id absent from both the list and `known` is appended as newly added");
+
+// --- Overview ranking ---
+// The Overview ranks the visible Sources by Tightest Window (ADR 0003). The
+// rules live here, not in a Descriptor: ranking is a property of the whole set.
+//
+// A state fixture shaped like the widget's emptyState()/stateFor() output, with
+// settings order supplied by the caller's array order.
+const overview = (id, over) => Object.assign({
+    id,
+    credsStatus: "ok",
+    hasData: true,
+    primary: { util: 0, resetMs: 0, windowSeconds: 18000 },
+    secondary: { util: 0, resetMs: 0, windowSeconds: 604800 }
+}, over || {});
+const wins = (id, p, s, over) => overview(id, Object.assign({
+    primary: { util: p, resetMs: 1000, windowSeconds: 18000 },
+    secondary: { util: s, resetMs: 2000, windowSeconds: 604800 }
+}, over || {}));
+const rowIds = (rows) => rows.map((r) => r.id).join(",");
+
+// tightestWindow names the Window with the highest Utilisation, and the tie goes
+// to the primary slot so the answer is stable.
+check(reg.tightestWindow(wins("claude", 10, 80)).window === "secondary",
+      "tightestWindow names the secondary Window when it has the higher Utilisation");
+check(reg.tightestWindow(wins("claude", 80, 10)).window === "primary",
+      "tightestWindow names the primary Window when it has the higher Utilisation");
+check(reg.tightestWindow(wins("claude", 40, 40)).window === "primary",
+      "tightestWindow breaks a tie with the primary Window");
+check(reg.tightestWindow(wins("claude", 10, 80)).util === 80,
+      "tightestWindow reports the winning Utilisation");
+check(reg.tightestWindow(wins("claude", 10, 80)).resetMs === 2000,
+      "tightestWindow reports the winning Window's reset");
+check(reg.tightestWindow(null) === null, "tightestWindow returns null for a missing state");
+
+// A row carries everything the Overview renders, so #40 can be a dumb repeater.
+const sampleRow = reg.overviewRows([wins("claude", 10, 80), wins("chatgpt", 5, 5)])[0];
+for (const field of ["id", "labelKey", "window", "windowLabelKey", "windowSeconds", "util", "resetMs", "ranked", "stale", "missing", "unavailable", "degraded"])
+    check(Object.prototype.hasOwnProperty.call(sampleRow, field), `an Overview row carries the "${field}" field`);
+check(sampleRow.id === "claude" && sampleRow.labelKey === "Claude",
+      "an Overview row names its Source by id and label key");
+check(sampleRow.window === "secondary" && sampleRow.windowLabelKey === "7-Day Usage",
+      "an Overview row's label follows the Tightest Window, not a fixed slot");
+check(sampleRow.util === 80 && sampleRow.resetMs === 2000,
+      "an Overview row carries the Tightest Window's Utilisation and reset");
+check(sampleRow.ranked === true && sampleRow.stale === false && sampleRow.degraded === false,
+      "a healthy Overview row is ranked, not stale and not degraded");
+check(reg.overviewRows([wins("chatgpt", 10, 80), wins("claude", 5, 5)])[0].windowLabelKey === null,
+      "an Overview row leaves windowLabelKey null when its descriptor names no label");
+
+// Ranked before unranked, by Utilisation descending.
+check(rowIds(reg.overviewRows([wins("claude", 40, 10), wins("chatgpt", 90, 20)])) === "chatgpt,claude",
+      "overviewRows ranks rows by Utilisation descending");
+check(rowIds(reg.overviewRows([
+    wins("claude", 10, 10),
+    overview("zai", { hasData: false, credsStatus: "unknown" })
+])) === "claude,zai",
+      "overviewRows ranks a Source with a reading above one with no reading yet");
+check(rowIds(reg.overviewRows([
+    wins("claude", 0, 0),
+    overview("zai", { hasData: false, credsStatus: "unknown" })
+])) === "claude,zai",
+      "a genuine 0% reading is still a reading and outranks no reading at all");
+
+// A tie keeps the settings order the caller passed in.
+check(rowIds(reg.overviewRows([wins("claude", 50, 50), wins("chatgpt", 50, 50)])) === "claude,chatgpt",
+      "overviewRows breaks a Utilisation tie with settings order");
+check(rowIds(reg.overviewRows([
+    overview("zai", { hasData: false, credsStatus: "unknown" }),
+    overview("claude", { hasData: false, credsStatus: "unknown" })
+])) === "zai,claude",
+      "overviewRows keeps the unranked group in settings order");
+
+// Unavailable keeps its last known reading and flags it stale.
+const unavailableRows = reg.overviewRows([
+    wins("opencode", 80, 10, { credsStatus: "unavailable" }),
+    wins("claude", 30, 10)
+]);
+check(rowIds(unavailableRows) === "opencode,claude",
+      "an Unavailable Source ranks on its last known value");
+check(unavailableRows[0].stale === true && unavailableRows[0].ranked === true && unavailableRows[0].degraded === true,
+      "an Unavailable Source's last known row is flagged stale and degraded");
+check(unavailableRows[1].stale === false && unavailableRows[1].degraded === false,
+      "a healthy row is not stale and not degraded");
+
+// Unavailable with nothing to fall back on has no reading to rank.
+const emptyUnavailable = reg.overviewRows([
+    overview("opencode", { credsStatus: "unavailable", hasData: false }),
+    wins("claude", 5, 1)
+]);
+check(emptyUnavailable[1].id === "opencode" && emptyUnavailable[1].window === null,
+      "an Unavailable Source with no reading carries no Tightest Window");
+check(emptyUnavailable[1].ranked === false && emptyUnavailable[1].stale === false && emptyUnavailable[1].degraded === true,
+      "an Unavailable Source with no reading is unranked, not stale, and degraded");
+
+// Missing sorts below every ranked row, even when it still has a last known value.
+const missingRows = reg.overviewRows([
+    wins("claude", 99, 10, { credsStatus: "missing" }),
+    wins("chatgpt", 10, 5)
+]);
+check(rowIds(missingRows) === "chatgpt,claude",
+      "a Missing Source sorts below every ranked row");
+check(missingRows[1].missing === true && missingRows[1].ranked === false && missingRows[1].degraded === true,
+      "a Missing Source's row is flagged missing and unranked");
+check(reg.overviewRows([
+    overview("zai", { credsStatus: "expired", hasData: false }),
+    wins("claude", 10, 5)
+])[1].missing === true,
+      "an expired Source is Missing for ranking purposes");
+
+// Not installed produces no row, matching the auto-hide rule.
+check(rowIds(reg.overviewRows([
+    wins("claude", 10, 5),
+    overview("chatgpt", { credsStatus: "not_installed" }),
+    wins("zai", 20, 5)
+])) === "zai,claude",
+      "a Not installed Source produces no Overview row");
+
+// The floor: a comparison of one is noise.
+check(reg.overviewRows([]).length === 0, "overviewRows returns nothing for no Sources");
+check(reg.overviewRows([wins("claude", 10, 5)]).length === 0,
+      "fewer than two visible Sources yields no Overview");
+check(reg.overviewRows([
+    wins("claude", 10, 5),
+    overview("chatgpt", { credsStatus: "not_installed" })
+]).length === 0,
+      "one visible Source beside a Not installed one still yields no Overview");
+check(reg.overviewRows(null).length === 0, "overviewRows returns nothing for a non-array input");
 
 console.log(results.join("\n"));
 NODE
