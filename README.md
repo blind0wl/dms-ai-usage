@@ -29,7 +29,7 @@ It is a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by Ni
   - **ChatGPT accounts** — any account you add manually under **Custom ChatGPT Accounts** in the plugin settings
   - **opencode Go accounts** — any account you add manually under **Custom opencode Accounts** in the plugin settings
   - Profile/account overlay on each Source's daily activity chart: grey bars show total usage, colored bars show the selected profile/account's share
-- **Login action** when a Source's credentials are missing or expired — a card in that Source's popout starts `claude auth login --claudeai` (Claude) or a `codex` refresh (ChatGPT), then re-fetches on completion. API-key Sources (Z.ai, opencode Go) get a card pointing at the plugin settings instead
+- **Login action** when a Source's credentials are missing or expired — a card in that Source's popout starts `claude auth login --claudeai` (Claude) or a `codex` refresh (ChatGPT), then re-fetches on completion. API-key Sources (Z.ai, opencode Go) get a card pointing at the plugin settings instead, and every card carries a **Setup guide** link to that Source's section of this README
 - **Graceful degradation**: a Source with no binary installed hides entirely; one with a missing/expired token or a rejected API key stays visible with a login card instead of silently showing zeros. opencode Go's undocumented endpoint adds a third state. When the endpoint fails rather than rejecting the key, the tab says so without sending you to settings, drops the ring from the pill, and marks the last known values as stale instead of showing them as current
 - **Automatic subscription detection** via the Anthropic OAuth API (Claude) and the ChatGPT backend (Codex CLI's stored OAuth token)
 - **Dynamic model pricing** — new Anthropic model families are detected automatically, no code changes needed
@@ -42,12 +42,33 @@ It is a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by Ni
 - [DMS Shell](https://github.com/AvengeMedia/DankMaterialShell)
 - [jq](https://jqlang.github.io/jq/) (JSON processor)
 
-No Source is mandatory. Install and enable the ones you actually use:
+No Source is mandatory. Install and enable the ones you actually use. Each Source
+below is the setup guide its own **Setup guide** link opens in the popout, so head
+each section with the Source's name: the link's anchor is that heading's slug.
 
-- **Claude**: an active [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installation with OAuth credentials
-- **ChatGPT**: an active [Codex CLI](https://github.com/openai/codex) installation with OAuth credentials
-- **Z.ai**: a [GLM Coding Plan](https://z.ai) API key — auto-detected from the pi coding agent config (`~/.pi/agent/models.json`) or the `ZAI_API_KEY` environment variable, or added under **Custom Z.ai Accounts**
-- **opencode Go**: an opencode Go API key — auto-detected from the pi coding agent auth store (`~/.pi/agent/auth.json`), opencode's own credentials file (`~/.local/share/opencode/auth.json`), or the `OPENCODE_GO_KEY` / `OPENCODE_API_KEY` environment variables, or added under **Custom opencode Accounts**. The `opencode` binary itself is not required: this Source tracks a paid plan and works on a machine that only watches it
+### Claude
+
+An active [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installation with OAuth
+credentials.
+
+### ChatGPT
+
+An active [Codex CLI](https://github.com/openai/codex) installation with OAuth credentials.
+
+### Z.ai
+
+A [GLM Coding Plan](https://z.ai) API key — auto-detected from the pi coding agent config
+(`~/.pi/agent/models.json`) or the `ZAI_API_KEY` environment variable, or added under
+**Custom Z.ai Accounts**.
+
+### opencode Go
+
+An opencode Go API key — auto-detected from the pi coding agent auth store
+(`~/.pi/agent/auth.json`), opencode's own credentials file
+(`~/.local/share/opencode/auth.json`), or the `OPENCODE_GO_KEY` / `OPENCODE_API_KEY`
+environment variables, or added under **Custom opencode Accounts**. The `opencode` binary
+itself is not required: this Source tracks a paid plan and works on a machine that only
+watches it.
 
 A Source with no binary on `PATH` or no discoverable credential is detected automatically and hidden from the pill/popout; it doesn't need to be disabled by hand.
 

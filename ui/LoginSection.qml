@@ -5,9 +5,14 @@ import qs.Widgets
 // Credentials card, shown in place of silently sitting at 0% whenever a Source's
 // credentials are missing or expired.
 //
-// "cli" Sources offer a button that runs the CLI's own login flow.
-// "text" Sources only explain the fix, because there is no CLI to shell out to
-// and the fix is an API key in the plugin settings.
+// "cli" Sources offer a button that runs the CLI's own login flow. "text"
+// Sources can only explain the fix, because there is no CLI to shell out to and
+// the fix is an API key in the plugin settings.
+//
+// Both kinds also offer a Setup guide link into the plugin's README, because
+// prose that explains a fix is not the same as being able to reach it. The link
+// goes to the README section for this Source rather than the README root, so a
+// missing Z.ai key lands on the Z.ai instructions.
 StyledRect {
     id: root
 
@@ -18,6 +23,26 @@ StyledRect {
     readonly property var api: ctx ? ctx.api : null
     readonly property var login: ctx && ctx.descriptor ? ctx.descriptor.login : null
     readonly property bool inProgress: ctx ? ctx.loginInProgress === true : false
+
+    // The README section for this Source. A Source's section is headed by its
+    // name and the link's anchor is that heading's slug (pinned by
+    // tests/test-setup-links.sh), so no Source is named here.
+    //
+    // Qt.openUrlExternally is the plugin's first and only URL-opening path, so
+    // it was verified under the Quickshell runtime DMS loads this in before the
+    // link came to rely on it.
+    readonly property string readmeUrl: "https://github.com/blind0wl/dms-ai-usage"
+    readonly property string docsUrl: ctx && ctx.descriptor
+        ? readmeUrl + "#" + anchorFor(ctx.descriptor.labelKey)
+        : ""
+
+    // GitHub's heading slug: lowercase, keep word characters, hyphens and
+    // spaces, then spaces to hyphens. `labelKey` rather than the Source's
+    // translated label, because the README those headings live in is English,
+    // so the anchor is the same in every locale.
+    function anchorFor(name) {
+        return name.toLowerCase().replace(/[^\w\- ]+/g, "").replace(/ /g, "-");
+    }
 
     readonly property bool missing: source && source.credsStatus === "missing"
     readonly property bool expired: source && source.credsStatus === "expired"
@@ -69,6 +94,32 @@ StyledRect {
                 font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
+            }
+
+            // Shown whenever the Source has a README section, which is every
+            // Source: it supplements a cli login button rather than replacing
+            // it, and it is the only way out for an API-key Source.
+            Item {
+                id: setupLinkRow
+                // The label's own size, so the click area is the link and not
+                // the whole column width.
+                width: setupLink.implicitWidth
+                height: setupLink.implicitHeight
+                visible: root.docsUrl !== ""
+
+                StyledText {
+                    id: setupLink
+                    text: api.tr("Setup guide")
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.weight: Font.Medium
+                    color: Theme.primary
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Qt.openUrlExternally(root.docsUrl)
+                }
             }
         }
 

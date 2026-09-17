@@ -22,7 +22,15 @@ vm.createContext(sandbox);
 vm.runInContext(catalogSource, sandbox, { filename: catalogPath });
 
 const keys = new Set();
-for (const filename of ["AiUsageWidget.qml", "AiUsageSettings.qml"]) {
+// Every file that renders copy: the widget, the settings page, and the Section
+// components under ui/. A key only one Section uses is as untranslated as any
+// other when that Section is the one on screen.
+const rendered = ["AiUsageWidget.qml", "AiUsageSettings.qml"].concat(
+    fs.readdirSync(path.join(root, "ui"))
+        .filter((name) => name.endsWith(".qml"))
+        .map((name) => path.join("ui", name))
+);
+for (const filename of rendered) {
     const source = fs.readFileSync(path.join(root, filename), "utf8");
     const pattern = /(?:root\.)?tr\("([^"]+)"\)/g;
     let match;
