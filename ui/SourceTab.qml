@@ -36,6 +36,8 @@ Column {
             return modelsComponent;
         case "alltime":
             return alltimeComponent;
+        case "overview":
+            return overviewComponent;
         }
         return null;
     }
@@ -125,5 +127,10 @@ Column {
     Component {
         id: alltimeComponent
         AlltimeSection {}
+    }
+
+    Component {
+        id: overviewComponent
+        OverviewSection {}
     }
 }

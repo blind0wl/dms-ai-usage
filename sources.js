@@ -364,6 +364,20 @@ var SOURCES = [
     }
 ];
 
+// The Overview's tab entry. The Overview is not a Source: it has no provider, no
+// credentials and nothing of its own to fetch, so it is not in SOURCES and the
+// checks that pin a Descriptor's shape do not claim it is one (ADR 0003). It is
+// still a tab entry carrying a Section, so the popout's strip and SourceTab's
+// Section list are generated from one list rather than from a second,
+// hand-written path that could disagree with the first.
+var OVERVIEW_TAB = {
+    id: "overview",
+    labelKey: "Overview",
+    sections: [
+        { type: "overview" }
+    ]
+};
+
 function byId(id) {
     for (var i = 0; i < SOURCES.length; i++) {
         if (SOURCES[i].id === id)
@@ -494,7 +508,13 @@ function overviewRow(state) {
         // differently: a login affordance, or a dimmed stale bar.
         missing: missing,
         unavailable: unavailable,
-        degraded: missing || unavailable
+        degraded: missing || unavailable,
+        // The sign-in a Missing row mirrors from the Source tab's login card:
+        // the descriptor says whether the Source has a CLI flow to run or only a
+        // key to point at. Carried here so the row can be drawn by a repeater
+        // that knows nothing about descriptors.
+        loginKind: d && d.login ? d.login.kind : null,
+        loginBodyKey: d && d.login && d.login.bodyKey ? d.login.bodyKey : null
     };
 }
 
