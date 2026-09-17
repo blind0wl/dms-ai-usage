@@ -509,7 +509,7 @@ function overviewRow(state) {
         missing: missing,
         unavailable: unavailable,
         degraded: missing || unavailable,
-        // The sign-in a Missing row mirrors from the Source tab's login card:
+        // The sign-in a Missing row mirrors from the Source tab's Login Section:
         // the descriptor says whether the Source has a CLI flow to run or only a
         // key to point at. Carried here so the row can be drawn by a repeater
         // that knows nothing about descriptors.

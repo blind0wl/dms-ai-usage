@@ -127,11 +127,18 @@ check(widget.indexOf('"overview"') < 0,
 check(/model: root\.popoutTabs/.test(widget), "the tab strip is generated from the popout's tab list");
 check(/color: root\.activeTabId === modelData\.id/.test(widget), "the strip marks the selected tab");
 check(/onClicked: root\.popoutTabId = modelData\.id/.test(widget), "a press on a strip entry selects it");
-check(/descriptor: root\.activeTab/.test(widget), "the body renders the selected tab entry, Overview included");
+check(/tab: root\.activeTab/.test(widget), "the body renders the selected tab entry, Overview included");
 check(/ctx: root\.activeTab \? root\.contextFor\(root\.activeTab\.id\) : null/.test(widget),
       "the body builds the selected tab's context");
-check(/if \(id === Sources\.OVERVIEW_TAB\.id\)/.test(widget) && /rows: root\.overviewRows/.test(widget),
+const overviewContext = widget.match(/if \(id === Sources\.OVERVIEW_TAB\.id\) \{([\s\S]*?)\n        \}/);
+check(!!overviewContext && /rows: root\.overviewRows/.test(overviewContext[1]),
       "the Overview's context is the ranking rather than a Source's state");
+// CONTEXT.md keeps Descriptor meaning "a Source's entry in the registry", so the
+// Overview must not travel under that name.
+check(!!overviewContext && overviewContext[1].indexOf("descriptor") < 0,
+      "the Overview's context is not handed over as a Descriptor");
+check(/property var tab: null/.test(tab) && tab.indexOf("property var descriptor") < 0,
+      "the tab renderer takes a tab entry, not a Descriptor");
 check(/popoutWidth: 380/.test(widget) && /popoutHeight: 740/.test(widget),
       "the popout stays 380 x 740");
 check(widget.indexOf("popoutSourceTab") < 0, "no stale Source-only tab property is left behind");
@@ -175,9 +182,9 @@ check(/modelData\.stale \? 0\.5 : 1/.test(section), "an Unavailable row's bar is
 check(/api\.selectTab\(row\.sourceId\)/.test(section), "a press on a row switches to that Source's tab");
 check(/api\.tr\("Resets in"\)/.test(section) && /windowLabelForLength/.test(section),
       "a row names its Tightest Window and when it resets");
-check(/api\.progressColor\(row\.modelData\.util\)/.test(section),
+check(/api\.progressColor\(modelData\.util\)/.test(section),
       "the row's bar and percentage use the Ring's colour rule");
-check(/Math\.round\(row\.modelData\.util\) \+ "%"/.test(section), "a row shows its Utilisation as a percentage");
+check(/Math\.round\(modelData\.util\) \+ "%"/.test(section), "a row shows its Utilisation as a percentage");
 check(/showsReading: modelData\.ranked/.test(section) && /visible: row\.showsReading/.test(section),
       "an unranked row shows no percentage, no reset line and no bar value");
 check(/Theme\.surfaceVariant/.test(section), "the bar draws a track behind the fill");

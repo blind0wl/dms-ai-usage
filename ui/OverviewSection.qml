@@ -12,9 +12,9 @@ import qs.Widgets
 // Source's tab, where the Source's own Sections explain why it is there.
 //
 // The degraded rows mirror the rules the Source tab already follows. A Missing
-// Source offers the sign-in its login card offers, in place of a bar it has no
-// reading for. An Unavailable Source keeps its last known reading with the bar
-// dimmed and marked stale, because a stale reading is still a reading.
+// Source offers the sign-in its Login Section offers, in place of a bar it has
+// no reading for. An Unavailable Source keeps its last known reading with the
+// bar dimmed and marked stale, because a stale reading is still a reading.
 Column {
     id: root
 
@@ -38,7 +38,7 @@ Column {
         var label = row.windowLabelKey
             ? root.api.tr(row.windowLabelKey)
             : root.api.windowLabelForLength(row.windowSeconds, row.window);
-        var countdown = root.api.countdownFromReset(row.resetMs);
+        var countdown = root.api.formatCountdown(row.resetMs);
         if (!countdown)
             return label;
         return label + " · " + root.api.tr("Resets in") + " " + countdown;
@@ -54,14 +54,14 @@ Column {
 
             readonly property string sourceId: modelData.id
             readonly property bool missing: modelData.missing
+            // The same sign-in the Login Section offers: a CLI Source gets its
+            // button, a key-based one the Section's pointer to the settings.
+            readonly property bool cliLogin: missing && modelData.loginKind === "cli"
+            readonly property bool loggingIn: root.api.loginInProgress(sourceId)
             // Only a ranked row holds a reading it may show. A Missing row
             // never ranks, because the credential that produced its reading is
             // gone, while an Unavailable one still ranks on its last known value.
             readonly property bool showsReading: modelData.ranked
-            // The same sign-in the login card offers: a CLI Source gets its
-            // button, a key-based one the card's pointer to the settings.
-            readonly property bool cliLogin: modelData.missing && modelData.loginKind === "cli"
-            readonly property bool loggingIn: root.api.loginInProgress(sourceId)
             // Clamped like the Ring's arc, so an over-quota reading cannot draw
             // a bar wider than its track.
             readonly property real fraction: Math.max(0, Math.min(modelData.util / 100, 1))
@@ -88,7 +88,7 @@ Column {
 
                     StyledText {
                         width: Math.max(0, parent.width - usage.width - parent.spacing)
-                        text: root.api.tr(row.modelData.labelKey)
+                        text: root.api.tr(modelData.labelKey)
                         font.pixelSize: Theme.fontSizeMedium
                         font.weight: Font.Medium
                         color: Theme.surfaceText
@@ -103,14 +103,14 @@ Column {
                         // "--" is the Pill's own word for a Source with no
                         // reading, rather than a zero the Source never reported.
                         StyledText {
-                            text: row.showsReading ? Math.round(row.modelData.util) + "%" : "--"
+                            text: row.showsReading ? Math.round(modelData.util) + "%" : "--"
                             font.pixelSize: Theme.fontSizeMedium
                             font.weight: Font.Medium
-                            color: row.showsReading ? root.api.progressColor(row.modelData.util) : Theme.surfaceVariantText
+                            color: row.showsReading ? root.api.progressColor(modelData.util) : Theme.surfaceVariantText
                         }
 
                         StyledText {
-                            visible: row.modelData.stale
+                            visible: modelData.stale
                             text: root.api.tr("stale")
                             font.pixelSize: Theme.fontSizeSmall
                             color: Theme.surfaceVariantText
@@ -127,13 +127,13 @@ Column {
                     height: 6
                     radius: 3
                     color: Theme.surfaceVariant
-                    opacity: row.modelData.stale ? 0.5 : 1
+                    opacity: modelData.stale ? 0.5 : 1
 
                     Rectangle {
                         width: parent.width * row.fraction
                         height: parent.height
                         radius: parent.radius
-                        color: root.api.progressColor(row.modelData.util)
+                        color: root.api.progressColor(modelData.util)
                     }
                 }
 
@@ -165,12 +165,12 @@ Column {
                     }
                 }
 
-                // A key-based Source has no flow to run, so it gets the login
-                // card's explanation instead of a button.
+                // A key-based Source has no flow to run, so it gets the Login
+                // Section's explanation instead of a button.
                 StyledText {
                     width: parent.width
                     visible: row.missing && !row.cliLogin
-                    text: row.modelData.loginBodyKey ? root.api.tr(row.modelData.loginBodyKey) : ""
+                    text: modelData.loginBodyKey ? root.api.tr(modelData.loginBodyKey) : ""
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
@@ -179,7 +179,7 @@ Column {
                 StyledText {
                     width: parent.width
                     visible: row.showsReading
-                    text: root.windowLine(row.modelData)
+                    text: root.windowLine(modelData)
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap

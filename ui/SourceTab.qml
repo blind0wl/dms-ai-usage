@@ -1,7 +1,9 @@
 import QtQuick
 import qs.Common
 
-// Renders one Source's popout tab from its descriptor's Section list.
+// Renders one Popout tab's Section list. A Source's tab and the Overview's tab
+// are both just an ordered list of Sections, so this stays the only renderer
+// (ADR 0003).
 //
 // Each Section component takes a `section` (its own descriptor entry) and a
 // shared `ctx` (the resolved Source state plus the formatters and actions it
@@ -10,7 +12,7 @@ import qs.Common
 Column {
     id: root
 
-    property var descriptor: null
+    property var tab: null
     property var ctx: null
 
     width: parent.width
@@ -43,7 +45,7 @@ Column {
     }
 
     Repeater {
-        model: root.descriptor ? root.descriptor.sections : []
+        model: root.tab ? root.tab.sections : []
 
         delegate: Loader {
             id: sectionLoader

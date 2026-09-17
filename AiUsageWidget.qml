@@ -347,8 +347,6 @@ PluginComponent {
     // (ChatGPT, Z.ai) falls back to the length itself, and a Window whose length
     // has not arrived yet falls back to its slot's generic name.
     function windowLabelForLength(seconds, which) {
-        if (which !== "primary" && which !== "secondary")
-            return "";
         var generic = which === "primary" ? "Primary Window" : "Secondary Window";
         return root.formatWindowLabel(seconds, generic);
     }
@@ -690,7 +688,7 @@ PluginComponent {
             return root.windowLabelForLength(seconds, which);
         }
 
-        function countdownFromReset(resetMs) {
+        function formatCountdown(resetMs) {
             return root.formatCountdown(resetMs);
         }
 
@@ -723,12 +721,11 @@ PluginComponent {
 
     // Everything a Section needs beyond its own descriptor entry. The Overview's
     // tab is not a Source, so its Sections read the ranking instead of one
-    // Source's state.
+    // Source's state, and no non-Source travels under the Descriptor name.
     function contextFor(id) {
         if (id === Sources.OVERVIEW_TAB.id) {
             return {
                 api: root.api,
-                descriptor: Sources.OVERVIEW_TAB,
                 rows: root.overviewRows
             };
         }
@@ -746,7 +743,7 @@ PluginComponent {
             selected: sel,
             accountSelected: sel !== "all",
             accountName: sel,
-            loginInProgress: root.loginInProgress[id] === true
+            loginInProgress: root.api.loginInProgress(id)
         };
     }
 
@@ -906,9 +903,11 @@ PluginComponent {
 
                             StyledText {
                                 anchors.centerIn: parent
-                                // The Overview is one tab more than upstream's
-                                // strip carried, so the longest Source name has to
-                                // give way rather than spill over its neighbours.
+                                // A fifth tab in a 380px strip, so the longest
+                                // Source name elides rather than spilling over
+                                // its neighbours. NoWrap is what lets the styling
+                                // base's ElideRight apply: Qt ignores elide on
+                                // wrapped text.
                                 width: parent.width - Theme.spacingS
                                 text: root.tr(modelData.labelKey)
                                 horizontalAlignment: Text.AlignHCenter
@@ -928,7 +927,7 @@ PluginComponent {
                 }
 
                 SourceTab {
-                    descriptor: root.activeTab
+                    tab: root.activeTab
                     ctx: root.activeTab ? root.contextFor(root.activeTab.id) : null
                 }
 
