@@ -261,12 +261,14 @@ check(dropped("default", "default:CODEX_HOME", rows("default")) === JSON.stringi
       "unregisteredAccounts reports a Custom Account the Script registered under a detected origin");
 check(dropped("work,default", "work:custom,default:~/.codex", rows("work")) === "[]",
       "unregisteredAccounts reports nothing for a Custom Account the Script kept");
+check(dropped("work,default", "work:custom,default:~/.codex", rows("work", "default")) === JSON.stringify(["default"]),
+      "unregisteredAccounts marks the shadowed row and leaves the kept one alone");
 check(dropped("kept", "kept:custom", rows("kept", "ghost")) === JSON.stringify(["ghost"]),
       "unregisteredAccounts reports a Custom Account the Script did not list at all");
 check(dropped("work", "work:custom", rows("work", "other")) === JSON.stringify(["other"]),
       "unregisteredAccounts keeps the settings list's own order");
-check(dropped("", "", rows("work")) === JSON.stringify(["work"]),
-      "unregisteredAccounts reports every Custom Account when the Script listed none");
+check(dropped("", "", rows("work")) === "[]",
+      "unregisteredAccounts withholds a verdict when the Script reported no Account at all, as while a listing is in flight");
 check(dropped("work", "work:custom", []) === "[]", "unregisteredAccounts reports nothing for an empty settings list");
 check(dropped("work", "work:custom", null) === "[]", "unregisteredAccounts reports nothing for a missing settings list");
 check(dropped("work", "work:custom", [{ key: "k1" }]) === "[]",

@@ -810,6 +810,14 @@ mkdir -p "$ENV29B/manual/work/projects/proj1"
 LIST29C=$(run_script "$ENV29B" --list-accounts "manual=$ENV29B/manual/work")
 assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles,manual:custom" "a Custom Profile reports the Custom Account list as its origin"
 
+# Without the claude CLI, the not-installed answer is what the listing mode
+# returns, so it carries the origins key too: a Source the Script cannot read
+# Profiles for must not look like one it read and found empty.
+ENV29D=$(setup_env "test29d")
+LIST29D=$(HOME="$ENV29D" PATH="/usr/bin:/bin" bash "$SCRIPT" --list-accounts 2>/dev/null)
+assert_eq "$(echo "$LIST29D" | grep "^PROFILES=" | cut -d= -f2)" "" "an uninstalled Source lists no Profile"
+assert_eq "$(echo "$LIST29D" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
+
 # ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

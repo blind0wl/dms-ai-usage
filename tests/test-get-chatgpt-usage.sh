@@ -432,6 +432,14 @@ LIST16C=$(run_script "$ENV16" --list-accounts "work=$ENV16/work")
 assert_eq "$(echo "$LIST16C" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "listing mode lists Custom Accounts beside detected ones"
 assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME,work:custom" "listing mode reports Custom and detected origins side by side"
 
+# Without codex, the not-installed answer is what the listing mode returns, so it
+# carries the origins key too: a Source the Script cannot read Accounts for must
+# not look like one it read and found empty.
+ENV16D=$(setup_env "test16d")
+LIST16D=$(HOME="$ENV16D" CODEX_HOME="$ENV16D/.codex" PATH="$NOCODEX_PATH" bash "$SCRIPT" --list-accounts 2>/dev/null)
+assert_eq "$(echo "$LIST16D" | grep "^ACCOUNTS=" | cut -d= -f2)" "" "an uninstalled Source lists no Account"
+assert_eq "$(echo "$LIST16D" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
+
 # ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

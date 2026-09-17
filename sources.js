@@ -141,8 +141,16 @@ function detectedAccounts(names, origins) {
 //
 // `list` is the Custom Account list from the plugin settings, the form the
 // editor holds it in.
+//
+// A Script that reports no Account at all resolves no clash, so it is given no
+// verdict to hand out: that is an uninstalled Source, a listing still in flight,
+// or a Script that failed. Blaming the user's rows for a Source that never
+// registered an Account would be the same lie as calling a failed listing an
+// empty one.
 function unregisteredAccounts(names, origins, list) {
     var listed = splitList(names);
+    if (listed.length === 0)
+        return [];
     var byName = originsByName(origins);
     var out = [];
     for (var i = 0; Array.isArray(list) && i < list.length; i++) {

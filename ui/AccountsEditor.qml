@@ -38,7 +38,9 @@ Column {
     readonly property var detected: Sources.detectedAccounts(root.listedAccounts, root.listedOrigins)
     // The Custom Accounts the Script did not register: another Account already
     // holds their name or their value, so the selector cannot offer them and
-    // their row here does nothing. The listing is what says which.
+    // their row here does nothing. The listing is the only thing that can say
+    // which rows those are, so it says nothing until it has answered with an
+    // Account: an uninstalled Source leaves every row unmarked.
     readonly property var unregistered: Sources.unregisteredAccounts(root.listedAccounts, root.listedOrigins, root.items)
 
     readonly property var acct: descriptor ? descriptor.accounts : null
