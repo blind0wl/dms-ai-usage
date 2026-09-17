@@ -35,9 +35,9 @@ An Account the user added to a Source's setting list. The plugin owns it: the
 settings page can edit it, and the Script is handed it as an argument instead of
 finding it itself. A Script resolves a clash between two Accounts - a Custom one
 and a Detected one, or two Custom ones - by keeping the first registration of a
-name or of a value, and reports the Origin it kept. A row that lost that clash is
-not registered: the selector cannot offer it, and the settings page marks it not
-in use.
+name or of a value, and reports the Origin it kept. The Account that lost stays
+listed: a Custom one as not in use, a Detected one as overridden, because either
+way the Source is authenticating with something the user did not expect.
 _Avoid_: manual account, user account, settings account
 
 **Origin**:

@@ -34,6 +34,21 @@ PluginSettings {
         sourceOrderLoaded = true;
     }
 
+    // DMS builds this page before it hands it its pluginService, so the read
+    // above came back as "never configured" on the first open: every Source would
+    // show as enabled, and the next toggle would save that as the user's order.
+    // Re-read once the store is readable, and when the plugin's data changes.
+    onPluginServiceChanged: root.loadSourceOrder()
+
+    Connections {
+        target: root.pluginService
+
+        function onPluginDataChanged(changedPluginId) {
+            if (changedPluginId === root.pluginId)
+                root.loadSourceOrder();
+        }
+    }
+
     // `sources` is the enabled order. `sourcesKnown` is every registry id the
     // user has been shown, and is what lets a disabled Source stay disabled
     // while a Source added by an update still appears on its own.

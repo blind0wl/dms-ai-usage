@@ -793,7 +793,7 @@ ENV29=$(setup_env "test29")
 LIST29=$(run_script "$ENV29" --list-accounts)
 assert_eq "$(echo "$LIST29" | grep "^PROFILES=" | cut -d= -f2)" "default" "listing mode lists the detected Profile"
 assert_eq "$(echo "$LIST29" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude" "listing mode names the Claude config directory as the origin"
-assert_eq "$(echo "$LIST29" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
+assert_eq "$(echo "$LIST29" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
 
 # Each detector names its own directory, so the settings page can say which one
 # found the Profile rather than repeating the descriptor's prose.
@@ -809,6 +809,11 @@ assert_eq "$(echo "$LIST29B" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default
 mkdir -p "$ENV29B/manual/work/projects/proj1"
 LIST29C=$(run_script "$ENV29B" --list-accounts "manual=$ENV29B/manual/work")
 assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles,manual:custom" "a Custom Profile reports the Custom Account list as its origin"
+
+mkdir -p "$ENV29B/elsewhere/work/projects"
+LIST29E=$(run_script "$ENV29B" --list-accounts "default=$ENV29B/elsewhere/work")
+assert_eq "$(echo "$LIST29E" | grep "^PROFILES=" | cut -d= -f2)" "default,work,ranqia" "the detected Profile keeps the name"
+assert_eq "$(echo "$LIST29E" | grep "^PROFILE_SHADOWED=" | cut -d= -f2)" "default:custom" "the refused Custom registration is reported with its origin"
 
 # Without the claude CLI, the not-installed answer is what the listing mode
 # returns, so it carries the origins key too: a Source the Script cannot read

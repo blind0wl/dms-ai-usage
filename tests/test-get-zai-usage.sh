@@ -307,7 +307,7 @@ write_pi_key "$H10" k1
 LIST10=$(run_script "$H10" --list-accounts)
 assert_eq "$(val "$LIST10" ACCOUNTS)" "default" "listing mode lists the detected Account"
 assert_eq "$(val "$LIST10" ACCOUNT_ORIGINS)" "default:~/.pi/agent/models.json" "listing mode names the pi config key as the origin"
-assert_eq "$(echo "$LIST10" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
+assert_eq "$(echo "$LIST10" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
 
 # A Custom Account is reported as coming from the Custom Account list. It keeps
 # its name even where that name shadows a detected Account, because the Script's
@@ -326,6 +326,25 @@ assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "work:custom,default:~/.pi/agent/mo
 H13=$(new_home home13)
 LIST13=$(ZAI_API_KEY_OVERRIDE=k1 run_script "$H13" --list-accounts)
 assert_eq "$(val "$LIST13" ACCOUNT_ORIGINS)" "default:ZAI_API_KEY" "the environment variable is named as the origin"
+
+# A Custom Account can take a detected one's place, and the listing says so: the
+# refused registration arrives with the origin it came from, which is how the
+# settings page shows the detected key as overridden rather than leaving the user
+# to meet it as a rejected key.
+H15=$(new_home home15)
+write_pi_key "$H15" k1
+LIST15=$(run_script "$H15" --list-accounts "default=k2")
+assert_eq "$(val "$LIST15" ACCOUNTS)" "default" "the Custom Account is the one registered"
+assert_eq "$(val "$LIST15" ACCOUNT_ORIGINS)" "default:custom" "the Custom Account is reported as coming from the Custom list"
+assert_eq "$(val "$LIST15" ACCOUNT_SHADOWED)" "default:~/.pi/agent/models.json" "the detected key the Custom Account took the name of is reported as refused"
+
+# The clash can be the value rather than the name: the Script keeps one key once.
+LIST16=$(run_script "$H15" --list-accounts "work=k1")
+assert_eq "$(val "$LIST16" ACCOUNTS)" "work" "a Custom Account whose key is the detected one's is registered"
+assert_eq "$(val "$LIST16" ACCOUNT_SHADOWED)" "default:~/.pi/agent/models.json" "the detected key it took the value of is reported as refused"
+
+# No clash, no report.
+assert_eq "$(val "$LIST12" ACCOUNT_SHADOWED)" "" "a Custom Account beside the detected key refuses nothing"
 
 H14=$(new_home home14)
 LIST14=$(run_script "$H14" --list-accounts)

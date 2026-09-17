@@ -325,7 +325,7 @@ write_pi_key "$H9" k1
 LIST9=$(run_script "$H9" --list-accounts)
 assert_eq "$(val "$LIST9" ACCOUNTS)" "default" "listing mode lists the detected Account"
 assert_eq "$(val "$LIST9" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "listing mode names the pi auth store as the origin"
-assert_eq "$(echo "$LIST9" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
+assert_eq "$(echo "$LIST9" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
 
 H10=$(new_home home10)
 write_opencode_key "$H10" k1
@@ -346,6 +346,7 @@ assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json,work
 H13=$(new_home home13)
 write_pi_key "$H13" k1
 LIST13=$(run_script "$H13" --list-accounts "default=k2")
+assert_eq "$(val "$LIST13" ACCOUNT_SHADOWED)" "default:custom" "the refused Custom registration is reported with its origin, because here detection registers first"
 assert_eq "$(val "$LIST13" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "a detected name that wins against a Custom one keeps its origin"
 
 # ============================================================

@@ -470,6 +470,7 @@ PROFILE_DIRS=()
 PROFILE_NAMES=()
 PROFILE_CREDS=()  # credentials file per profile
 PROFILE_ORIGINS=()
+PROFILE_SHADOWED=()
 
 # add_profile <name> <claude_config_dir> <origin>
 # First registration of a name wins. The origin is where the directory came
@@ -497,12 +498,12 @@ add_profile() {
 
     [ -d "${dir}/projects" ] || return 0
 
-    local existing existing_dir
-    for existing in "${PROFILE_NAMES[@]}"; do
-        [ "$existing" = "$name" ] && return 0
-    done
-    for existing_dir in "${PROFILE_DIRS[@]}"; do
-        [ "$existing_dir" -ef "${dir}/projects" ] && return 0
+    local idx
+    for idx in "${!PROFILE_NAMES[@]}"; do
+        if [ "${PROFILE_NAMES[$idx]}" = "$name" ] || [ "${PROFILE_DIRS[$idx]}" -ef "${dir}/projects" ]; then
+            PROFILE_SHADOWED+=("${name}:${origin}")
+            return 0
+        fi
     done
 
     PROFILE_DIRS+=("${dir}/projects")
@@ -517,6 +518,18 @@ profile_origins() {
     local out="" idx
     for idx in "${!PROFILE_NAMES[@]}"; do
         out="${out:+${out},}${PROFILE_NAMES[$idx]}:${PROFILE_ORIGINS[$idx]}"
+    done
+    printf '%s' "$out"
+}
+
+# profile_shadowed -> "name:origin,name:origin" for the registrations the list
+# refused because something already held their name or their directory. The
+# settings page is how the user learns that a Custom Account took a detected
+# one's place, which is otherwise only visible as an API rejection.
+profile_shadowed() {
+    local out="" idx
+    for idx in "${!PROFILE_SHADOWED[@]}"; do
+        out="${out:+${out},}${PROFILE_SHADOWED[$idx]}"
     done
     printf '%s' "$out"
 }
@@ -568,6 +581,7 @@ done
 if [ "$LIST_ACCOUNTS" -eq 1 ]; then
     printf 'PROFILES=%s\n' "$(IFS=,; echo "${PROFILE_NAMES[*]}")"
     printf 'PROFILE_ORIGINS=%s\n' "$(profile_origins)"
+    printf 'PROFILE_SHADOWED=%s\n' "$(profile_shadowed)"
     exit 0
 fi
 

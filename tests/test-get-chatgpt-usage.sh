@@ -420,7 +420,7 @@ write_auth "$ENV16/.codex" 9999999999 "$(date -Iseconds)"
 LIST16=$(run_script "$ENV16" --list-accounts)
 assert_eq "$(echo "$LIST16" | grep "^ACCOUNTS=" | cut -d= -f2)" "default" "listing mode lists the detected Account"
 assert_eq "$(echo "$LIST16" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME" "listing mode names CODEX_HOME as the origin when it decided the directory"
-assert_eq "$(echo "$LIST16" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
+assert_eq "$(echo "$LIST16" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
 
 LIST16B=$(HOME="$ENV16" CODEX_HOME='' PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" --list-accounts 2>/dev/null)
 assert_eq "$(echo "$LIST16B" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:~/.codex" "listing mode names the conventional path when no CODEX_HOME is set"
@@ -431,6 +431,14 @@ assert_eq "$(echo "$LIST16B" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default
 LIST16C=$(run_script "$ENV16" --list-accounts "work=$ENV16/work")
 assert_eq "$(echo "$LIST16C" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "listing mode lists Custom Accounts beside detected ones"
 assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME,work:custom" "listing mode reports Custom and detected origins side by side"
+assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_SHADOWED=" | cut -d= -f2)" "" "no registration is refused when the names differ"
+
+# Here detection runs first, so a Custom Account that takes the Codex home's name
+# is the one refused. It is still reported, with the origin it came from, so the
+# settings page can mark the row the selector does not offer.
+LIST16E=$(run_script "$ENV16" --list-accounts "default=$ENV16/elsewhere")
+assert_eq "$(echo "$LIST16E" | grep "^ACCOUNTS=" | cut -d= -f2)" "default" "the detected Account keeps the name"
+assert_eq "$(echo "$LIST16E" | grep "^ACCOUNT_SHADOWED=" | cut -d= -f2)" "default:custom" "the refused Custom registration is reported with its origin"
 
 # Without codex, the not-installed answer is what the listing mode returns, so it
 # carries the origins key too: a Source the Script cannot read Accounts for must

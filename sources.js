@@ -105,19 +105,26 @@ function accountArgs(descriptor, list) {
 // The Accounts a Source's Script reports from outside the Custom Account list,
 // in the order the Script reported them, each with the place it was detected.
 // These are the Accounts the Popout's selector offers and the settings editor
-// cannot edit.
+// cannot edit - plus, marked `overridden`, the detected registrations the Script
+// refused because a Custom Account had already taken their name or their value.
 //
-// `names` is the Script's Account list (the descriptor's listKey) and `origins`
-// its "name:origin" pairs (its originsKey), both comma-separated as the wire has
-// them. An Account the Custom Account list provided is reported with the
-// CUSTOM_ORIGIN tag and dropped: it is the editor's own row already, under
-// whichever name it won.
+// `names` is the Script's Account list (the descriptor's listKey), `origins` its
+// "name:origin" pairs (its originsKey) and `shadowed` the registrations it
+// refused (its shadowedKey), all comma-separated as the wire has them. An Account
+// the Custom Account list provided is reported with the CUSTOM_ORIGIN tag and
+// dropped from the first list: it is the editor's own row already.
+//
+// An overridden registration matters as much as a live one. The Script keeps the
+// first registration of a name or of a value, so a Custom Account that takes a
+// detected one's place changes which credential the Source authenticates with,
+// and the user has to be able to see that rather than meeting it as a rejected
+// key.
 //
 // An Account the Script lists without an origin is still reported, with an empty
 // origin. It is detected - the Custom Account list did not provide it - and
 // dropping it would put the selector and the editor back where they started,
 // which is worse than admitting the Script did not say where it found it.
-function detectedAccounts(names, origins) {
+function detectedAccounts(names, origins, shadowed) {
     var listed = splitList(names);
     var byName = originsByName(origins);
 
@@ -127,7 +134,24 @@ function detectedAccounts(names, origins) {
         var known = Object.prototype.hasOwnProperty.call(byName, name);
         if (known && byName[name] === CUSTOM_ORIGIN)
             continue;
-        out.push({ name: name, origin: known ? byName[name] : "" });
+        out.push({ name: name, origin: known ? byName[name] : "", overridden: false });
+    }
+
+    var pairs = splitList(shadowed);
+    for (var j = 0; j < pairs.length; j++) {
+        var at = pairs[j].indexOf(":");
+        if (at < 0)
+            continue;
+        var lost = pairs[j].substring(0, at);
+        var lostOrigin = pairs[j].substring(at + 1);
+        // A Custom Account the Script refused is the editor's own row's business,
+        // and a detected Account still registered under that name was not lost.
+        if (lostOrigin === CUSTOM_ORIGIN)
+            continue;
+        var live = Object.prototype.hasOwnProperty.call(byName, lost);
+        if (live && byName[lost] !== CUSTOM_ORIGIN)
+            continue;
+        out.push({ name: lost, origin: lostOrigin, overridden: true });
     }
     return out;
 }
@@ -254,6 +278,13 @@ var SOURCES = [
             // Where each Profile was found, one "name:origin" pair per entry.
             // The settings editor reads it to show what it does not own.
             originsKey: "PROFILE_ORIGINS",
+            // The registrations the Script refused, one "name:origin" pair per
+            // entry. A Custom Profile that took a detected one's place is here,
+            // and the editor shows the detected one as overridden by it.
+            shadowedKey: "PROFILE_SHADOWED",
+            // What the editor calls that state on Claude's page, where an
+            // Account is a Profile throughout the copy.
+            overriddenKey: "overridden by your Custom Profile",
             // The heading the settings editor gives the read-only list of what
             // the Script found. It follows the Source's own word for an
             // Account, so Claude's page says Profiles throughout.
@@ -344,6 +375,8 @@ var SOURCES = [
             settingKey: "customChatgptAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
+            shadowedKey: "ACCOUNT_SHADOWED",
+            overriddenKey: "overridden by your Custom Account",
             detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "path",
@@ -425,6 +458,8 @@ var SOURCES = [
             settingKey: "customOpencodeAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
+            shadowedKey: "ACCOUNT_SHADOWED",
+            overriddenKey: "overridden by your Custom Account",
             detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "key",
@@ -488,6 +523,8 @@ var SOURCES = [
             settingKey: "customZaiAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
+            shadowedKey: "ACCOUNT_SHADOWED",
+            overriddenKey: "overridden by your Custom Account",
             detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "key",

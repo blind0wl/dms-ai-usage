@@ -141,8 +141,15 @@ for (const d of reg.SOURCES) {
         // copy and Account for everything else.
         check(typeof d.accounts.detectedTitleKey === "string" && tr[d.accounts.detectedTitleKey] !== undefined,
               `${tag} account declares a translated heading for the detected list`);
+        // The editor marks a detected Account a Custom one replaced from the
+        // listing's own report, so the key it arrives under and the copy that
+        // describes it are descriptor data too.
+        check(typeof d.accounts.shadowedKey === "string" && d.accounts.shadowedKey.length > 0,
+              `${tag} account declares the output key its refused registrations arrive under`);
+        check(typeof d.accounts.overriddenKey === "string" && tr[d.accounts.overriddenKey] !== undefined,
+              `${tag} account declares translated copy for a detected Account a Custom one replaced`);
         const script = fs.readFileSync(path.join(root, d.script), "utf8");
-        for (const key of [d.accounts.listKey, d.accounts.originsKey])
+        for (const key of [d.accounts.listKey, d.accounts.originsKey, d.accounts.shadowedKey])
             check(script.includes(`${key}=`), `${tag} script ${d.script} reports ${key}`);
         // The editor drops an Account the Custom Account list provided by its
         // exact origin tag, so a Script that spelled it differently would look
@@ -236,26 +243,52 @@ for (const name of ["AccountsSection", "LoginSection", "StatusSection", "Windows
 // plugin settings: those are the ones the Popout's selector offers and the
 // editor cannot edit. The Script's own listing mode says which they are, so the
 // two surfaces cannot disagree about detection.
-const listed = (names, origins) => JSON.stringify(reg.detectedAccounts(names, origins));
-check(listed("work,default", "work:custom,default:~/.pi/agent/models.json") === JSON.stringify([{ name: "default", origin: "~/.pi/agent/models.json" }]),
+//
+// The same listing reports the registrations the Script refused, because the
+// Script keeps the first registration of a name or of a value. A refused detected
+// registration is the serious half: the Source is now authenticating with a
+// Custom Account instead of the key on this machine, and the editor has to say so
+// rather than let the user meet it as a rejected key.
+const listed = (...args) => JSON.stringify(reg.detectedAccounts(...args));
+const live = (name, origin) => ({ name: name, origin: origin, overridden: false });
+const lost = (name, origin) => ({ name: name, origin: origin, overridden: true });
+check(listed("work,default", "work:custom,default:~/.pi/agent/models.json") === JSON.stringify([live("default", "~/.pi/agent/models.json")]),
       "detectedAccounts drops the Accounts the settings list provided");
-check(listed("work,default", "work:custom,default:ZAI_API_KEY") === JSON.stringify([{ name: "default", origin: "ZAI_API_KEY" }]),
+check(listed("work,default", "work:custom,default:ZAI_API_KEY") === JSON.stringify([live("default", "ZAI_API_KEY")]),
       "detectedAccounts carries the origin the Script named");
-check(listed("a,b", "a:~/.claude,b:~/.ccs/instances") === JSON.stringify([{ name: "a", origin: "~/.claude" }, { name: "b", origin: "~/.ccs/instances" }]),
+check(listed("a,b", "a:~/.claude,b:~/.ccs/instances") === JSON.stringify([live("a", "~/.claude"), live("b", "~/.ccs/instances")]),
       "detectedAccounts keeps the Script's own Account order");
-check(listed("default", "default:") === JSON.stringify([{ name: "default", origin: "" }]),
+check(listed("default", "default:") === JSON.stringify([live("default", "")]),
       "detectedAccounts reports an Account with no origin rather than hiding it");
-check(listed("default", "") === JSON.stringify([{ name: "default", origin: "" }]),
+check(listed("default", "") === JSON.stringify([live("default", "")]),
       "detectedAccounts reports an Account whose Script named no origin at all");
 check(listed("", "") === "[]", "detectedAccounts reports nothing for an empty Account list");
 check(listed("work", "work:custom") === "[]", "detectedAccounts reports nothing when every Account came from the settings list");
 // An origin is a path or a variable name and may itself carry a colon; the name
 // is what the pair is split on, and a name never carries one.
-check(listed("work", "work:~/.ccs/instances:one") === JSON.stringify([{ name: "work", origin: "~/.ccs/instances:one" }]),
+check(listed("work", "work:~/.ccs/instances:one") === JSON.stringify([live("work", "~/.ccs/instances:one")]),
       "detectedAccounts splits a name:origin pair at the first colon");
 // A Script that reports an origin for a name it does not list adds nothing.
 check(listed("", "ghost:~/.claude") === "[]", "detectedAccounts only reports Accounts the Script listed");
 check(listed(null, null) === "[]", "detectedAccounts reports nothing for a missing listing");
+
+// A detected Account the Script refused because a Custom Account took its name
+// or its value: still reported, marked, and in the Script's own order after the
+// Accounts that are live.
+check(listed("default", "default:custom", "default:~/.pi/agent/models.json") === JSON.stringify([lost("default", "~/.pi/agent/models.json")]),
+      "detectedAccounts reports a detected registration a Custom Account took the name of");
+check(listed("work", "work:custom", "default:~/.pi/agent/models.json") === JSON.stringify([lost("default", "~/.pi/agent/models.json")]),
+      "detectedAccounts reports a detected registration a Custom Account took the value of");
+check(listed("a", "a:~/.claude", "b:~/.ccs/instances") === JSON.stringify([live("a", "~/.claude"), lost("b", "~/.ccs/instances")]),
+      "detectedAccounts marks only the refused registration as overridden");
+check(listed("a", "a:~/.claude", "a:~/.claude") === JSON.stringify([live("a", "~/.claude")]),
+      "detectedAccounts does not call a detected Account overridden when it is the one in use");
+// The reverse direction is the Custom row's business, not this list's: a refused
+// Custom registration is reported by unregisteredRows and marked there.
+check(listed("default", "default:~/.codex", "default:custom") === JSON.stringify([live("default", "~/.codex")]),
+      "detectedAccounts ignores a refused Custom registration");
+check(listed("work", "work:custom", "ghost:custom") === "[]",
+      "detectedAccounts reports nothing when the only refused registration was a Custom one");
 
 // The Custom Accounts the Script did not register. Its listing is the only
 // source of that fact: the settings list cannot tell whether the Script kept a
@@ -368,7 +401,18 @@ check(editor.includes("Sources.accountArgs("), "the settings editor builds the S
 check(editor.includes("Sources.LIST_ACCOUNTS_FLAG"), "the settings editor asks for the listing mode by its declared flag");
 check(editor.includes("Sources.detectedAccounts(") && editor.includes("Sources.unregisteredRows("),
       "the settings editor reads both Account lists from the registry rather than parsing them out");
+check(editor.includes("acct.overriddenKey"), "the settings editor takes the override copy off the descriptor");
 check(!/ACCOUNT_|PROFILE_/.test(editor), "the settings editor hardcodes no Account output key");
+
+// The two ways this editor's own state went wrong in a user's hands, pinned
+// because both failures are silent: an empty list, or a listing that answers for
+// the list the user has just changed.
+check(editor.includes("onPluginServiceChanged") && editor.includes("onPluginDataChanged"),
+      "the settings editor re-reads the Account list when the store becomes readable and whenever it changes");
+check(/listProcess\.command\s*=/.test(editor) && !/\blistCommand\b/.test(editor),
+      "the settings editor builds the Script's command as it asks, rather than starting a cached one");
+check(/modelData\.overridden/.test(editor),
+      "the settings editor renders a detected Account a Custom one replaced, rather than hiding it");
 
 // One wire, one splitter: the widget's fetch parser and the settings editor's
 // listing parser take their key and value from wirePair, and read a

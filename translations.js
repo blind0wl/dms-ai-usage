@@ -189,17 +189,28 @@ var strings = {
         { fr: "Comptes détectés", es: "Cuentas detectadas" },
     "Detected Profiles":
         { fr: "Profils détectés", es: "Perfiles detectados" },
-    "Detected outside the plugin. Add or remove them where they come from, not here.":
+    "Editable":
+        { fr: "Modifiable", es: "Editable" },
+    "Read-only":
+        { fr: "Lecture seule", es: "Solo lectura" },
+    "Found on this machine, not added here. Change them at their origin.":
         {
-            fr: "Détectés en dehors du plugin. Ajoutez-les ou supprimez-les à leur source, pas ici.",
-            es: "Detectadas fuera del plugin. Añádelas o elimínalas en su origen, no aquí."
+            fr: "Trouvés sur cette machine, pas ajoutés ici. Modifiez-les à leur source.",
+            es: "Se encuentran en este equipo, no se añaden aquí. Cámbialos en su origen."
         },
     "Detected from":
         { fr: "Détecté depuis", es: "Detectado desde" },
     "Origin unknown":
         { fr: "Origine inconnue", es: "Origen desconocido" },
-    "not in use":
-        { fr: "non utilisé", es: "sin usar" },
+    "overridden by your Custom Account":
+        { fr: "remplacé par votre compte personnalisé", es: "reemplazado por tu cuenta personalizada" },
+    "overridden by your Custom Profile":
+        { fr: "remplacé par votre profil personnalisé", es: "reemplazado por tu perfil personalizado" },
+    "not in use - its name or value is already taken":
+        {
+            fr: "non utilisé - son nom ou sa valeur est déjà pris",
+            es: "sin usar - su nombre o su valor ya está en uso"
+        },
     "Could not ask the Script what it detects.":
         {
             fr: "Impossible de demander au script ce qu'il détecte.",

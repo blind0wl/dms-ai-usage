@@ -5,19 +5,20 @@ import qs.Services
 import qs.Widgets
 import "../sources.js" as Sources
 
-// Generic editor for one Source's custom Account list, and a read-only view of
-// the Accounts the Source's Script detects on its own.
-//
-// The same list of name/value pairs previously existed three times over, once
-// per Source, differing only in the setting key, the labels and whether the
-// value is a config directory or an API key. Those differences are descriptor
-// data now.
+// One Source's Accounts, in two labelled lists: the Custom Accounts the user
+// adds here and can edit, and the Detected Accounts the Source's Script finds on
+// this machine, which are read-only because the plugin does not own them.
 //
 // Detection is not descriptor data and is not repeated here. The Script that
 // feeds the Popout's selector is asked the same question in its listing mode,
-// with the same Account arguments, so this editor shows every Account the
-// selector offers - including ones the user never added - under the origin the
-// Script found each at.
+// with the same Account arguments the fetch uses, so this editor shows every
+// Account the selector offers under the origin the Script found each at.
+//
+// A clash between the two lists is shown rather than resolved silently. The
+// Script keeps the first registration of a name or of a value, so a Custom
+// Account can take a detected one's place and change the credential the Source
+// authenticates with; the Script reports what it refused for exactly that reason,
+// and the refused Account stays visible here marked as overridden or not in use.
 Column {
     id: root
 
@@ -27,23 +28,25 @@ Column {
     property bool isLoading: false
     property var items: []
 
-    // The Script's listing output, as it arrives: the Account list under the
-    // descriptor's listKey, and the origins under its originsKey.
+    // The Script's listing, as it arrives: the Accounts under the descriptor's
+    // listKey, their origins under its originsKey, and the registrations it
+    // refused under its shadowedKey.
     property string listedAccounts: ""
     property string listedOrigins: ""
-    // Set when the Script that answers the listing fails, so a listing that
-    // never arrived is not shown as a Source with nothing detected.
+    property string listedShadowed: ""
+    // Set when the Script that answers the listing fails, so a listing that never
+    // arrived is not shown as a Source with nothing detected.
     property bool listFailed: false
     // Set when the Account list changes while the Script is answering the
     // previous one, so the answer the editor keeps describes the list it was
     // asked about rather than the one the user just edited.
     property bool listPending: false
 
-    readonly property var detected: Sources.detectedAccounts(root.listedAccounts, root.listedOrigins)
+    readonly property var detected: Sources.detectedAccounts(root.listedAccounts, root.listedOrigins, root.listedShadowed)
     // The Custom Account rows the Script did not register: another Account
     // already holds their name or their value, so the selector cannot offer them
-    // and their row here does nothing. The listing is the only thing that can
-    // say which rows those are, so it says nothing until it has answered with an
+    // and their row here does nothing. The listing is the only thing that can say
+    // which rows those are, so it says nothing until it has answered with an
     // Account: an uninstalled Source leaves every row unmarked.
     readonly property var unregistered: Sources.unregisteredRows(root.listedAccounts, root.listedOrigins, root.items)
 
@@ -61,10 +64,36 @@ Column {
         loadValue();
         refreshDetected();
     }
-    onSettingKeyChanged: loadValue()
+    onSettingKeyChanged: {
+        loadValue();
+        refreshDetected();
+    }
     // The Account arguments decide which of two Accounts sharing a name the
     // Script keeps, so the listing is asked again whenever they change.
     onItemsChanged: refreshDetected()
+
+    // DMS builds this page, and everything inside it, before it hands the page
+    // its pluginService, so the first read of the store above came back empty.
+    // The settings page's own reload hook walks its direct children, and this
+    // editor sits inside a Column, so it watches for the two moments the list can
+    // have moved underneath it instead.
+    Connections {
+        target: root.settingsRoot
+        ignoreUnknownSignals: true
+
+        function onPluginServiceChanged() {
+            root.reloadFromStore();
+        }
+    }
+
+    Connections {
+        target: root.settingsRoot ? root.settingsRoot.pluginService : null
+
+        function onPluginDataChanged(changedPluginId) {
+            if (root.settingsRoot && changedPluginId === root.settingsRoot.pluginId)
+                root.reloadFromStore();
+        }
+    }
 
     function loadValue() {
         if (!settingsRoot || !settingKey)
@@ -74,10 +103,23 @@ Column {
         isLoading = false;
     }
 
+    // Re-reads the Custom Account list from the store, which is the only thing
+    // that knows what a fresh page should show. A change that does not move the
+    // list (a sibling setting being saved, or this editor's own write coming
+    // back) is left alone rather than asked of the Script again.
+    function reloadFromStore() {
+        if (!settingsRoot || !settingKey)
+            return;
+        var stored = settingsRoot.loadValue(settingKey, []);
+        if (JSON.stringify(stored) === JSON.stringify(root.items))
+            return;
+        root.items = stored;
+    }
+
     function saveItems(newItems) {
         items = newItems;
         if (!isLoading && settingsRoot)
-            settingsRoot.saveValue(settingKey, items);
+            settingsRoot.saveValue(settingKey, newItems);
     }
 
     function addItem() {
@@ -102,34 +144,27 @@ Column {
         saveItems(updated);
     }
 
-    // --- Detected Accounts ---
+    // --- Asking the Script ---
 
-    readonly property var listCommand: {
-        if (!root.settingsRoot || !root.descriptor)
-            return [];
-        // Started the way the widget's fetch starts a Script, watchdog included,
-        // so a listing that never exits cannot leave the editor waiting on it.
-        return Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
-                                     [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items)));
-    }
-
-    // Asks the Script which Accounts it would report and where each came from.
-    // The Script answers before its first request, so this spends none of the
-    // user's quota, and it is asked again rather than cached: the Account
-    // arguments are part of the question.
+    // The command is built here, as the list is asked for, rather than bound to a
+    // property: the Account arguments are part of the question, and a command
+    // evaluated before this change would answer for the list the user has just
+    // edited.
     function refreshDetected() {
-        // Both of these are still null while the component is being built, which
-        // the handlers below can be reached from. Component.onCompleted asks
-        // again once everything exists.
-        if (!listProcess || !listCommand || listCommand.length === 0)
+        // The Script is reached through these, which are still null while the
+        // component is being built, which the handlers above can be reached from.
+        if (!listProcess || !root.settingsRoot || !root.descriptor)
             return;
         if (listProcess.running) {
             root.listPending = true;
             return;
         }
-        listedAccounts = "";
-        listedOrigins = "";
-        listFailed = false;
+        root.listedAccounts = "";
+        root.listedOrigins = "";
+        root.listedShadowed = "";
+        root.listFailed = false;
+        listProcess.command = Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
+                                                   [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items)));
         listProcess.running = true;
     }
 
@@ -141,15 +176,18 @@ Column {
             root.listedAccounts = pair.value;
         else if (pair.key === root.acct.originsKey)
             root.listedOrigins = pair.value;
+        else if (pair.key === root.acct.shadowedKey)
+            root.listedShadowed = pair.value;
     }
 
     Process {
         id: listProcess
-        command: root.listCommand
         running: false
+
         stdout: SplitParser {
             onRead: data => root.readListLine(data.trim())
         }
+
         onExited: (exitCode, exitStatus) => {
             root.listFailed = exitCode !== 0;
             if (root.listPending) {
@@ -159,11 +197,24 @@ Column {
         }
     }
 
-    StyledText {
-        text: root.settingsRoot.tr(root.acct.titleKey)
-        font.pixelSize: Theme.fontSizeSmall
-        font.weight: Font.Medium
-        color: Theme.surfaceText
+    // --- Custom Accounts: what the user adds, and what can be edited here ---
+
+    Row {
+        spacing: Theme.spacingXS
+
+        StyledText {
+            text: root.settingsRoot.tr(root.acct.titleKey)
+            font.pixelSize: Theme.fontSizeSmall
+            font.weight: Font.Medium
+            color: Theme.surfaceText
+        }
+
+        StyledText {
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.settingsRoot.tr("Editable")
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.primary
+        }
     }
 
     StyledText {
@@ -237,63 +288,89 @@ Column {
                 required property int index
                 required property var modelData
 
-                // The Script registered no Custom Account under this row's name,
-                // so another Account already holds the name or the value: the
-                // selector offers that one and this row does nothing. The listing
-                // is what says so, because only the Script resolves the clash.
+                // The Script registered no Custom Account for this row, so
+                // something else holds the name or the value the user typed: the
+                // selector offers that one and this row does nothing.
                 readonly property bool unused: root.unregistered.indexOf(index) >= 0
 
                 width: parent.width
-                height: 44
+                height: unused ? 62 : 44
                 radius: Theme.cornerRadius
                 color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                border.width: 0
+                border.width: unused ? 1 : 0
+                border.color: Theme.withAlpha(Theme.warning, 0.5)
 
-                Row {
+                Column {
                     anchors.fill: parent
                     anchors.margins: Theme.spacingXS
-                    spacing: Theme.spacingXS
+                    spacing: Theme.spacingXXS
 
-                    StyledText {
-                        width: root.nameColumnWidth
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.name || ""
-                        color: Theme.surfaceText
-                        font.pixelSize: Theme.fontSizeMedium
-                        elide: Text.ElideRight
-                    }
-
-                    StyledText {
-                        width: root.valueColumnWidth
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: (modelData[root.argField] || "")
-                            + (unused ? " · " + root.settingsRoot.tr("not in use") : "")
-                        color: Theme.surfaceVariantText
-                        font.pixelSize: Theme.fontSizeMedium
-                        elide: Text.ElideMiddle
-                    }
-
-                    Rectangle {
-                        width: root.actionWidth
-                        height: 32
-                        anchors.verticalCenter: parent.verticalCenter
-                        color: removeArea.containsMouse ? Theme.errorHover : Theme.error
-                        radius: Theme.cornerRadius
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingXS
 
                         StyledText {
-                            anchors.centerIn: parent
-                            text: root.settingsRoot.tr("Remove")
-                            color: Theme.onError
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: Font.Medium
+                            width: root.nameColumnWidth
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.name || ""
+                            color: Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeMedium
+                            elide: Text.ElideRight
                         }
 
-                        MouseArea {
-                            id: removeArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.removeItem(index)
+                        StyledText {
+                            width: root.valueColumnWidth
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData[root.argField] || ""
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeMedium
+                            elide: Text.ElideMiddle
+                        }
+
+                        Rectangle {
+                            width: root.actionWidth
+                            height: 32
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: removeArea.containsMouse ? Theme.errorHover : Theme.error
+                            radius: Theme.cornerRadius
+
+                            StyledText {
+                                anchors.centerIn: parent
+                                text: root.settingsRoot.tr("Remove")
+                                color: Theme.onError
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: Font.Medium
+                            }
+
+                            MouseArea {
+                                id: removeArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.removeItem(index)
+                            }
+                        }
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingXXS
+                        visible: unused
+
+                        DankIcon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: "warning"
+                            size: 14
+                            color: Theme.warning
+                        }
+
+                        StyledText {
+                            width: parent.width - 14 - Theme.spacingXXS
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.settingsRoot.tr("not in use - its name or value is already taken")
+                            color: Theme.warning
+                            font.pixelSize: Theme.fontSizeSmall
+                            elide: Text.ElideRight
                         }
                     }
                 }
@@ -308,28 +385,36 @@ Column {
         }
     }
 
-    // What the Script detects outside the settings list. Read-only, because
-    // there is nothing here to edit: the Account comes from a key or a directory
-    // the plugin does not own. Empty until the Script answers, which is what
-    // keeps this from claiming a Source has no detected Accounts before it has
-    // been asked.
+    // --- Detected Accounts: what the Script found, and what cannot be edited ---
+
     Column {
         id: detectedBlock
 
         width: parent.width
         spacing: Theme.spacingXS
-        visible: root.detected.length > 0
+        visible: root.detected.length > 0 || root.listFailed
 
-        StyledText {
-            text: root.settingsRoot.tr(root.acct.detectedTitleKey)
-            font.pixelSize: Theme.fontSizeSmall
-            font.weight: Font.Medium
-            color: Theme.surfaceText
+        Row {
+            spacing: Theme.spacingXS
+
+            StyledText {
+                text: root.settingsRoot.tr(root.acct.detectedTitleKey)
+                font.pixelSize: Theme.fontSizeSmall
+                font.weight: Font.Medium
+                color: Theme.surfaceText
+            }
+
+            StyledText {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.settingsRoot.tr("Read-only")
+                font.pixelSize: Theme.fontSizeSmall
+                color: Theme.surfaceVariantText
+            }
         }
 
         StyledText {
             width: parent.width
-            text: root.settingsRoot.tr("Detected outside the plugin. Add or remove them where they come from, not here.")
+            text: root.settingsRoot.tr("Found on this machine, not added here. Change them at their origin.")
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap
@@ -341,55 +426,89 @@ Column {
             StyledRect {
                 required property var modelData
 
-                width: detectedBlock.width
-                height: 44
-                radius: Theme.cornerRadius
-                color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                border.width: 0
+                // The Script refused this registration because a Custom Account
+                // had already taken its name or its value, so the Source is
+                // authenticating with what the user typed instead of this.
+                readonly property bool overridden: modelData.overridden === true
 
-                Row {
+                width: detectedBlock.width
+                height: overridden ? 62 : 44
+                radius: Theme.cornerRadius
+                color: Theme.withAlpha(Theme.surfaceContainer, Theme.popupTransparency)
+                border.width: 1
+                border.color: Theme.withAlpha(overridden ? Theme.warning : Theme.outline, overridden ? 0.5 : 0.3)
+
+                Column {
                     anchors.fill: parent
                     anchors.margins: Theme.spacingXS
-                    spacing: Theme.spacingXS
+                    spacing: Theme.spacingXXS
 
-                    StyledText {
-                        width: root.nameColumnWidth
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.name || ""
-                        color: Theme.surfaceText
-                        font.pixelSize: Theme.fontSizeMedium
-                        elide: Text.ElideRight
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingXS
+
+                        StyledText {
+                            width: root.nameColumnWidth
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.name || ""
+                            color: overridden ? Theme.warning : Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeMedium
+                            elide: Text.ElideRight
+                        }
+
+                        // The origin is a path or an environment variable's name,
+                        // so it is shown as it is: the user's own word for where
+                        // the credential lives. A Script that reports no origin
+                        // leaves this saying only that the origin is unknown
+                        // rather than inventing one.
+                        StyledText {
+                            width: parent.width - root.nameColumnWidth - Theme.spacingXS
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.origin
+                                ? root.settingsRoot.tr("Detected from") + " " + modelData.origin
+                                : root.settingsRoot.tr("Origin unknown")
+                            color: Theme.surfaceVariantText
+                            font.pixelSize: Theme.fontSizeMedium
+                            elide: Text.ElideMiddle
+                        }
                     }
 
-                    // The origin is a path or an environment variable's name, so
-                    // it is shown as it is: the user's own word for where the key
-                    // lives. A Script that reports no origin leaves this saying
-                    // only that the origin is unknown rather than inventing one.
-                    StyledText {
-                        width: parent.width - root.nameColumnWidth - Theme.spacingXS
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.origin
-                            ? root.settingsRoot.tr("Detected from") + " " + modelData.origin
-                            : root.settingsRoot.tr("Origin unknown")
-                        color: Theme.surfaceVariantText
-                        font.pixelSize: Theme.fontSizeMedium
-                        elide: Text.ElideMiddle
+                    Row {
+                        width: parent.width
+                        spacing: Theme.spacingXXS
+                        visible: overridden
+
+                        DankIcon {
+                            anchors.verticalCenter: parent.verticalCenter
+                            name: "warning"
+                            size: 14
+                            color: Theme.warning
+                        }
+
+                        StyledText {
+                            width: parent.width - 14 - Theme.spacingXXS
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.settingsRoot.tr(root.acct.overriddenKey)
+                            color: Theme.warning
+                            font.pixelSize: Theme.fontSizeSmall
+                            elide: Text.ElideRight
+                        }
                     }
                 }
             }
         }
-    }
 
-    // A listing that never arrived is not the same as a Source with nothing
-    // detected, and showing the two the same way is how the selector's Accounts
-    // went missing from this page in the first place. The copy names no Account
-    // word of its own, because Claude's page calls them Profiles.
-    StyledText {
-        width: parent.width
-        text: root.settingsRoot.tr("Could not ask the Script what it detects.")
-        font.pixelSize: Theme.fontSizeSmall
-        color: Theme.surfaceVariantText
-        wrapMode: Text.WordWrap
-        visible: root.listFailed
+        // A listing that never arrived is not the same as a Source with nothing
+        // detected, and showing the two the same way is how the selector's
+        // Accounts went missing from this page in the first place. The copy names
+        // no Account word of its own, because Claude's page calls them Profiles.
+        StyledText {
+            width: parent.width
+            text: root.settingsRoot.tr("Could not ask the Script what it detects.")
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            wrapMode: Text.WordWrap
+            visible: root.listFailed
+        }
     }
 }

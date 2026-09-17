@@ -50,6 +50,7 @@ ACCOUNT_SECONDARY_UTIL=
 ACCOUNT_SECONDARY_RESET=
 ACCOUNT_CREDS_STATUS=
 ACCOUNT_ORIGINS=
+ACCOUNT_SHADOWED=
 ACCOUNT_WEEK_TOKENS=
 ACCOUNT_MONTH_TOKENS=
 ACCOUNT_WEEK_MESSAGES=
@@ -319,6 +320,7 @@ fetch_account_usage() {
 ACCOUNT_NAMES=()
 ACCOUNT_DIRS=()  # codex home dir per account
 ACCOUNT_ORIGINS=()
+ACCOUNT_SHADOWED=()
 
 # add_account <name> <codex_home_dir> <origin>
 # First registration of a name wins. The origin is where the directory came
@@ -345,12 +347,12 @@ add_account() {
     esac
     dir="${dir%/}"
 
-    local existing existing_dir
-    for existing in "${ACCOUNT_NAMES[@]:-}"; do
-        [ "$existing" = "$name" ] && return 0
-    done
-    for existing_dir in "${ACCOUNT_DIRS[@]:-}"; do
-        [ "$existing_dir" = "$dir" ] && return 0
+    local idx
+    for idx in "${!ACCOUNT_NAMES[@]}"; do
+        if [ "${ACCOUNT_NAMES[$idx]}" = "$name" ] || [ "${ACCOUNT_DIRS[$idx]}" = "$dir" ]; then
+            ACCOUNT_SHADOWED+=("${name}:${origin}")
+            return 0
+        fi
     done
 
     ACCOUNT_NAMES+=("$name")
@@ -364,6 +366,18 @@ account_origins() {
     local out="" idx
     for idx in "${!ACCOUNT_NAMES[@]}"; do
         out="${out:+${out},}${ACCOUNT_NAMES[$idx]}:${ACCOUNT_ORIGINS[$idx]}"
+    done
+    printf '%s' "$out"
+}
+
+# account_shadowed -> "name:origin,name:origin" for the registrations the list
+# refused because something already held their name or their value. The settings
+# page is how the user learns that a Custom Account took a detected one's place,
+# which is otherwise only visible as an API rejection.
+account_shadowed() {
+    local out="" idx
+    for idx in "${!ACCOUNT_SHADOWED[@]}"; do
+        out="${out:+${out},}${ACCOUNT_SHADOWED[$idx]}"
     done
     printf '%s' "$out"
 }
@@ -394,6 +408,7 @@ done
 if [ "$LIST_ACCOUNTS" -eq 1 ]; then
     printf 'ACCOUNTS=%s\n' "$(IFS=,; echo "${ACCOUNT_NAMES[*]}")"
     printf 'ACCOUNT_ORIGINS=%s\n' "$(account_origins)"
+    printf 'ACCOUNT_SHADOWED=%s\n' "$(account_shadowed)"
     exit 0
 fi
 
