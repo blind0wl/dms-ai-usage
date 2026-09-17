@@ -482,8 +482,8 @@ add_profile() {
     # , | : are output delimiters, they cannot survive in a profile name. An
     # origin is display text: the list it rides is comma-separated and the other
     # Profile lists separate entries with |, so neither can survive in it either.
-    # The ":" that ends a name is kept, because a pair is split on its first one
-    # and a path may carry a colon.
+    # The ":" that separates an origin from its name is left alone, because a
+    # pair is split on its first colon and a path may carry one.
     name="${name//[,|:]/}"
     origin="${origin//[,|]/}"
     [ -n "$name" ] || return 0

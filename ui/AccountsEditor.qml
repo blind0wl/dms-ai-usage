@@ -34,6 +34,10 @@ Column {
     // Set when the Script that answers the listing fails, so a listing that
     // never arrived is not shown as a Source with nothing detected.
     property bool listFailed: false
+    // Set when the Account list changes while the Script is answering the
+    // previous one, so the answer the editor keeps describes the list it was
+    // asked about rather than the one the user just edited.
+    property bool listPending: false
 
     readonly property var detected: Sources.detectedAccounts(root.listedAccounts, root.listedOrigins)
     // The Custom Accounts the Script did not register: another Account already
@@ -120,6 +124,10 @@ Column {
         // again once everything exists.
         if (!listProcess || !listCommand || listCommand.length === 0)
             return;
+        if (listProcess.running) {
+            root.listPending = true;
+            return;
+        }
         listedAccounts = "";
         listedOrigins = "";
         listFailed = false;
@@ -145,6 +153,10 @@ Column {
         }
         onExited: (exitCode, exitStatus) => {
             root.listFailed = exitCode !== 0;
+            if (root.listPending) {
+                root.listPending = false;
+                Qt.callLater(root.refreshDetected);
+            }
         }
     }
 

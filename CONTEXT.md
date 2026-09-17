@@ -22,12 +22,12 @@ directories rather than credentials. Use it only in Claude-facing copy.
 _Avoid_: using it as the general term; that is Account.
 
 **Detected Account**:
-An Account a Source's Script finds for itself rather than being handed one: a key
-or config directory the machine already had, in the Source's own config or
-environment. The plugin cannot add or remove one, so the settings page lists
-Detected Accounts read-only, each under the Origin it was found at.
-Describing the detection as automatic is fine; it is the Account that is
-Detected, not automatic.
+An Account a Source's Script finds for itself rather than being handed one: a
+credential or config directory the machine already had, in the Source's own
+config, another tool's config, or the environment. The plugin cannot add or
+remove one, so the settings page lists Detected Accounts read-only, each under
+the Origin it was found at. Describing the detection as automatic is fine; it is
+the Account that is Detected, not automatic.
 _Avoid_: auto, built-in, hidden, automatic account
 
 **Custom Account**:
