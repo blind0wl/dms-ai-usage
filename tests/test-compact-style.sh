@@ -6,9 +6,10 @@
 # three steps and nothing wider: Theme.spacingS for an inset or the gap between
 # two Sections, Theme.spacingXS for the rhythm inside one, Theme.spacingXXS where
 # a label sits on its value. Type stops below the Window card's own hero number:
-# a headline is Theme.fontSizeSmall at Font.Medium, and nothing in a Section is
-# larger than that hero. DMS's file-browser sidebar is the precedent: spacingS
-# insets, spacingXS between its rows, a fontSizeSmall header at Font.Medium.
+# a card's headline is Theme.fontSizeSmall at Font.Medium, and the tab's Source
+# name is one step above it at Theme.fontSizeMedium Bold. DMS's file-browser
+# sidebar is the precedent: spacingS insets, spacingXS between its rows, a
+# fontSizeSmall header at Font.Medium.
 #
 # Every value is read from the components themselves, so a component that drifts
 # back to the roomier scale fails here instead of quietly eating the panel's room
@@ -55,9 +56,10 @@ for (const name of names) {
           `ui/${name} spaces nothing with the roomier scale${found.length ? ` (${found.join(", ")})` : ""}`);
 }
 
-// Type is a token, never a raw pixel size, and the only size above a compact
-// headline is the Window card's own Utilisation number. Headlines step down to
-// fontSizeSmall; a value that is not a headline still reads at fontSizeMedium.
+// Type is a token, never a raw pixel size, and nothing in a Section is larger
+// than the Window card's own Utilisation number. A card's headline steps down to
+// fontSizeSmall; the tab's Source name and a value that is not a headline still
+// read at fontSizeMedium.
 for (const name of names) {
     const raw = sources[name].match(/font\.pixelSize:\s*[0-9]/g) || [];
     check(raw.length === 0, `ui/${name} sizes no type with a raw pixel number`);
@@ -76,7 +78,11 @@ for (const name of names) {
 
 // And the column a Section lays its groups out in spaces them by XS, not by the
 // S that frames the card. A Row is the other case: there S is the gap between a
-// card's two halves rather than the rhythm of the card's own lines.
+// card's two halves rather than the rhythm of the card's own lines. The check
+// keys off a body inset of exactly `anchors.margins: Theme.spacingS`, so a card
+// that framed its body some other way would be outside it; that is the shape
+// every card in ui/ has today, and a new one should widen this rather than slip
+// past it.
 for (const name of names) {
     const lines = sources[name].split("\n");
     const off = [];

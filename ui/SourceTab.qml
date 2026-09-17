@@ -11,8 +11,9 @@ import qs.Common
 // `Theme.spacingXXS` where a label sits directly on the value under it. Which
 // in-card gap takes S and which takes XS is the Section's own call — a hero
 // card's two columns get S, a list row's get XS — but no Section reaches for the
-// roomier steps above S. A Section's headline is `Theme.fontSizeSmall` at
-// `Font.Medium`, which is DMS's own compact header idiom.
+// roomier steps above S. A card's own headline is `Theme.fontSizeSmall` at
+// `Font.Medium`, which is DMS's own compact header idiom; the tab's Source name
+// stays a step above it at `Theme.fontSizeMedium` Bold.
 //
 // Two kinds of value are deliberately not on that scale. A drawn size is pixels,
 // because it is geometry rather than spacing: a Window card's Ring, the activity
