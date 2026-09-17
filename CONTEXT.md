@@ -21,6 +21,22 @@ The Claude UI's word for an Account, because Claude's Accounts are config
 directories rather than credentials. Use it only in Claude-facing copy.
 _Avoid_: using it as the general term; that is Account.
 
+**Detected Account**:
+An Account a Source's Script finds for itself rather than being handed one: a key
+or config directory the machine already had, in the Source's own config or
+environment. The plugin cannot add or remove one, so the settings page lists
+Detected Accounts read-only, each under the origin it was found at - a file's
+path, an environment variable's name - and an Account the settings list owns is
+a Custom Account instead.
+_Avoid_: automatic, auto, built-in, hidden
+
+**Origin**:
+Where a Detected Account's credential was found, as the user would look for it:
+a file's path or an environment variable's name. A Script reports one per
+Account it lists, and _settings_ for an Account that came from the settings list
+rather than detection.
+_Avoid_: source, discovery, provider
+
 **Window**:
 A rate-limited period a Source allows usage in, with a length, a Utilisation and
 a reset time. A Source has up to two, called primary and secondary. A length
