@@ -557,6 +557,11 @@ check(/nameInput\.text\.trim\(\) !== name/.test(editor) && /valueInput\.text\.tr
       "the settings editor discards an answer the fields have moved on from");
 check(/function listingCommand/.test(editor) && /root\.listingCommand\(/.test(editor),
       "the settings editor builds both Script questions in one place");
+// The guard asks both questions for the same Add, because the listing on screen can
+// be a cycle behind the store: a clash it has not caught up with must not be blamed
+// on the row being added.
+check(/function askCandidate/.test(editor) && /probeStage === 1/.test(editor) && /root\.baselineListing/.test(editor),
+      "the settings editor asks what the list does now and what it would do with the row, in one Add");
 const finishAdd = editor.slice(editor.indexOf("function finishAdd"));
 check(finishAdd.indexOf("Sources.addOutcome(") < finishAdd.indexOf('nameInput.text = ""'),
       "the settings editor saves a row only after the guard has let it through, so the typed values survive a refusal");

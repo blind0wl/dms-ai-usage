@@ -45,11 +45,21 @@ Column {
     property bool pendingAnswered: false
     property bool pendingAbsent: false
 
-    // The same, for the listing the Add guard asks for.
+    // The same, for the two listings the Add guard asks for: what the Script makes
+    // of the list as it stands, and what it makes of the list with the candidate
+    // row. Both are asked for the same Add, back to back, because the listing on
+    // screen can be a cycle behind the store and a clash it has not caught up with
+    // would otherwise be blamed on the row being added.
+    property string baselineAccounts: ""
+    property string baselineOrigins: ""
+    property string baselineShadowed: ""
+    property bool baselineAnswered: false
     property string candidateAccounts: ""
     property string candidateOrigins: ""
     property string candidateShadowed: ""
     property bool candidateAnswered: false
+    // 0 idle, 1 the list as it stands asked, 2 the list with the candidate asked.
+    property int probeStage: 0
 
     // Set once the Script has answered with its Account list, so a Source whose
     // Script registered nothing still marks the rows it registered nothing for. A
@@ -71,9 +81,8 @@ Column {
     // null, or the outcome of Sources.addOutcome() for the row in the fields.
     property var addWarning: null
 
-    // What the Script last answered with, and what it answered when the candidate
-    // row was appended: two listings in the form Sources.addOutcome() compares.
-    readonly property var shownListing: Sources.listing(root.listedAccounts, root.listedOrigins, root.listedShadowed, root.listingAnswered)
+    // The two listings the guard compares, in the form Sources.addOutcome() reads.
+    readonly property var baselineListing: Sources.listing(root.baselineAccounts, root.baselineOrigins, root.baselineShadowed, root.baselineAnswered)
     readonly property var candidateListing: Sources.listing(root.candidateAccounts, root.candidateOrigins, root.candidateShadowed, root.candidateAnswered)
     // Set when the Script that answers the listing fails, so a listing that never
     // arrived is not shown as a Source with nothing detected.
@@ -196,28 +205,60 @@ Column {
         root.addPending = false;
         root.askedName = name;
         root.askedValue = value;
+        root.baselineAccounts = "";
+        root.baselineOrigins = "";
+        root.baselineShadowed = "";
+        root.baselineAnswered = false;
         root.candidateAccounts = "";
         root.candidateOrigins = "";
         root.candidateShadowed = "";
         root.candidateAnswered = false;
 
+        // First what the Script makes of the list as it stands, then what it makes
+        // of the list with this row: the difference between the two answers is what
+        // this row would do.
+        root.probeStage = 1;
+        probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.items));
+        probeProcess.running = true;
+    }
+
+    // The second half of the guard's question: the same list with the candidate row
+    // on the end of it. Returns false when there is nothing left to ask: the row in
+    // the fields is no longer the row this Add is about, or the first question could
+    // not be answered at all.
+    function askCandidate(exitCode) {
+        var name = nameInput.text.trim();
+        var value = valueInput.text.trim();
+        if (name !== root.askedName || value !== root.askedValue) {
+            root.probeStage = 0;
+            root.addWarning = null;
+            return false;
+        }
+        if (exitCode !== 0) {
+            root.probeStage = 0;
+            root.finishAdd(exitCode);
+            return false;
+        }
+
         var entry = {
             name: name
         };
         entry[root.argField] = value;
+        root.probeStage = 2;
         probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.items.concat([entry])));
         probeProcess.running = true;
+        return true;
     }
 
-    // What to do about the row the Script has just answered for: save it, or say
-    // why not. The row in the fields is compared with the row the question was
-    // about, because the user can keep typing while the Script runs, and a verdict
-    // for a row that is no longer there is no verdict at all.
+    // What to do about the row the Script has answered for: save it, or say why
+    // not. The answer is the pair of listings the two questions produced, and it is
+    // applied to the row those questions were about.
     function finishAdd(exitCode) {
         var name = root.askedName;
         var value = root.askedValue;
         root.askedName = "";
         root.askedValue = "";
+        root.probeStage = 0;
         root.probedName = name;
         root.probedValue = value;
 
@@ -233,7 +274,7 @@ Column {
             return;
         }
 
-        var outcome = Sources.addOutcome(root.shownListing, root.candidateListing, name);
+        var outcome = Sources.addOutcome(root.baselineListing, root.candidateListing, name);
         if (outcome !== null) {
             root.addWarning = outcome;
             return;
@@ -385,7 +426,12 @@ Column {
         }
 
         onExited: (exitCode, exitStatus) => {
-            root.finishAdd(exitCode);
+            if (root.probeStage === 1) {
+                if (!root.askCandidate(exitCode))
+                    return;
+            } else {
+                root.finishAdd(exitCode);
+            }
             if (root.addPending) {
                 root.addPending = false;
                 Qt.callLater(root.addItem);
@@ -397,13 +443,26 @@ Column {
         var pair = Sources.wirePair(line);
         if (!pair)
             return;
+        var baseline = root.probeStage !== 2;
         if (pair.key === root.acct.listKey) {
-            root.candidateAccounts = pair.value;
-            root.candidateAnswered = true;
-        } else if (pair.key === root.acct.originsKey)
-            root.candidateOrigins = pair.value;
-        else if (pair.key === root.acct.shadowedKey)
-            root.candidateShadowed = pair.value;
+            if (baseline) {
+                root.baselineAccounts = pair.value;
+                root.baselineAnswered = true;
+            } else {
+                root.candidateAccounts = pair.value;
+                root.candidateAnswered = true;
+            }
+        } else if (pair.key === root.acct.originsKey) {
+            if (baseline)
+                root.baselineOrigins = pair.value;
+            else
+                root.candidateOrigins = pair.value;
+        } else if (pair.key === root.acct.shadowedKey) {
+            if (baseline)
+                root.baselineShadowed = pair.value;
+            else
+                root.candidateShadowed = pair.value;
+        }
     }
 
     Process {
