@@ -79,10 +79,10 @@ for (const name of names) {
 // And the column a Section lays its groups out in spaces them by XS, not by the
 // S that frames the card. A Row is the other case: there S is the gap between a
 // card's two halves rather than the rhythm of the card's own lines. The check
-// keys off a body inset of exactly `anchors.margins: Theme.spacingS`, so a card
-// that framed its body some other way would be outside it; that is the shape
-// every card in ui/ has today, and a new one should widen this rather than slip
-// past it.
+// keys off a body inset written exactly as `anchors.margins: Theme.spacingS`, so
+// the cards that frame their body another way — a centred column, split left and
+// right margins — are outside it today; a new one should widen this rather than
+// slip past it.
 for (const name of names) {
     const lines = sources[name].split("\n");
     const off = [];
