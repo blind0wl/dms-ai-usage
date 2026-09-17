@@ -2,6 +2,8 @@
 
 A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) plugin that monitors your Claude, ChatGPT/Codex, Z.ai and opencode Go subscription usage directly from the taskbar. All four are optional and independently toggled. Install this for one, or any combination, and whichever aren't set up stay out of the way.
 
+It is a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by Nicolas Bellamy, which tracks Claude Code alone. See [Credits](#credits).
+
 ![Screenshot](screenshot.png)
 
 ## Features
@@ -64,7 +66,7 @@ Or browse the plugin list in DMS Settings (`Mod + ,` > Plugins).
 Clone this repository into your DMS plugins directory:
 
 ```bash
-git clone https://github.com/titeya/dms-claudecode \
+git clone https://github.com/blind0wl/dms-ai-usage \
   ~/.config/DankMaterialShell/plugins/aiUsage
 ```
 
@@ -151,6 +153,16 @@ it's a single lightweight request per account per refresh.
 All data stays local. Network requests are limited to the official Anthropic API (usage),
 the ChatGPT backend (usage), the Z.ai API (usage), the opencode Go usage endpoint, GitHub
 (LiteLLM pricing, once/day), and Frankfurter (exchange rate, once/day).
+
+## Credits
+
+AI Usage began as a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by
+Nicolas Bellamy, which is a Claude Code usage monitor. This fork keeps that project's Claude
+Source, its pacing and cost estimates, its profile handling and its settings and chart layout,
+and adds the Source registry, the ChatGPT/Codex, Z.ai and opencode Go Sources, the Account model
+and the generic login handling on top.
+
+Both are MIT licensed, and the original copyright notice is preserved in [LICENSE](LICENSE).
 
 ## License
 
