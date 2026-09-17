@@ -24,8 +24,8 @@ _Avoid_: using it as the general term; that is Account.
 **Window**:
 A rate-limited period a Source allows usage in, with a length, a Utilisation and
 a reset time. A Source has up to two, called primary and secondary. A length
-follows the provider: 5 hours and 7 days for Claude, whatever the API reports for
-ChatGPT.
+follows the provider: 5 hours and 7 days for Claude, Z.ai and opencode Go,
+whatever the API reports for ChatGPT.
 _Avoid_: period, limit, quota, bucket
 
 **Utilisation**:
@@ -85,8 +85,9 @@ _Avoid_: unavailable, disabled, missing
 
 **Missing**:
 Credentials a Source needs are absent or expired, but the Source is installed. A
-missing Source stays visible and offers a login action, so it does not silently
-sit at zero.
+missing Source stays visible and offers a way to fix it: a login action, a pointer
+at the settings, or a link into its own setup guide. It does not silently sit at
+zero.
 _Avoid_: not installed, logged out, unauthenticated
 
 **Unavailable**:
