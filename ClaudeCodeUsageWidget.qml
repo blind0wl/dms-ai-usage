@@ -43,7 +43,7 @@ PluginComponent {
         }
         return out;
     }
-    property var lastAccountSettings: ({})
+    property var lastAccountSettings: null
     property real usdEurRate: 0
 
     // The ordered list of enabled Sources. Order drives the pill rings and the
@@ -372,10 +372,14 @@ PluginComponent {
     // Refetch a Source whose Account list changed, so a newly added Account
     // appears without waiting for the next poll. pluginData changes for every
     // setting, so compare the lists rather than refetching on any save.
-    onAccountSettingsChanged: {
+    function refetchChangedAccounts() {
         var prev = root.lastAccountSettings;
         var next = root.accountSettings;
         root.lastAccountSettings = next;
+        // The first evaluation is the baseline, not a change: every key would
+        // otherwise read as new. Startup fetching is onSourceOrderChanged's job.
+        if (prev === null)
+            return;
         // The binding can be evaluated while the component is still being
         // built, before sourceOrder exists. onSourceOrderChanged fetches
         // everything at that point anyway.
@@ -392,6 +396,8 @@ PluginComponent {
                 root.requestFetch(d.id);
         }
     }
+
+    onAccountSettingsChanged: root.refetchChangedAccounts()
 
     // Toggling a Source on fetches immediately rather than waiting a tick.
     onSourceOrderChanged: {
@@ -524,6 +530,11 @@ PluginComponent {
 
     property var loginProcesses: ({})
 
+    // The command each login Process was started with, keyed by Source id.
+    // Snapshotted at press time so changing the Account selection during a login
+    // cannot rewrite a running Process's command.
+    property var loginCommands: ({})
+
     function loginProcessFor(id) {
         return root.loginProcesses[id] || null;
     }
@@ -539,6 +550,9 @@ PluginComponent {
         // because each has its own Process.
         if (!p || p.running)
             return;
+        var next = Object.assign({}, root.loginCommands);
+        next[id] = root.loginCommandFor(d, id);
+        root.loginCommands = next;
         root.setLoginInProgress(id, true);
         p.running = true;
     }
@@ -552,7 +566,7 @@ PluginComponent {
 
             readonly property string sourceId: modelData.id
 
-            command: root.loginCommandFor(modelData, sourceId)
+            command: root.loginCommands[sourceId] || []
             running: false
 
             onExited: (exitCode, exitStatus) => {

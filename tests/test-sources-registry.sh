@@ -68,8 +68,11 @@ const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
 // --- Descriptor completeness ---
 // Every key a descriptor lists in accounts.fields has to have an ACCOUNT_FIELDS
 // row, because pickFields() copies the row rather than a name: a missing row
-// would otherwise drop the key from the wire with no error anywhere.
+// would otherwise drop the key from the wire with no error anywhere. The table
+// is keyed by the unprefixed concept, so the two wire prefixes share one row.
 const accountFields = reg.ACCOUNT_FIELDS || {};
+check(Object.keys(accountFields).every((k) => !/^(PROFILE|ACCOUNT)_/.test(k)),
+      "ACCOUNT_FIELDS is keyed by concept, not once per prefix");
 for (const d of reg.SOURCES) {
     const tag = `descriptor "${d.id}"`;
     check(typeof d.id === "string" && d.id.length > 0, `${tag} has an id`);
@@ -128,13 +131,20 @@ for (const d of reg.SOURCES) {
         check(["path", "key"].indexOf(d.accounts.argField) >= 0, `${tag} account argField is path or key`);
         check(typeof d.accounts.listKey === "string" && d.accounts.listKey.length > 0, `${tag} account declares the output key that lists its Accounts`);
         check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its output fields`);
-        // Claude's keys are its upstream output contract and keep PROFILE_;
-        // every other Source follows CONTEXT.md's Account term with ACCOUNT_.
-        const prefix = d.id === "claude" ? /^PROFILE_/ : /^ACCOUNT_/;
+        // The prefix a Source's per-Account keys wear is descriptor data, so
+        // nothing here has to ask which Source it is. Claude declares PROFILE_
+        // because get-claude-usage is upstream's file; the rest declare
+        // ACCOUNT_, which CONTEXT.md's Account term implies.
+        check(typeof d.accounts.keyPrefix === "string" && /^[A-Z]+_$/.test(d.accounts.keyPrefix),
+              `${tag} account declares the prefix its output keys wear`);
+        const keyPrefix = typeof d.accounts.keyPrefix === "string" ? d.accounts.keyPrefix : "";
         const declaredFields = new Set();
         for (const [key, spec] of Object.entries(d.accounts.fields || {})) {
-            check(prefix.test(key), `${tag} account field "${key}" uses the right prefix`);
-            check(accountFields[key] !== undefined, `${tag} account field "${key}" has an ACCOUNT_FIELDS row`);
+            check(keyPrefix.length > 0 && key.indexOf(keyPrefix) === 0,
+                  `${tag} account field "${key}" wears the prefix the descriptor declares`);
+            const suffix = keyPrefix.length > 0 ? key.slice(keyPrefix.length) : key;
+            check(accountFields[suffix] !== undefined,
+                  `${tag} account field "${key}" has an ACCOUNT_FIELDS row for suffix "${suffix}"`);
             if (!spec) {
                 check(false, `${tag} account field "${key}" resolves in ACCOUNT_FIELDS`);
                 continue;
@@ -207,8 +217,8 @@ check(widget.indexOf("fiveHour") < 0 && widget.indexOf("sevenDay") < 0, "the wid
 for (const key of ["customProfiles", "customChatgptAccounts", "customZaiAccounts", "customOpencodeAccounts"])
     check(widget.indexOf(`"${key}"`) < 0, `the widget does not hardcode the setting key "${key}"`);
 check(widget.indexOf("claudeLogin") < 0 && widget.indexOf("chatgptLogin") < 0, "the widget hardcodes no login action ids");
-check(widget.indexOf("loginPool") >= 0, "the widget builds one login Process per cli descriptor");
-check(!/\bif\s*\(\s*loginProcess\.running\s*\)/.test(widget), "the widget does not serialise every login through one Process");
+check(!/command:\s*root\.loginCommandFor\(/.test(widget),
+      "no login Process binds its command to the live Account selection");
 for (const d of reg.SOURCES) {
     if (d.login && d.login.kind === "cli") {
         check(typeof d.login.program === "string" && d.login.program.length > 0, `descriptor "${d.id}" cli login names its program`);

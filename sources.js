@@ -12,58 +12,49 @@
 //   login         How this Source offers to fix missing credentials, if it can.
 //   sections      Ordered Sections making up the popout tab.
 
-// The per-Account output keys a Source may emit, and the overlay field each
-// fills plus how to read it. Declared as data so no Source's Window shape is
-// baked into the widget's Account adapter. A Source picks the subset it emits
-// with pickFields().
-//
-// Claude's keys keep the PROFILE_ prefix because get-claude-usage is upstream's
-// file and those names are its existing output contract. Every other Source
-// uses ACCOUNT_, because CONTEXT.md makes Account the general term and reserves
-// Profile for Claude-facing copy. Both map onto the same overlay fields.
+// The per-Account output keys a Source may emit, keyed by the unprefixed
+// concept, and the overlay field each fills plus how to read it. Declared as
+// data so no Source's Window shape is baked into the widget's Account adapter.
+// A descriptor picks the subset it emits with pickFields() and declares the
+// prefix its own wire keys wear, so the two prefixes share one row per concept.
 var ACCOUNT_FIELDS = {
-    PROFILE_SUBSCRIPTION: { field: "subscriptionType", type: "text" },
-    PROFILE_TIER: { field: "rateLimitTier", type: "text" },
-    PROFILE_CREDS_STATUS: { field: "credsStatus", type: "text" },
-    PROFILE_WEEK_TOKENS: { field: "weekTokens", type: "number" },
-    PROFILE_MONTH_TOKENS: { field: "monthTokens", type: "number" },
-    PROFILE_WEEK_MESSAGES: { field: "weekMessages", type: "number" },
-    PROFILE_WEEK_SESSIONS: { field: "weekSessions", type: "number" },
-    PROFILE_TODAY_COST: { field: "todayCost", type: "number" },
-    PROFILE_WEEK_COST: { field: "weekCost", type: "number" },
-    PROFILE_MONTH_COST: { field: "monthCost", type: "number" },
-    PROFILE_EXTRA_USAGE: { field: "extraUsageEnabled", type: "boolean" },
-    PROFILE_DAILY: { field: "daily", type: "series" },
-    PROFILE_DAILY_COSTS: { field: "dailyCosts", type: "series" },
-    PROFILE_WEEK_MODELS: { field: "weekModels", type: "models" },
-    PROFILE_FIVE_HOUR_UTIL: { field: "primaryUtil", type: "number" },
-    PROFILE_FIVE_HOUR_RESET: { field: "primaryReset", type: "text" },
-    PROFILE_SEVEN_DAY_UTIL: { field: "secondaryUtil", type: "number" },
-    PROFILE_SEVEN_DAY_RESET: { field: "secondaryReset", type: "text" },
-    ACCOUNT_SUBSCRIPTION: { field: "subscriptionType", type: "text" },
-    ACCOUNT_CREDS_STATUS: { field: "credsStatus", type: "text" },
-    ACCOUNT_WEEK_TOKENS: { field: "weekTokens", type: "number" },
-    ACCOUNT_MONTH_TOKENS: { field: "monthTokens", type: "number" },
-    ACCOUNT_WEEK_MESSAGES: { field: "weekMessages", type: "number" },
-    ACCOUNT_WEEK_SESSIONS: { field: "weekSessions", type: "number" },
-    ACCOUNT_DAILY: { field: "daily", type: "series" },
-    ACCOUNT_WEEK_MODELS: { field: "weekModels", type: "models" },
-    ACCOUNT_PRIMARY_UTIL: { field: "primaryUtil", type: "number" },
-    ACCOUNT_PRIMARY_RESET: { field: "primaryReset", type: "text" },
-    ACCOUNT_SECONDARY_UTIL: { field: "secondaryUtil", type: "number" },
-    ACCOUNT_SECONDARY_RESET: { field: "secondaryReset", type: "text" }
+    SUBSCRIPTION: { field: "subscriptionType", type: "text" },
+    TIER: { field: "rateLimitTier", type: "text" },
+    CREDS_STATUS: { field: "credsStatus", type: "text" },
+    WEEK_TOKENS: { field: "weekTokens", type: "number" },
+    MONTH_TOKENS: { field: "monthTokens", type: "number" },
+    WEEK_MESSAGES: { field: "weekMessages", type: "number" },
+    WEEK_SESSIONS: { field: "weekSessions", type: "number" },
+    TODAY_COST: { field: "todayCost", type: "number" },
+    WEEK_COST: { field: "weekCost", type: "number" },
+    MONTH_COST: { field: "monthCost", type: "number" },
+    EXTRA_USAGE: { field: "extraUsageEnabled", type: "boolean" },
+    DAILY: { field: "daily", type: "series" },
+    DAILY_COSTS: { field: "dailyCosts", type: "series" },
+    WEEK_MODELS: { field: "weekModels", type: "models" },
+    // Two genuinely different wire names for the same slot, not a prefix pair.
+    FIVE_HOUR_UTIL: { field: "primaryUtil", type: "number" },
+    FIVE_HOUR_RESET: { field: "primaryReset", type: "text" },
+    SEVEN_DAY_UTIL: { field: "secondaryUtil", type: "number" },
+    SEVEN_DAY_RESET: { field: "secondaryReset", type: "text" },
+    PRIMARY_UTIL: { field: "primaryUtil", type: "number" },
+    PRIMARY_RESET: { field: "primaryReset", type: "text" },
+    SECONDARY_UTIL: { field: "secondaryUtil", type: "number" },
+    SECONDARY_RESET: { field: "secondaryReset", type: "text" }
 };
 
-// Picks the ACCOUNT_FIELDS rows a descriptor's script emits. An unknown key
-// would otherwise be copied through as undefined and dropped from the wire with
-// nothing to show for it, so it is named here instead.
-function pickFields(id, keys) {
+// Builds a descriptor's wire-key map from its prefix and the bare suffixes its
+// script emits. An unknown suffix would otherwise be copied through as
+// undefined and dropped from the wire with nothing to show for it, so the full
+// wire key is named here instead.
+function pickFields(id, prefix, suffixes) {
     var out = {};
-    for (var i = 0; i < keys.length; i++) {
-        var spec = ACCOUNT_FIELDS[keys[i]];
+    for (var i = 0; i < suffixes.length; i++) {
+        var key = prefix + suffixes[i];
+        var spec = ACCOUNT_FIELDS[suffixes[i]];
         if (!spec)
-            console.warn("sources.js: descriptor \"" + id + "\" declares Account key " + keys[i] + " with no ACCOUNT_FIELDS row");
-        out[keys[i]] = spec;
+            console.warn("sources.js: descriptor \"" + id + "\" declares Account key " + key + " with no ACCOUNT_FIELDS row for suffix \"" + suffixes[i] + "\"");
+        out[key] = spec;
     }
     return out;
 }
@@ -96,6 +87,11 @@ var SOURCES = [
             // Claude lists its Accounts under PROFILES; every other Source uses
             // ACCOUNTS. The widget reads whichever the descriptor names.
             listKey: "PROFILES",
+            // Claude's per-Account keys keep PROFILE_ because get-claude-usage
+            // is upstream's file and those names are its existing output
+            // contract. Every other Source declares ACCOUNT_, the general term
+            // CONTEXT.md reserves over Profile.
+            keyPrefix: "PROFILE_",
             argField: "path",
             labelKey: "Profile",
             overlay: true,
@@ -103,14 +99,14 @@ var SOURCES = [
             descriptionKey: "Track extra Claude config directories. Point at a CLAUDE_CONFIG_DIR (the folder containing projects/). ~/.claude, Claude Code Switcher and claude-code-profiles are detected automatically.",
             fieldLabelKey: "Config directory",
             placeholder: "~/.ccp/data/work",
-            fields: pickFields("claude", [
-                "PROFILE_SUBSCRIPTION", "PROFILE_TIER", "PROFILE_CREDS_STATUS",
-                "PROFILE_WEEK_TOKENS", "PROFILE_MONTH_TOKENS", "PROFILE_WEEK_MESSAGES",
-                "PROFILE_WEEK_SESSIONS", "PROFILE_TODAY_COST", "PROFILE_WEEK_COST",
-                "PROFILE_MONTH_COST", "PROFILE_EXTRA_USAGE", "PROFILE_DAILY",
-                "PROFILE_DAILY_COSTS", "PROFILE_WEEK_MODELS",
-                "PROFILE_FIVE_HOUR_UTIL", "PROFILE_FIVE_HOUR_RESET",
-                "PROFILE_SEVEN_DAY_UTIL", "PROFILE_SEVEN_DAY_RESET"
+            fields: pickFields("claude", "PROFILE_", [
+                "SUBSCRIPTION", "TIER", "CREDS_STATUS",
+                "WEEK_TOKENS", "MONTH_TOKENS", "WEEK_MESSAGES",
+                "WEEK_SESSIONS", "TODAY_COST", "WEEK_COST",
+                "MONTH_COST", "EXTRA_USAGE", "DAILY",
+                "DAILY_COSTS", "WEEK_MODELS",
+                "FIVE_HOUR_UTIL", "FIVE_HOUR_RESET",
+                "SEVEN_DAY_UTIL", "SEVEN_DAY_RESET"
             ])
         },
         login: {
@@ -176,18 +172,19 @@ var SOURCES = [
         accounts: {
             settingKey: "customChatgptAccounts",
             listKey: "ACCOUNTS",
+            keyPrefix: "ACCOUNT_",
             argField: "path",
             labelKey: "Account",
             titleKey: "Custom ChatGPT Accounts",
             descriptionKey: "Track extra Codex accounts. Point at a CODEX_HOME (the folder containing auth.json). ~/.codex is detected automatically as \"default\".",
             fieldLabelKey: "Config directory",
             placeholder: "~/.codex-work",
-            fields: pickFields("chatgpt", [
-                "ACCOUNT_SUBSCRIPTION", "ACCOUNT_CREDS_STATUS", "ACCOUNT_WEEK_TOKENS",
-                "ACCOUNT_MONTH_TOKENS", "ACCOUNT_WEEK_MESSAGES", "ACCOUNT_WEEK_SESSIONS",
-                "ACCOUNT_DAILY", "ACCOUNT_WEEK_MODELS",
-                "ACCOUNT_PRIMARY_UTIL", "ACCOUNT_PRIMARY_RESET",
-                "ACCOUNT_SECONDARY_UTIL", "ACCOUNT_SECONDARY_RESET"
+            fields: pickFields("chatgpt", "ACCOUNT_", [
+                "SUBSCRIPTION", "CREDS_STATUS", "WEEK_TOKENS",
+                "MONTH_TOKENS", "WEEK_MESSAGES", "WEEK_SESSIONS",
+                "DAILY", "WEEK_MODELS",
+                "PRIMARY_UTIL", "PRIMARY_RESET",
+                "SECONDARY_UTIL", "SECONDARY_RESET"
             ])
         },
         login: {
@@ -254,16 +251,17 @@ var SOURCES = [
             // are passed to the script as name=api-key, like Z.ai.
             settingKey: "customOpencodeAccounts",
             listKey: "ACCOUNTS",
+            keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
             titleKey: "Custom opencode Accounts",
             descriptionKey: "Track extra opencode Go Accounts by API key. An API key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".",
             fieldLabelKey: "API key",
             placeholder: "",
-            fields: pickFields("opencode", [
-                "ACCOUNT_CREDS_STATUS",
-                "ACCOUNT_PRIMARY_UTIL", "ACCOUNT_PRIMARY_RESET",
-                "ACCOUNT_SECONDARY_UTIL", "ACCOUNT_SECONDARY_RESET"
+            fields: pickFields("opencode", "ACCOUNT_", [
+                "CREDS_STATUS",
+                "PRIMARY_UTIL", "PRIMARY_RESET",
+                "SECONDARY_UTIL", "SECONDARY_RESET"
             ])
         },
         login: {
@@ -314,16 +312,17 @@ var SOURCES = [
             // passed to the script as name=api-key rather than name=path.
             settingKey: "customZaiAccounts",
             listKey: "ACCOUNTS",
+            keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
             titleKey: "Custom Z.ai Accounts",
             descriptionKey: "Track extra Z.ai accounts by API key. A key from the pi coding agent config (~/.pi/agent/models.json) is detected automatically as \"default\".",
             fieldLabelKey: "API key",
             placeholder: "",
-            fields: pickFields("zai", [
-                "ACCOUNT_CREDS_STATUS",
-                "ACCOUNT_PRIMARY_UTIL", "ACCOUNT_PRIMARY_RESET",
-                "ACCOUNT_SECONDARY_UTIL", "ACCOUNT_SECONDARY_RESET"
+            fields: pickFields("zai", "ACCOUNT_", [
+                "CREDS_STATUS",
+                "PRIMARY_UTIL", "PRIMARY_RESET",
+                "SECONDARY_UTIL", "SECONDARY_RESET"
             ])
         },
         login: {

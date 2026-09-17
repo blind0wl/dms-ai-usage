@@ -833,7 +833,8 @@ const names = [
     "parseAccountScalars", "parseAccountSeries", "parseAccountModels",
     "parseDaily", "parseModels", "parseResetMs", "applyCredsStatus",
     "stateFor", "windowSeconds", "selectAccount", "accountNames",
-    "setLoginInProgress", "loginProcessFor", "startLogin"
+    "setLoginInProgress", "loginProcessFor", "startLogin",
+    "refetchChangedAccounts"
 ];
 
 const sandbox = {
@@ -845,6 +846,9 @@ const sandbox = {
         accountData: {},
         selectedAccount: {},
         accountSettings: {},
+        loginCommands: {},
+        sourceOrder: [],
+        lastAccountSettings: null,
         usdEurRate: 0,
         todayIndex: 0,
         cliSearchPathAdditions: "$HOME/.local/bin"
@@ -947,6 +951,43 @@ widget.startLogin("chatgpt");
 check(widget.loginInProgress.chatgpt === true, "re-pressing a running login leaves its progress shown");
 widget.startLogin("opencode");
 check(widget.loginProcesses.opencode.running === false, "a text-only login has no Process to start");
+
+// The command a login runs with is fixed when the button is pressed. Changing
+// the Account selection afterwards must not reach into a running Process.
+widget.accountSettings = { customProfiles: [{ name: "work", path: "/home/u/.ccp/work" }, { name: "home", path: "/home/u/.claude" }] };
+widget.selectedAccount = { claude: "work" };
+widget.loginCommands = {};
+widget.loginProcesses = { claude: { running: false } };
+widget.startLogin("claude");
+const snapshot = widget.loginCommands.claude;
+check(!!snapshot && snapshot[2].indexOf("CLAUDE_CONFIG_DIR='/home/u/.ccp/work'") === 0,
+      "pressing login snapshots the command for the Account selected at press time");
+widget.selectedAccount = { claude: "home" };
+check(widget.loginCommands.claude === snapshot,
+      "changing the Account selection leaves a running login's command untouched");
+widget.startLogin("claude");
+check(widget.loginCommands.claude === snapshot,
+      "re-pressing a running login does not rewrite its command");
+
+// The first evaluation of the Account settings is the baseline, so it must not
+// queue a refetch of every Source on top of the startup fetch.
+const fetched = [];
+widget.requestFetch = (id) => fetched.push(id);
+widget.sourceOrder = ["claude", "chatgpt", "opencode", "zai"];
+widget.lastAccountSettings = null;
+widget.accountSettings = {
+    customProfiles: [{ name: "work", path: "/p" }],
+    customChatgptAccounts: [],
+    customOpencodeAccounts: [],
+    customZaiAccounts: []
+};
+widget.refetchChangedAccounts();
+check(fetched.length === 0, "the first Account settings evaluation seeds the baseline and fetches nothing");
+widget.accountSettings = Object.assign({}, widget.accountSettings, { customChatgptAccounts: [{ name: "work", path: "/c" }] });
+widget.refetchChangedAccounts();
+check(fetched.length === 1 && fetched[0] === "chatgpt", "a later change refetches only the Source whose Account list changed");
+widget.refetchChangedAccounts();
+check(fetched.length === 1, "an unchanged settings save refetches nothing");
 
 console.log(results.join("\n"));
 NODE
