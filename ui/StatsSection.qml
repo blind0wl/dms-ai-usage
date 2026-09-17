@@ -49,7 +49,7 @@ StyledRect {
         id: consumptionCol
         anchors.fill: parent
         anchors.margins: Theme.spacingS
-        spacing: Theme.spacingS
+        spacing: Theme.spacingXS
 
         StyledText {
             text: api.tr("Token Consumption")

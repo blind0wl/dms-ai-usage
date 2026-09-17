@@ -20,6 +20,10 @@ Item {
     // The descriptor's `labelKey`, so the anchor is built from the Source's own
     // name and a new Source needs nothing added here.
     property string labelKey: ""
+    // The caller's own intent to show, the way a Section declares its `shown`:
+    // only a Source that needs setting up gets the way out. The component's own
+    // half of that decision is the URL below.
+    property bool shown: false
 
     readonly property string readmeUrl: "https://github.com/blind0wl/dms-ai-usage"
     readonly property string docsUrl: root.labelKey !== "" ? root.readmeUrl + "#" + anchorFor(root.labelKey) : ""
@@ -36,10 +40,10 @@ Item {
     // column width.
     width: setupLink.implicitWidth
     height: setupLink.implicitHeight
-    // Shown whenever the Source has a README section, which is every Source.
-    // The Sections that render it narrow that further: only a Missing Source
-    // needs the way out, so only its card and its Overview row show the link.
-    visible: root.docsUrl !== ""
+    // Both halves of the decision: the caller asked for it, and this Source has
+    // a README section to point at. A name that produced no anchor draws no
+    // link rather than one that opens "".
+    visible: root.shown && root.docsUrl !== ""
 
     StyledText {
         id: setupLink

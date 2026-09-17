@@ -3,11 +3,12 @@
 #
 # The Popout keeps its 380 x 740 panel, so the room the Overview tab needs comes
 # from tightening every Section rather than from growing the panel. The scale is
-# two sizes: Theme.spacingS for an inset and for the gap between two Sections,
-# Theme.spacingXS (and Theme.spacingXXS between a label and its value) inside one.
-# Type stops at Theme.fontSizeSmall apart from the Window card's own hero number.
-# DMS's file-browser sidebar is the precedent: Theme.spacingS insets,
-# Theme.spacingXS between its rows, and a fontSizeSmall header at Font.Medium.
+# three steps and nothing wider: Theme.spacingS for an inset or the gap between
+# two Sections, Theme.spacingXS for the rhythm inside one, Theme.spacingXXS where
+# a label sits on its value. Type stops below the Window card's own hero number:
+# a headline is Theme.fontSizeSmall at Font.Medium, and nothing in a Section is
+# larger than that hero. DMS's file-browser sidebar is the precedent: spacingS
+# insets, spacingXS between its rows, a fontSizeSmall header at Font.Medium.
 #
 # Every value is read from the components themselves, so a component that drifts
 # back to the roomier scale fails here instead of quietly eating the panel's room
@@ -54,8 +55,9 @@ for (const name of names) {
           `ui/${name} spaces nothing with the roomier scale${found.length ? ` (${found.join(", ")})` : ""}`);
 }
 
-// Type is a token, never a raw pixel size, and the only size above the compact
-// header is the Window card's own Utilisation number.
+// Type is a token, never a raw pixel size, and the only size above a compact
+// headline is the Window card's own Utilisation number. Headlines step down to
+// fontSizeSmall; a value that is not a headline still reads at fontSizeMedium.
 for (const name of names) {
     const raw = sources[name].match(/font\.pixelSize:\s*[0-9]/g) || [];
     check(raw.length === 0, `ui/${name} sizes no type with a raw pixel number`);
@@ -70,6 +72,30 @@ for (const name of names) {
     const margins = sources[name].match(/anchors\.margins:\s*Theme\.spacing\w+/g) || [];
     const off = margins.filter((line) => !/Theme\.spacing(S|XS)$/.test(line));
     check(off.length === 0, `ui/${name} insets its content by the compact scale only`);
+}
+
+// And the column a Section lays its groups out in spaces them by XS, not by the
+// S that frames the card. A Row is the other case: there S is the gap between a
+// card's two halves rather than the rhythm of the card's own lines.
+for (const name of names) {
+    const lines = sources[name].split("\n");
+    const off = [];
+    for (let i = 0; i < lines.length; i++) {
+        if (!/anchors\.margins:\s*Theme\.spacingS\s*$/.test(lines[i]))
+            continue;
+        let kind = "";
+        for (let j = i - 1; j >= 0 && kind === ""; j--) {
+            const open = lines[j].match(/^\s*([A-Z]\w*)\s*\{\s*$/);
+            if (open)
+                kind = open[1];
+        }
+        if (kind !== "Column")
+            continue;
+        const spacing = lines.slice(i + 1, i + 6).find((line) => /^\s*spacing:/.test(line)) || "";
+        if (!/Theme\.spacing(XS|XXS)\s*$/.test(spacing))
+            off.push(`line ${i + 1}: ${spacing.trim() || "no spacing"}`);
+    }
+    check(off.length === 0, `ui/${name} spaces a Section's own column by XS rather than by the framing S${off.length ? ` (${off.join(", ")})` : ""}`);
 }
 
 // --- The two things that make a card tall carry a compact size ---
@@ -87,8 +113,10 @@ check(/model: root\.tab \? root\.tab\.sections : \[\]/.test(tab),
 const overview = sources["OverviewSection.qml"];
 check(/spacing:\s*Theme\.spacingXS/.test(overview), "Overview rows are spaced by Theme.spacingXS");
 
-// --- The Popout body adds the host's own inset, not a second wider one ---
+// --- The Popout it sits in ---
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
+check(/popoutWidth:\s*380/.test(widget) && /popoutHeight:\s*740/.test(widget),
+      "the Popout is still 380 x 740: this pass buys room, it does not grow the panel");
 const body = widget.match(/popoutContent: Component \{[\s\S]*?\n    \}/);
 check(!!body, "the widget still declares popoutContent");
 if (body) {

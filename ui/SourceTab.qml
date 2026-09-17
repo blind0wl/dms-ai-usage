@@ -6,18 +6,19 @@ import qs.Common
 // (ADR 0003).
 //
 // The compact scale is stated here, because this is where a tab's rhythm lives.
-// An inset, and the gap between two Sections, are the same single size:
-// `Theme.spacingS`. The rhythm inside one Section is a step tighter,
-// `Theme.spacingXS`, with `Theme.spacingXXS` between a label and the value or
-// sub-line under it. A Section's headline is `Theme.fontSizeSmall` at
-// `Font.Medium`, which is DMS's own compact header idiom; body copy is already
-// at the scale's floor, `Theme.fontSizeSmall` itself. No Section invents a
-// number: every value it spaces or sizes with is a `Theme.spacing*` or
-// `Theme.fontSize*` token.
+// It is three steps and nothing wider: `Theme.spacingS` for an inset or for the
+// gap between two Sections, `Theme.spacingXS` for the rhythm inside one, and
+// `Theme.spacingXXS` where a label sits directly on the value under it. Which
+// in-card gap takes S and which takes XS is the Section's own call — a hero
+// card's two columns get S, a list row's get XS — but no Section reaches for the
+// roomier steps above S. A Section's headline is `Theme.fontSizeSmall` at
+// `Font.Medium`, which is DMS's own compact header idiom.
 //
-// A Section whose height is its content's carries a compact content size too (a
-// Window card's Ring, the activity chart), because there the drawn thing is the
-// height rather than the inset around it.
+// Two kinds of value are deliberately not on that scale. A drawn size is pixels,
+// because it is geometry rather than spacing: a Window card's Ring, the activity
+// chart's plot, a progress bar's height and radius. And a type size a step under
+// the scale's floor is written `Theme.fontSizeSmall - 1`, DMS's own idiom for it,
+// rather than as a bare number.
 //
 // Each Section component takes a `section` (its own entry in that list) and a
 // shared `ctx`: the resolved Source state for a Source's tab, the ranking for the

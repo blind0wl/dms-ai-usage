@@ -83,10 +83,12 @@ StyledRect {
             }
 
             // Supplements a cli login button rather than replacing it, and is the
-            // only way out for an API-key Source.
+            // only way out for an API-key Source. It shows wherever the card does,
+            // which is the two credential states that need setting up.
             SetupGuideLink {
                 api: root.api
                 labelKey: root.labelKey
+                shown: root.shown
             }
         }
 

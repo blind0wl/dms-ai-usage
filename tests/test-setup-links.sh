@@ -116,8 +116,8 @@ if (helper && base && docsUrl) {
 
 check(/onClicked:\s*Qt\.openUrlExternally\(root\.docsUrl\)/.test(link),
       "the link opens through Qt.openUrlExternally");
-check(/visible:\s*root\.docsUrl !== ""/.test(link),
-      "the link shows itself on the URL it opens");
+check(/visible:\s*root\.shown && root\.docsUrl !== ""/.test(link),
+      "the link shows itself only where it is asked for and has a URL to open");
 check(/cursorShape:\s*Qt\.PointingHandCursor/.test(link), "the link advertises itself as clickable");
 
 // The link reaches both places a Missing Source is met: its own tab's card and
@@ -125,8 +125,10 @@ check(/cursorShape:\s*Qt\.PointingHandCursor/.test(link), "the link advertises i
 // or a second copy of the URL would be the drift this file exists to catch.
 check(/SetupGuideLink\s*\{/.test(login), "the credentials card draws the shared Setup guide link");
 check(/labelKey:\s*root\.labelKey/.test(login), "the card's link uses the Source's own name");
+check(/shown:\s*root\.shown/.test(login), "the card's link shows wherever the card does");
 check(/SetupGuideLink\s*\{/.test(overview), "an Overview row draws the shared Setup guide link");
 check(/labelKey:\s*modelData\.labelKey/.test(overview), "the Overview's link uses that row's Source name");
+check(/shown:\s*row\.missing/.test(overview), "the Overview's link shows on the row that needs setting up");
 for (const [name, source] of [["credentials card", login], ["Overview", overview]]) {
     check(!/anchorFor|openUrlExternally|dms-ai-usage/.test(source),
           `the ${name} keeps no second slug, URL or URL-opening path`);

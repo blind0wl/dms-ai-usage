@@ -137,7 +137,7 @@ StyledRect {
 
         x: {
             var colW = (chartRow.width - 6 * Theme.spacingXS) / 7;
-            var cx = root.hoveredDay * (colW + 4) + colW / 2 - width / 2;
+            var cx = root.hoveredDay * (colW + Theme.spacingXS) + colW / 2 - width / 2;
             var chartX = chartRow.mapToItem(chartTooltip.parent, 0, 0).x;
             var raw = chartX + cx;
             return Math.max(Theme.spacingS, Math.min(raw, parent.width - width - Theme.spacingS));

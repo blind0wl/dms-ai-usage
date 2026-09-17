@@ -160,12 +160,11 @@ Column {
                     wrapMode: Text.WordWrap
                 }
 
-                // The Login Section's way out, on the row that needs it. The
-                // link hides itself for a Source it has no README section for;
-                // this gate is the other half of the same decision, because only
-                // a Missing row is being asked to go and set something up.
+                // The Login Section's way out, on the row that needs it. Only a
+                // Missing row is being asked to go and set something up, so only
+                // it asks the link to show.
                 SetupGuideLink {
-                    visible: row.missing
+                    shown: row.missing
                     api: root.api
                     labelKey: modelData.labelKey
                 }
