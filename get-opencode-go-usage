@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# The Account origins this script reports are display text: the path, directory
+# or environment variable a credential was found at, in the form the plugin's
+# own descriptions already use. A tilde in one is meant literally, not as a
+# shell expansion to perform.
+# shellcheck disable=SC2088
 set -eu
 
 # opencode Go's usage endpoint is undocumented. The captured response is:
@@ -27,28 +32,81 @@ OPENCODE_AUTH="${HOME}/.local/share/opencode/auth.json"
 
 ACCOUNT_NAMES=()
 ACCOUNT_KEYS=()
+ACCOUNT_ORIGINS=()
+ACCOUNT_SHADOWED=()
 
-# add_account <name> <api-key>
+# add_account <name> <api-key> <origin>
 # First registration of a name (or of a key) wins, so the order the callers
-# below run in is the precedence order.
+# below run in is the precedence order. The origin is where the key was found,
+# as the user would look for it: a file's path, the name of an environment
+# variable, or "custom" for an entry from the plugin's Custom Account list. It
+# is display text, so the two list delimiters are stripped from it just as they
+# are from a name.
 add_account() {
-    local name="$1" key="$2"
+    local name="$1" key="$2" origin="${3:-}"
 
-    # , | : are output delimiters, they cannot survive in an account name
+    # , | : are output delimiters, they cannot survive in an account name. An
+    # origin is display text: the list it rides is comma-separated and the other
+    # Account lists separate entries with |, so neither can survive in it either.
+    # The ":" that separates an origin from its name is left alone, because a
+    # pair is split on its first colon and a path may carry one.
     name="${name//[,|:]/}"
+    origin="${origin//[,|]/}"
     [ -n "$name" ] || return 0
     [ -n "$key" ] || return 0
 
-    local existing
-    for existing in "${ACCOUNT_NAMES[@]:-}"; do
-        [ "$existing" = "$name" ] && return 0
-    done
-    for existing in "${ACCOUNT_KEYS[@]:-}"; do
-        [ "$existing" = "$key" ] && return 0
-    done
+    local idx
+    # Nothing to clash with while the list is empty, and the guard keeps that
+    # true on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#ACCOUNT_NAMES[@]}" -gt 0 ]; then
+        for idx in "${!ACCOUNT_NAMES[@]}"; do
+            if [ "${ACCOUNT_NAMES[$idx]}" = "$name" ] || [ "${ACCOUNT_KEYS[$idx]}" = "$key" ]; then
+                # Only a clash a user can act on is reported: one side of it has
+                # to be a Custom Account. Two detected registrations clashing is
+                # the Script's own precedence, which its description explains.
+                if [ "$origin" = "custom" ] || [ "${ACCOUNT_ORIGINS[$idx]}" = "custom" ]; then
+                    ACCOUNT_SHADOWED+=("${ACCOUNT_NAMES[$idx]}|${name}:${origin}")
+                fi
+                return 0
+            fi
+        done
+    fi
 
     ACCOUNT_NAMES+=("$name")
     ACCOUNT_KEYS+=("$key")
+    ACCOUNT_ORIGINS+=("$origin")
+}
+
+# account_origins -> "name:origin,name:origin". The form the per-Account lists
+# already use, so the settings page parses one shape.
+account_origins() {
+    local out="" idx
+    # An empty list has nothing to join, and the guard keeps the expansion valid
+    # on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#ACCOUNT_NAMES[@]}" -gt 0 ]; then
+        for idx in "${!ACCOUNT_NAMES[@]}"; do
+            out="${out:+${out},}${ACCOUNT_NAMES[$idx]}:${ACCOUNT_ORIGINS[$idx]}"
+        done
+    fi
+    printf '%s' "$out"
+}
+
+# account_shadowed -> "<winner>|<name>:<origin>" for the registrations the list
+# refused because something already held their name or their value: what kept it,
+# then what lost and where it came from. The settings page is how the user learns
+# that a Custom Account took a detected one's place, which is otherwise only
+# visible as an API rejection. The winner makes that link explicit even when the
+# two names differ, as they do when the value is what clashed.
+account_shadowed() {
+    local out="" idx
+    # An empty list has nothing to join, and the guard keeps the expansion valid
+    # on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#ACCOUNT_SHADOWED[@]}" -gt 0 ]; then
+        for idx in "${!ACCOUNT_SHADOWED[@]}"; do
+            out="${out:+${out},}${ACCOUNT_SHADOWED[$idx]}"
+        done
+    fi
+    printf '%s' "$out"
 }
 
 # read_key <credentials-file> — the `opencode-go` entry's key, or empty.
@@ -58,19 +116,40 @@ read_key() {
 }
 
 pi_key=$(read_key "$PI_AUTH")
-[ -n "$pi_key" ] && add_account "default" "$pi_key"
+[ -n "$pi_key" ] && add_account "default" "$pi_key" "~/.pi/agent/auth.json"
 
 opencode_key=$(read_key "$OPENCODE_AUTH")
-[ -n "$opencode_key" ] && add_account "default" "$opencode_key"
+[ -n "$opencode_key" ] && add_account "default" "$opencode_key" "~/.local/share/opencode/auth.json"
 
-[ -n "${OPENCODE_GO_KEY:-}" ] && add_account "default" "$OPENCODE_GO_KEY"
-[ -n "${OPENCODE_API_KEY:-}" ] && add_account "default" "$OPENCODE_API_KEY"
+[ -n "${OPENCODE_GO_KEY:-}" ] && add_account "default" "$OPENCODE_GO_KEY" "OPENCODE_GO_KEY"
+[ -n "${OPENCODE_API_KEY:-}" ] && add_account "default" "$OPENCODE_API_KEY" "OPENCODE_API_KEY"
+
+LIST_ACCOUNTS=0
 
 for arg in "$@"; do
     case "$arg" in
-        *=*) add_account "${arg%%=*}" "${arg#*=}" ;;
+        "--list-accounts") LIST_ACCOUNTS=1 ;;
+        *=*) add_account "${arg%%=*}" "${arg#*=}" "custom" ;;
     esac
 done
+
+# The settings page's Account editor asks for the list on its own, with the same
+# name=value arguments the widget fetches with so that the two agree about which
+# Account a name refers to. This returns before the first request: opening the
+# settings page must not spend an API call.
+if [ "$LIST_ACCOUNTS" -eq 1 ]; then
+    # The listing answer says why it is empty when it is: an empty Account list
+    # is this Script's own Not installed state, and the settings page needs to
+    # know that as a state of the Source rather than as a verdict on the user's
+    # rows.
+    printf 'ACCOUNTS=%s\n' "$(IFS=,; echo "${ACCOUNT_NAMES[*]:-}")"
+    printf 'ACCOUNT_ORIGINS=%s\n' "$(account_origins)"
+    printf 'ACCOUNT_SHADOWED=%s\n' "$(account_shadowed)"
+    if [ "${#ACCOUNT_NAMES[@]}" -eq 0 ]; then
+        printf 'CREDS_STATUS=not_installed\n'
+    fi
+    exit 0
+fi
 
 # No key anywhere means the Source isn't installed at all rather than logged
 # out, so it stays hidden from both the Pill and the Popout. The opencode binary
@@ -85,6 +164,8 @@ SECONDARY_UTIL=0
 SECONDARY_RESET=
 CREDS_STATUS=not_installed
 ACCOUNTS=
+ACCOUNT_ORIGINS=
+ACCOUNT_SHADOWED=
 NOTINSTALLED
     exit 0
 fi

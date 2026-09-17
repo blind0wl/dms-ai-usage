@@ -185,6 +185,69 @@ var strings = {
         { fr: "Supprimer", es: "Eliminar" },
     "No items added yet":
         { fr: "Aucun élément ajouté pour le moment", es: "Todavía no se ha añadido ningún elemento" },
+    "Detected Accounts":
+        { fr: "Comptes détectés", es: "Cuentas detectadas" },
+    "Detected Profiles":
+        { fr: "Profils détectés", es: "Perfiles detectados" },
+    "Editable":
+        { fr: "Modifiable", es: "Editable" },
+    "Read-only":
+        { fr: "Lecture seule", es: "Solo lectura" },
+    "Found on this machine, not added here. Change them at their origin.":
+        {
+            fr: "Trouvés sur cette machine, pas ajoutés ici. Modifiez-les à leur source.",
+            es: "Se encuentran en este equipo, no se añaden aquí. Cámbialos en su origen."
+        },
+    "Detected from":
+        { fr: "Détecté depuis", es: "Detectado desde" },
+    "Origin unknown":
+        { fr: "Origine inconnue", es: "Origen desconocido" },
+    "overridden by your Custom Account":
+        { fr: "remplacé par votre compte personnalisé", es: "reemplazado por tu cuenta personalizada" },
+    "overridden by your Custom Profile":
+        { fr: "remplacé par votre profil personnalisé", es: "reemplazado por tu perfil personalizado" },
+    "not in use - this Source does not use it. Check its name and value.":
+        {
+            fr: "non utilisé - cette source ne l'utilise pas. Vérifiez son nom et sa valeur.",
+            es: "sin usar - esta fuente no lo utiliza. Comprueba su nombre y su valor."
+        },
+    "not in use - this Source is using":
+        {
+            fr: "non utilisé - cette source utilise",
+            es: "sin usar - esta fuente está usando"
+        },
+    "Not added: it would replace what this Source authenticates with.":
+        {
+            fr: "Non ajouté : cela remplacerait ce avec quoi cette source s'authentifie.",
+            es: "No se ha añadido: sustituiría lo que usa esta fuente para autenticarse."
+        },
+    "Add anyway":
+        { fr: "Ajouter quand même", es: "Añadir de todos modos" },
+    "Not added: this Source already uses this name or value.":
+        {
+            fr: "Non ajouté : cette source utilise déjà ce nom ou cette valeur.",
+            es: "No se ha añadido: esta fuente ya usa este nombre o este valor."
+        },
+    "Not added: the Source could not be read. Press Add again.":
+        {
+            fr: "Non ajouté : la source n'a pas pu être lue. Appuyez de nouveau sur Ajouter.",
+            es: "No se ha añadido: no se ha podido leer la fuente. Pulsa Añadir de nuevo."
+        },
+    "This Source is not installed, so nothing here is in use.":
+        {
+            fr: "Cette source n'est pas installée, donc rien ici n'est utilisé.",
+            es: "Esta fuente no está instalada, así que aquí no se usa nada."
+        },
+    "replacing what was detected on this machine":
+        {
+            fr: "remplace ce qui a été détecté sur cette machine",
+            es: "reemplaza lo que se ha detectado en este equipo"
+        },
+    "Could not read what this Source detects.":
+        {
+            fr: "Impossible de lire ce que cette source détecte.",
+            es: "No se ha podido leer lo que detecta esta fuente."
+        },
     // Login action
     "Not logged in":
         { fr: "Non connecté", es: "No has iniciado sesión" },

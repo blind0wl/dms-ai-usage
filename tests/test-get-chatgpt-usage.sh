@@ -407,6 +407,51 @@ assert_eq "$(echo "$OUTPUT15" | grep "^ACCOUNT_PRIMARY_UTIL=" | cut -d= -f2)" "d
 assert_eq "$(echo "$OUTPUT15" | grep "^ACCOUNT_SECONDARY_UTIL=" | cut -d= -f2)" "default:15,work:0" "the rejected Account's own secondary Window is reported, not masked by the healthy Account's"
 
 # ============================================================
+echo "=== Test 16: Listing mode reports every Account and where it came from ==="
+# ============================================================
+# The settings page asks the same Script the Popout asks, so the Accounts it
+# lists can never disagree with the selector. --list-accounts returns the list
+# and its origins without fetching anything, so opening the settings page
+# costs no request.
+ENV16=$(setup_env "test16")
+write_auth "$ENV16/.codex" 9999999999 "$(date -Iseconds)"
+
+# run_script sets CODEX_HOME, so that variable is what placed the directory.
+LIST16=$(run_script "$ENV16" --list-accounts)
+assert_eq "$(echo "$LIST16" | grep "^ACCOUNTS=" | cut -d= -f2)" "default" "listing mode lists the detected Account"
+assert_eq "$(echo "$LIST16" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME" "listing mode names CODEX_HOME as the origin when it decided the directory"
+assert_eq "$(echo "$LIST16" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
+
+LIST16B=$(HOME="$ENV16" CODEX_HOME='' PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" --list-accounts 2>/dev/null)
+assert_eq "$(echo "$LIST16B" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:~/.codex" "listing mode names the conventional path when no CODEX_HOME is set"
+
+# A Custom Account is reported as coming from the Custom Account list. It cannot
+# take the name "default", which the Codex home already holds, so both are
+# reported and the origin says which one the selector shows.
+LIST16C=$(run_script "$ENV16" --list-accounts "work=$ENV16/work")
+assert_eq "$(echo "$LIST16C" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "listing mode lists Custom Accounts beside detected ones"
+assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME,work:custom" "listing mode reports Custom and detected origins side by side"
+assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_SHADOWED=" | cut -d= -f2)" "" "no registration is refused when the names differ"
+
+# Here detection runs first, so a Custom Account that takes the Codex home's name
+# is the one refused. It is still reported, with the origin it came from, so the
+# settings page can mark the row the selector does not offer.
+LIST16E=$(run_script "$ENV16" --list-accounts "default=$ENV16/elsewhere")
+assert_eq "$(echo "$LIST16E" | grep "^ACCOUNTS=" | cut -d= -f2)" "default" "the detected Account keeps the name"
+assert_eq "$(echo "$LIST16E" | grep "^ACCOUNT_SHADOWED=" | cut -d= -f2)" "default|default:custom" "the refused Custom registration is reported with its origin"
+
+# Without codex, the not-installed answer is what the listing mode returns, so it
+# carries the origins key too: a Source the Script cannot read Accounts for must
+# not look like one it read and found empty.
+ENV16D=$(setup_env "test16d")
+LIST16D=$(HOME="$ENV16D" CODEX_HOME="$ENV16D/.codex" PATH="$NOCODEX_PATH" bash "$SCRIPT" --list-accounts 2>/dev/null)
+assert_eq "$(echo "$LIST16D" | grep "^ACCOUNTS=" | cut -d= -f2)" "" "an uninstalled Source lists no Account"
+assert_eq "$(echo "$LIST16D" | grep -c "^ACCOUNTS=")" "1" "an uninstalled Source still answers with the Account key"
+assert_eq "$(echo "$LIST16D" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
+assert_eq "$(echo "$LIST16D" | grep -c "^ACCOUNT_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
+assert_eq "$(echo "$LIST16D" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an uninstalled Source says so in its listing answer"
+
+# ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -783,6 +783,50 @@ CREDS28B=$(echo "$OUTPUT28B" | grep "^CREDS_STATUS=" | cut -d= -f2)
 assert_eq "$CREDS28B" "expired" "Ancient fallback reports CREDS_STATUS=expired, not ok"
 
 # ============================================================
+echo "=== Test 29: Listing mode reports every Profile and where it came from ==="
+# ============================================================
+# The settings page asks the same Script the Popout asks, so the Profiles it
+# lists can never disagree with the selector. --list-accounts returns the list
+# and its origins without fetching anything, so opening the settings page
+# costs no request.
+ENV29=$(setup_env "test29")
+LIST29=$(run_script "$ENV29" --list-accounts)
+assert_eq "$(echo "$LIST29" | grep "^PROFILES=" | cut -d= -f2)" "default" "listing mode lists the detected Profile"
+assert_eq "$(echo "$LIST29" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude" "listing mode names the Claude config directory as the origin"
+assert_eq "$(echo "$LIST29" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
+
+# Each detector names its own directory, so the settings page can say which one
+# found the Profile rather than repeating the descriptor's prose.
+ENV29B=$(setup_env "test29b")
+mkdir -p "$ENV29B/.ccs/instances/work/projects/proj1"
+mkdir -p "$ENV29B/.ccp/profiles"
+mkdir -p "$ENV29B/ccpdata/ranqia/projects/proj1"
+echo "CLAUDE_CONFIG_DIR=$ENV29B/ccpdata/ranqia" > "$ENV29B/.ccp/profiles/ranqia.env"
+LIST29B=$(run_script "$ENV29B" --list-accounts)
+assert_eq "$(echo "$LIST29B" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles" "listing mode names each detector's own directory"
+
+# A Custom Profile is reported as coming from the Custom Account list.
+mkdir -p "$ENV29B/manual/work/projects/proj1"
+LIST29C=$(run_script "$ENV29B" --list-accounts "manual=$ENV29B/manual/work")
+assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles,manual:custom" "a Custom Profile reports the Custom Account list as its origin"
+
+mkdir -p "$ENV29B/elsewhere/work/projects"
+LIST29E=$(run_script "$ENV29B" --list-accounts "default=$ENV29B/elsewhere/work")
+assert_eq "$(echo "$LIST29E" | grep "^PROFILES=" | cut -d= -f2)" "default,work,ranqia" "the detected Profile keeps the name"
+assert_eq "$(echo "$LIST29E" | grep "^PROFILE_SHADOWED=" | cut -d= -f2)" "default|default:custom" "the refused Custom registration is reported with its origin"
+
+# Without the claude CLI, the not-installed answer is what the listing mode
+# returns, so it carries the origins key too: a Source the Script cannot read
+# Profiles for must not look like one it read and found empty.
+ENV29D=$(setup_env "test29d")
+LIST29D=$(HOME="$ENV29D" PATH="/usr/bin:/bin" bash "$SCRIPT" --list-accounts 2>/dev/null)
+assert_eq "$(echo "$LIST29D" | grep "^PROFILES=" | cut -d= -f2)" "" "an uninstalled Source lists no Profile"
+assert_eq "$(echo "$LIST29D" | grep -c "^PROFILES=")" "1" "an uninstalled Source still answers with the Profile key"
+assert_eq "$(echo "$LIST29D" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
+assert_eq "$(echo "$LIST29D" | grep -c "^PROFILE_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
+assert_eq "$(echo "$LIST29D" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an uninstalled Source says so in its listing answer"
+
+# ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

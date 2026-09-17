@@ -21,6 +21,39 @@ The Claude UI's word for an Account, because Claude's Accounts are config
 directories rather than credentials. Use it only in Claude-facing copy.
 _Avoid_: using it as the general term; that is Account.
 
+**Script**:
+One Source's own program: the file the plugin runs to find that Source's Accounts,
+report them under their Origins and fetch their usage. The widget and the settings
+page ask the same Script the same questions, so the two cannot disagree about what
+exists.
+_Avoid_: helper, executable, plugin binary
+
+**Detected Account**:
+An Account a Source's Script finds for itself rather than being handed one: a
+credential or config directory the machine already had, in the Source's own
+config, another tool's config, or the environment. The plugin cannot add or
+remove one, so the settings page lists Detected Accounts read-only, each under
+the Origin it was found at. Describing the detection as automatic is fine; it is
+the Account that is Detected, not automatic.
+_Avoid_: auto, built-in, hidden, automatic account
+
+**Custom Account**:
+An Account the user added to a Source's setting list. The plugin owns it: the
+settings page can edit it, and the Script is handed it as an argument instead of
+finding it itself. A Script resolves a clash between two Accounts - a Custom one
+and a Detected one, or two Custom ones - by keeping the first registration of a
+name or of a value, and reports the Origin it kept. The Account that lost stays
+listed: a Custom one as not in use, a Detected one as overridden, because either
+way the Source is authenticating with something the user did not expect.
+_Avoid_: manual account, user account, settings account
+
+**Origin**:
+Where a Detected Account's credential was found, as the user would look for it:
+a file's path, a directory a profile manager keeps, or an environment variable's
+name. A Script reports one per Account it lists, and _custom_ for an Account that
+came from the Custom Account list rather than detection.
+_Avoid_: source, discovery, provider
+
 **Window**:
 A rate-limited period a Source allows usage in, with a length, a Utilisation and
 a reset time. A Source has up to two, called primary and secondary. A length

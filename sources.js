@@ -59,6 +59,329 @@ function pickFields(id, prefix, suffixes) {
     return out;
 }
 
+// The output key every Script reports its credential state under, and the value
+// that means the Source is not on this machine at all. These are Source-level
+// keys rather than a descriptor's, so both readers share them from here.
+var STATUS_KEY = "CREDS_STATUS";
+var NOT_INSTALLED = "not_installed";
+
+// The origin tag a Source's Script puts on an Account it took from the Custom
+// Account list rather than detecting. Every other origin names where the
+// credential was found: a file's path, or an environment variable's name. Both
+// are the user's own words for it, so they are shown as they come.
+var CUSTOM_ORIGIN = "custom";
+
+// What a Script is asked for when the settings page wants its Account list and
+// the origins behind it, without any usage fetch. Detection is the Script's
+// own, so the settings editor asks it rather than re-deriving it: a second
+// implementation could disagree with the selector about what exists.
+var LIST_ACCOUNTS_FLAG = "--list-accounts";
+
+// The path to a Source's Script under the plugin directory DMS installs plugins
+// in. Built here rather than at each call site because the widget's fetch and
+// the settings editor's listing call have to reach the same file.
+function scriptPath(pluginDirectory, pluginId, descriptor) {
+    if (!pluginDirectory || !pluginId || !descriptor || !descriptor.script)
+        return "";
+    return pluginDirectory + "/" + pluginId + "/" + descriptor.script;
+}
+
+// Builds the "name=value" arguments a Source's Script is invoked with, one per
+// Account in the settings list that carries both halves. The descriptor's
+// argField says whether the value is a config directory or an API key.
+//
+// The widget's fetch and the settings editor's listing both build their
+// arguments here, because the Script keeps the first registration of a name or
+// of a value: different arguments could list an Account under a name the
+// selector does not show it under, which is the disagreement this whole path
+// exists to avoid.
+function accountArgs(descriptor, list) {
+    if (!descriptor || !descriptor.accounts || !Array.isArray(list))
+        return [];
+    var field = descriptor.accounts.argField;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+        var a = list[i];
+        if (a && a.name && a[field])
+            out.push(a.name + "=" + a[field]);
+    }
+    return out;
+}
+
+// The Accounts a Source's Script reports from outside the Custom Account list,
+// in the order the Script reported them, each with the place it was detected.
+// These are the Accounts the Popout's selector offers and the settings editor
+// cannot edit - plus, marked `overridden`, the detected registrations the Script
+// refused because a Custom Account had already taken their name or their value.
+//
+// `names` is the Script's Account list (the descriptor's listKey), `origins` its
+// "name:origin" pairs (its originsKey) and `shadowed` the registrations it
+// refused (its shadowedKey), all comma-separated as the wire has them. A refused
+// registration is "<winner>|<name>:<origin>": what kept the name or the value,
+// then what lost and where it came from. An Account the Custom Account list
+// provided is reported with the CUSTOM_ORIGIN tag and dropped from the first
+// list: it is the editor's own row already.
+//
+// An overridden registration matters as much as a live one. The Script keeps the
+// first registration of a name or of a value, so a Custom Account that takes a
+// detected one's place changes which credential the Source authenticates with,
+// and the user has to be able to see that rather than meeting it as a rejected
+// key. The winner is carried so the editor can name it: on a clash of values the
+// two names differ, and a row that only says "a Custom Account" would leave the
+// user guessing which of their rows did it.
+//
+// An Account the Script lists without an origin is still reported, with an empty
+// origin. It is detected - the Custom Account list did not provide it - and
+// dropping it would put the selector and the editor back where they started,
+// which is worse than admitting the Script did not say where it found it.
+function detectedAccounts(names, origins, shadowed) {
+    var listed = splitList(names);
+    var byName = originsByName(origins);
+
+    var out = [];
+    for (var i = 0; i < listed.length; i++) {
+        var name = listed[i];
+        var known = Object.prototype.hasOwnProperty.call(byName, name);
+        if (known && byName[name] === CUSTOM_ORIGIN)
+            continue;
+        out.push({ name: name, origin: known ? byName[name] : "", overridden: false, winner: "" });
+    }
+
+    var pairs = splitList(shadowed);
+    for (var j = 0; j < pairs.length; j++) {
+        var refused = refusedRegistration(pairs[j]);
+        if (!refused)
+            continue;
+        // A Custom Account the Script refused is the editor's own row's business,
+        // and a detected Account still registered under that name was not lost.
+        if (refused.origin === CUSTOM_ORIGIN)
+            continue;
+        var live = Object.prototype.hasOwnProperty.call(byName, refused.name);
+        if (live && byName[refused.name] !== CUSTOM_ORIGIN)
+            continue;
+        out.push({ name: refused.name, origin: refused.origin, overridden: true, winner: refused.winner });
+    }
+    return out;
+}
+
+// One refused registration, "<winner>|<name>:<origin>", as its three fields, or
+// null when the entry names no Account. The winner is empty for an entry that
+// predates it, which leaves the row marked with no name to blame.
+function refusedRegistration(entry) {
+    var bar = entry.indexOf("|");
+    var winner = bar < 0 ? "" : entry.substring(0, bar);
+    var lost = bar < 0 ? entry : entry.substring(bar + 1);
+    var at = lost.indexOf(":");
+    if (at < 0)
+        return null;
+    return { winner: winner, name: lost.substring(0, at), origin: lost.substring(at + 1) };
+}
+
+// The origin of the detected Account a Custom Account row displaced, or null when
+// the row displaced nothing. An empty string is a displaced Account whose origin
+// the Script did not name, which is still a displacement. `detected` is what
+// detectedAccounts() returned, so the two lists cannot disagree about which row is
+// authenticating instead.
+function displacedOrigin(detected, name) {
+    for (var i = 0; Array.isArray(detected) && i < detected.length; i++) {
+        if (detected[i].overridden && detected[i].winner === name)
+            return detected[i].origin;
+    }
+    return null;
+}
+
+// The detected Account that kept the name or the value a Custom Account row was
+// refused for, or null when no detected Account did: the row's registration can
+// also be refused for something the Script cannot name, such as a config
+// directory that does not exist, or because another Custom row took the name. Its
+// origin is empty when the Script named the Account without saying where it is.
+// `origins` and `shadowed` are the Script's own listing, so the Account this
+// names is the one the Source authenticates with in the row's place.
+function shadowingAccount(origins, shadowed, name) {
+    var byName = originsByName(origins);
+    var pairs = splitList(shadowed);
+    for (var i = 0; i < pairs.length; i++) {
+        var refused = refusedRegistration(pairs[i]);
+        if (!refused)
+            continue;
+        // Only the registration the Custom row itself asked for is its business.
+        if (refused.name !== name || refused.origin !== CUSTOM_ORIGIN)
+            continue;
+        return detectedWinner(byName, refused);
+    }
+    return null;
+}
+
+// The detected Account a refused Custom Account registration lost to, or null when
+// the winner was another Custom row (adding it back would change no credential) or
+// when the entry names no winner at all. Its origin is empty when the Script named
+// the Account without saying where it is - which still names an Account the user
+// has to be told about. Both readers that hand this back to the editor go through
+// here, so a refused row reads the same whichever one asked.
+function detectedWinner(byName, refused) {
+    if (refused.winner === "")
+        return null;
+    var known = Object.prototype.hasOwnProperty.call(byName, refused.winner);
+    var origin = known ? byName[refused.winner] : "";
+    if (origin === CUSTOM_ORIGIN)
+        return null;
+    return { name: refused.winner, origin: origin };
+}
+
+// One Script listing as a value: the four things the Script answered with, so a
+// caller can compare two listings or hand one on without the wire strings
+// travelling separately.
+function listing(names, origins, shadowed, answered) {
+    return {
+        names: names || "",
+        origins: origins || "",
+        shadowed: shadowed || "",
+        answered: answered === true
+    };
+}
+
+// What adding a Custom Account row would do to the credential the Source
+// authenticates with, judged from two of the Script's own listings: the one the
+// editor is showing, and the one the Script answers when the row is appended to
+// the Custom Account list. The Script keeps the first registration of a name or
+// of a value, so it, and not the editor, is what says whether the row takes a
+// detected Account's place or is dropped in favour of one. Comparing the two keeps
+// a clash the list already had from being blamed on the new row.
+//
+// Returns null when the row is safe to add, and otherwise why it is not:
+//   { reason: "unreadable" }
+//       no listing answered for this row, so there is nothing to decide on. The
+//       caller must not save: a row added without an answer is the accident this
+//       guard exists to stop.
+//   { reason: "taken", name, origin, lost }
+//       the row would take the place of the detected Account `name`, found at
+//       `origin`. `lost` is true when the row wins and the Script drops that
+//       detected Account, false when the Script keeps the detected Account and
+//       drops the row instead - either way this row is not what the user expects.
+//       A clash between two Custom rows resolves to null: it changes no detected
+//       credential, and the row it makes inert is already flagged as such.
+function addOutcome(before, after, candidateName) {
+    if (!before || !before.answered || !after || !after.answered)
+        return { reason: "unreadable" };
+
+    var had = splitList(before.shadowed);
+    var pairs = splitList(after.shadowed);
+    var byName = originsByName(after.origins);
+    for (var i = 0; i < pairs.length; i++) {
+        // A clash the list already had is not this row's doing.
+        if (had.indexOf(pairs[i]) >= 0)
+            continue;
+        var refused = refusedRegistration(pairs[i]);
+        if (!refused)
+            continue;
+        // The row won, and the Script dropped a detected registration for it.
+        if (refused.winner === candidateName && refused.origin !== CUSTOM_ORIGIN)
+            return { reason: "taken", name: refused.name, origin: refused.origin, lost: true };
+        // The row lost to a detected registration, which the Script names. An
+        // origin it did not give still leaves the Account to name, so the row is
+        // refused either way: it would do nothing.
+        if (refused.name === candidateName && refused.origin === CUSTOM_ORIGIN) {
+            var winner = detectedWinner(byName, refused);
+            if (winner === null)
+                continue;
+            return { reason: "taken", name: winner.name, origin: winner.origin, lost: false };
+        }
+    }
+    return null;
+}
+
+// The rows of a Custom Account list a Script did not register, by their index in
+// that list, so the editor marks a row rather than a name: two rows can carry the
+// same name, and only the first of them is one the Script kept. The Popout's
+// selector offers only what the Script kept, so these rows do nothing - the
+// Script resolves the clash by keeping the first registration of a name or of a
+// value, and only it can say which those were, which is why its listing reports
+// where every Account came from.
+//
+// `list` is the Custom Account list from the plugin settings, the form the
+// editor holds it in, and `answered` says whether the Script has answered with
+// its Account list at all.
+//
+// Without an answer there is nothing to hand out a verdict on: that is a listing
+// still in flight, or one that failed, and blaming the user's rows for a Script
+// that never ran would be the same lie as calling a failed listing an empty one.
+// An answer that names no Account is different: the Script ran and registered
+// nothing, which is exactly when a row the user added does nothing.
+function unregisteredRows(names, origins, list, answered) {
+    if (!answered)
+        return [];
+    var listed = splitList(names);
+    var byName = originsByName(origins);
+    var seen = {};
+    var out = [];
+    for (var i = 0; Array.isArray(list) && i < list.length; i++) {
+        var row = list[i];
+        if (!row || !row.name)
+            continue;
+        // A name the Script registered as a Custom Account is the one the
+        // selector offers, and only its first row is that registration.
+        var first = !Object.prototype.hasOwnProperty.call(seen, row.name);
+        seen[row.name] = true;
+        var kept = first && listed.indexOf(row.name) >= 0 && byName[row.name] === CUSTOM_ORIGIN;
+        if (!kept)
+            out.push(i);
+    }
+    return out;
+}
+
+// One comma-separated wire list as an array. An absent or empty value is no
+// entries rather than one empty one.
+function splitList(value) {
+    if (typeof value !== "string" || value.length === 0)
+        return [];
+    return value.split(",");
+}
+
+// One comma-separated origin list as a name -> origin map. A pair with no colon
+// names no origin, so it is skipped rather than guessed at.
+function originsByName(origins) {
+    return nameValueMap(splitList(origins));
+}
+
+// One "name:value" entry list as a name -> value map. The Scripts' per-Account
+// keys, their origins and their model breakdowns all wear this shape, so it is
+// parsed in one place; only the separator differs by key, and the caller splits
+// on its own. `mapValue` transforms each value on the way in, for a value that is
+// itself a list. An entry with no colon names no value, so it is skipped rather
+// than guessed at.
+function nameValueMap(entries, mapValue) {
+    var out = {};
+    for (var i = 0; Array.isArray(entries) && i < entries.length; i++) {
+        var at = entries[i].indexOf(":");
+        if (at < 0)
+            continue;
+        var value = entries[i].substring(at + 1);
+        out[entries[i].substring(0, at)] = mapValue ? mapValue(value) : value;
+    }
+    return out;
+}
+
+// The command that runs a Source's Script: a watchdog around bash, because a run
+// that never exits (a hung CLI, a stalled curl) would otherwise leave a fetch or
+// a settings page waiting on it. Built here so the widget's fetch and the
+// settings editor's listing are started the same way, `args` being whatever that
+// caller passes the Script.
+function scriptCommand(pluginDirectory, pluginId, descriptor, args) {
+    return ["timeout", "120", "bash", scriptPath(pluginDirectory, pluginId, descriptor)].concat(args || []);
+}
+
+// One line of a Script's output split into its key and its value, or null when
+// the line carries no "=". Both the widget's fetch parser and the settings
+// editor's listing parser read the same wire, so they split it the same way.
+function wirePair(line) {
+    if (!line)
+        return null;
+    var at = line.indexOf("=");
+    if (at < 0)
+        return null;
+    return { key: line.substring(0, at), value: line.substring(at + 1) };
+}
+
 var SOURCES = [
     {
         id: "claude",
@@ -87,6 +410,20 @@ var SOURCES = [
             // Claude lists its Accounts under PROFILES; every other Source uses
             // ACCOUNTS. The widget reads whichever the descriptor names.
             listKey: "PROFILES",
+            // Where each Profile was found, one "name:origin" pair per entry.
+            // The settings editor reads it to show what it does not own.
+            originsKey: "PROFILE_ORIGINS",
+            // The registrations the Script refused, one "name:origin" pair per
+            // entry. A Custom Profile that took a detected one's place is here,
+            // and the editor shows the detected one as overridden by it.
+            shadowedKey: "PROFILE_SHADOWED",
+            // What the editor calls that state on Claude's page, where an
+            // Account is a Profile throughout the copy.
+            overriddenKey: "overridden by your Custom Profile",
+            // The heading the settings editor gives the read-only list of what
+            // the Script found. It follows the Source's own word for an
+            // Account, so Claude's page says Profiles throughout.
+            detectedTitleKey: "Detected Profiles",
             // Claude's per-Account keys keep PROFILE_ because get-claude-usage
             // is upstream's file and those names are its existing output
             // contract. Every other Source declares ACCOUNT_, the general term
@@ -172,6 +509,10 @@ var SOURCES = [
         accounts: {
             settingKey: "customChatgptAccounts",
             listKey: "ACCOUNTS",
+            originsKey: "ACCOUNT_ORIGINS",
+            shadowedKey: "ACCOUNT_SHADOWED",
+            overriddenKey: "overridden by your Custom Account",
+            detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "path",
             labelKey: "Account",
@@ -251,6 +592,10 @@ var SOURCES = [
             // are passed to the script as name=api-key, like Z.ai.
             settingKey: "customOpencodeAccounts",
             listKey: "ACCOUNTS",
+            originsKey: "ACCOUNT_ORIGINS",
+            shadowedKey: "ACCOUNT_SHADOWED",
+            overriddenKey: "overridden by your Custom Account",
+            detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
@@ -312,6 +657,10 @@ var SOURCES = [
             // passed to the script as name=api-key rather than name=path.
             settingKey: "customZaiAccounts",
             listKey: "ACCOUNTS",
+            originsKey: "ACCOUNT_ORIGINS",
+            shadowedKey: "ACCOUNT_SHADOWED",
+            overriddenKey: "overridden by your Custom Account",
+            detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
