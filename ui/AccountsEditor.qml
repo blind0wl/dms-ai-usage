@@ -149,6 +149,25 @@ Column {
         saveItems(updated);
     }
 
+    // The warning line a Custom Account row carries, or "" when it needs none.
+    // A row the Script did not register is either shadowed by a detected Account -
+    // which the Script names, because a clash of values puts a row of another name
+    // in its place - or refused for something the Script cannot name, such as a
+    // config directory that does not exist.
+    function customRowStatus(index, name) {
+        if (root.unregistered.indexOf(index) < 0) {
+            var replaced = Sources.displacedOrigin(root.detected, name);
+            return replaced
+                ? root.settingsRoot.tr("replacing what the Script detected") + " (" + replaced + ")"
+                : "";
+        }
+        var shadowing = Sources.shadowingAccount(root.listedOrigins, root.listedShadowed, name);
+        if (shadowing)
+            return root.settingsRoot.tr("not in use - the Script kept") + " \"" + shadowing.name + "\" ("
+                + root.settingsRoot.tr("Detected from") + " " + shadowing.origin + ")";
+        return root.settingsRoot.tr("not in use - the Script did not register it. Check its name and value.");
+    }
+
     // --- Asking the Script ---
 
     // The command is built here, as the list is asked for, rather than bound to a
@@ -295,21 +314,16 @@ Column {
                 required property int index
                 required property var modelData
 
-                // The Script registered no Custom Account for this row, so
-                // something else holds the name or the value the user typed: the
-                // selector offers that one and this row does nothing.
-                readonly property bool unused: root.unregistered.indexOf(index) >= 0
-                // The Script refused a detected registration because of this row,
-                // so this is the row the Source authenticates with instead of the
-                // key that was found on the machine.
-                readonly property string replaces: unused ? "" : Sources.displacedOrigin(root.detected, modelData.name)
-                readonly property bool flagged: unused || replaces.length > 0
+                // The Script's verdict on this row: it was refused, or it took a
+                // detected Account's place. Either way the Source authenticates
+                // with something the user should be told about.
+                readonly property string status: root.customRowStatus(index, modelData.name)
 
                 width: parent.width
-                height: flagged ? 62 : 44
+                height: status.length > 0 ? 62 : 44
                 radius: Theme.cornerRadius
                 color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                border.width: flagged ? 1 : 0
+                border.width: status.length > 0 ? 1 : 0
                 border.color: Theme.withAlpha(Theme.warning, 0.5)
 
                 Column {
@@ -367,7 +381,7 @@ Column {
                     Row {
                         width: parent.width
                         spacing: Theme.spacingXXS
-                        visible: flagged
+                        visible: status.length > 0
 
                         DankIcon {
                             anchors.verticalCenter: parent.verticalCenter
@@ -379,9 +393,7 @@ Column {
                         StyledText {
                             width: parent.width - 14 - Theme.spacingXXS
                             anchors.verticalCenter: parent.verticalCenter
-                            text: unused
-                                ? root.settingsRoot.tr("not in use - the Script did not register it. Check its name and value.")
-                                : root.settingsRoot.tr("replacing what the Script detected") + " (" + replaces + ")"
+                            text: status
                             color: Theme.warning
                             font.pixelSize: Theme.fontSizeSmall
                             elide: Text.ElideRight

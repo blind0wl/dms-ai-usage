@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -306,6 +306,26 @@ check(displaced(JSON.parse(listed("work", "work:custom", "")), "work") === "",
 check(displaced(null, "work") === "" && displaced([], "work") === "",
       "displacedOrigin reports nothing for a missing listing");
 
+// The other half of the same question: which detected Account kept what a Custom
+// row asked for. The Script names it, and on a clash of values the two names
+// differ, so without this the user cannot tell which detected Account is in the
+// refused row's place.
+const keptBy = (origins, shadowed, name) => JSON.stringify(reg.shadowingAccount(origins, shadowed, name));
+check(keptBy("default:CODEX_HOME", "default|mine:custom", "mine") === JSON.stringify({ name: "default", origin: "CODEX_HOME" }),
+      "shadowingAccount names the detected Account that kept a Custom row's name or value");
+check(keptBy("default:CODEX_HOME", "default|other:custom", "mine") === "null",
+      "shadowingAccount reports nothing for a Custom row the Script refused for another reason");
+check(keptBy("work:custom", "work|work:custom", "work") === "null",
+      "shadowingAccount reports nothing when another Custom row kept the name");
+check(keptBy("default:CODEX_HOME", "default|mine:custom", "default") === "null",
+      "shadowingAccount reports nothing for a row the Script registered as detected");
+check(keptBy("", "ghost|mine:custom", "mine") === "null",
+      "shadowingAccount reports nothing when the winner has no origin to name");
+check(keptBy("default:CODEX_HOME", "mine:custom", "mine") === "null",
+      "shadowingAccount reports nothing for a refused registration that names no winner");
+check(keptBy(null, null, "mine") === "null" && keptBy("default:CODEX_HOME", "default|mine:custom", "") === "null",
+      "shadowingAccount reports nothing for a missing listing or a nameless row");
+
 // The Custom Accounts the Script did not register. Its listing is the only
 // source of that fact: the settings list cannot tell whether the Script kept a
 // row, and the Popout's selector offers only what the Script kept.
@@ -429,8 +449,8 @@ check(/listProcess\.command\s*=/.test(editor) && !/\blistCommand\b/.test(editor)
       "the settings editor builds the Script's command as it asks, rather than starting a cached one");
 check(/modelData\.overridden/.test(editor) && /modelData\.winner/.test(editor),
       "the settings editor renders a detected Account a Custom one replaced, and names the row that did it");
-check(editor.includes("Sources.displacedOrigin("),
-      "the settings editor marks the Custom row that is authenticating instead of a detected Account");
+check(editor.includes("Sources.displacedOrigin(") && editor.includes("Sources.shadowingAccount("),
+      "the settings editor names what each Custom row took the place of, and what took its own");
 check(/!root\.settingsRoot\.pluginService/.test(editor),
       "the settings editor does not ask the Script for a listing before the store it reads is available");
 

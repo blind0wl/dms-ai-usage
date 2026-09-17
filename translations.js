@@ -211,6 +211,11 @@ var strings = {
             fr: "non utilisé - le script ne l'a pas enregistré. Vérifiez son nom et sa valeur.",
             es: "sin usar - el script no lo ha registrado. Comprueba su nombre y su valor."
         },
+    "not in use - the Script kept":
+        {
+            fr: "non utilisé - le script a gardé",
+            es: "sin usar - el script ha conservado"
+        },
     "replacing what the Script detected":
         {
             fr: "remplace ce que le script a détecté",

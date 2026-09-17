@@ -175,6 +175,35 @@ function displacedOrigin(detected, name) {
     return "";
 }
 
+// The detected Account that kept the name or the value a Custom Account row was
+// refused for, or null when no detected Account did: the row's registration can
+// also be refused for something the Script cannot name, such as a config
+// directory that does not exist, or because another Custom row took the name.
+// `origins` and `shadowed` are the Script's own listing, so the Account this
+// names is the one the Source authenticates with in the row's place.
+function shadowingAccount(origins, shadowed, name) {
+    var byName = originsByName(origins);
+    var pairs = splitList(shadowed);
+    for (var i = 0; i < pairs.length; i++) {
+        var bar = pairs[i].indexOf("|");
+        if (bar < 0)
+            continue;
+        var winner = pairs[i].substring(0, bar);
+        var lost = pairs[i].substring(bar + 1);
+        var at = lost.indexOf(":");
+        if (at < 0)
+            continue;
+        // Only the registration the Custom row itself asked for is its business.
+        if (lost.substring(0, at) !== name || lost.substring(at + 1) !== CUSTOM_ORIGIN)
+            continue;
+        var origin = Object.prototype.hasOwnProperty.call(byName, winner) ? byName[winner] : "";
+        if (origin === "" || origin === CUSTOM_ORIGIN)
+            return null;
+        return { name: winner, origin: origin };
+    }
+    return null;
+}
+
 // The rows of a Custom Account list a Script did not register, by their index in
 // that list, so the editor marks a row rather than a name: two rows can carry the
 // same name, and only the first of them is one the Script kept. The Popout's
