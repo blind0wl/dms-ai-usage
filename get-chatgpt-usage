@@ -527,7 +527,7 @@ echo "ALLTIME_SESSIONS=${ALLTIME_SESSIONS}"
 echo "ALLTIME_MESSAGES=${ALLTIME_MESSAGES}"
 echo "FIRST_SESSION=${FIRST_SESSION}"
 echo "ACCOUNTS=${ACCOUNTS}"
-# The widget's account adapter reads these PROFILE_* keys and overlays them on
+# The Popout's account adapter reads these PROFILE_* keys and overlays them on
 # the selected Account. The names are Claude's: the primary Window maps to the
 # five-hour pair and the secondary to the seven-day pair, even though ChatGPT
 # reports its own lengths, so read no window length into the name. #29 replaces

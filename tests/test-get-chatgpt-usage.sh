@@ -113,7 +113,7 @@ for key in $EXPECTED_KEYS; do
     fi
 done
 
-# The widget's account adapter reads PROFILE_*, so the old ACCOUNT_* namespace is
+# The Popout's account adapter reads PROFILE_*, so the old ACCOUNT_* namespace is
 # dead output and must be gone. ACCOUNTS is the Source-level list and stays.
 assert_no_match "$OUTPUT1" "^ACCOUNT_" "no per-Account ACCOUNT_* keys remain"
 assert_match "$OUTPUT1" "^ACCOUNTS=" "the Source-level ACCOUNTS key stays"
@@ -326,7 +326,7 @@ else
 fi
 
 # ============================================================
-echo "=== Test 14: Per-Account readings the widget overlays ==="
+echo "=== Test 14: Per-Account readings the Popout overlays ==="
 # ============================================================
 # Two Accounts with different credentials and different local token counts, so
 # each PROFILE_* list has something to tell them apart by.
