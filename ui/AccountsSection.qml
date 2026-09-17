@@ -42,14 +42,14 @@ Item {
     Component {
         id: accountTabsComponent
         Row {
-            spacing: Theme.spacingXS
+            spacing: Theme.spacingXXS
 
             Repeater {
                 model: root.accounts
                 delegate: Rectangle {
                     required property var modelData
 
-                    width: tabLabel.implicitWidth + Theme.spacingM * 2
+                    width: tabLabel.implicitWidth + Theme.spacingS * 2
                     height: 32
                     radius: 16
                     color: root.selected === modelData ? Theme.primary : Theme.surfaceVariant
@@ -91,9 +91,9 @@ Item {
 
             Row {
                 anchors.fill: parent
-                anchors.leftMargin: Theme.spacingM
-                anchors.rightMargin: Theme.spacingM
-                spacing: Theme.spacingXS
+                anchors.leftMargin: Theme.spacingS
+                anchors.rightMargin: Theme.spacingS
+                spacing: Theme.spacingXXS
 
                 StyledText {
                     anchors.verticalCenter: parent.verticalCenter
@@ -132,14 +132,14 @@ Item {
                 anchors.topMargin: 4
                 anchors.left: parent.left
                 width: parent.width
-                height: dropdownCol.implicitHeight + Theme.spacingS * 2
+                height: dropdownCol.implicitHeight + Theme.spacingXS * 2
                 radius: 8
                 color: Theme.surfaceContainer
 
                 Column {
                     id: dropdownCol
                     anchors.fill: parent
-                    anchors.margins: Theme.spacingS
+                    anchors.margins: Theme.spacingXS
                     spacing: 2
 
                     Repeater {
@@ -155,7 +155,7 @@ Item {
                             StyledText {
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.left: parent.left
-                                anchors.leftMargin: Theme.spacingXS
+                                anchors.leftMargin: Theme.spacingXXS
                                 text: root.labelFor(modelData)
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: root.selected === modelData ? Theme.primaryText : Theme.surfaceText

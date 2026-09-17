@@ -27,7 +27,7 @@ StyledRect {
     readonly property real maxDaily: Math.max.apply(null, dailyTokens) || 1
 
     width: parent.width
-    height: dailyCol.implicitHeight + Theme.spacingM * 2
+    height: dailyCol.implicitHeight + Theme.spacingS * 2
     color: Theme.surfaceContainerHigh
 
     property int hoveredDay: -1
@@ -41,31 +41,31 @@ StyledRect {
     Column {
         id: dailyCol
         anchors.fill: parent
-        anchors.margins: Theme.spacingM
-        spacing: Theme.spacingS
+        anchors.margins: Theme.spacingS
+        spacing: Theme.spacingXS
 
         StyledText {
             text: api.tr("Daily Activity")
-            font.pixelSize: Theme.fontSizeMedium
+            font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceText
         }
 
         Item {
             width: parent.width
-            height: 70
+            height: 56
 
             Row {
                 id: chartRow
                 anchors.fill: parent
-                spacing: 4
+                spacing: Theme.spacingXS
 
                 Repeater {
                     model: 7
                     delegate: Column {
-                        width: (chartRow.width - 6 * 4) / 7
+                        width: (chartRow.width - 6 * Theme.spacingXS) / 7
                         height: chartRow.height
-                        spacing: 2
+                        spacing: Theme.spacingXXS
 
                         Item {
                             id: barArea
@@ -119,7 +119,7 @@ StyledRect {
                         StyledText {
                             id: dayLabel
                             text: root.dayLabels[index]
-                            font.pixelSize: 11
+                            font.pixelSize: Theme.fontSizeSmall - 1
                             color: index === root.hoveredDay ? Theme.primary : index === root.todayIndex ? Theme.primary : Theme.surfaceVariantText
                             anchors.horizontalCenter: parent.horizontalCenter
                         }
@@ -136,19 +136,19 @@ StyledRect {
         z: 10
 
         x: {
-            var colW = (chartRow.width - 6 * 4) / 7;
+            var colW = (chartRow.width - 6 * Theme.spacingXS) / 7;
             var cx = root.hoveredDay * (colW + 4) + colW / 2 - width / 2;
             var chartX = chartRow.mapToItem(chartTooltip.parent, 0, 0).x;
             var raw = chartX + cx;
-            return Math.max(Theme.spacingM, Math.min(raw, parent.width - width - Theme.spacingM));
+            return Math.max(Theme.spacingS, Math.min(raw, parent.width - width - Theme.spacingS));
         }
         y: {
             var chartY = chartRow.mapToItem(chartTooltip.parent, 0, 0).y;
             return chartY - height - 2;
         }
 
-        width: tooltipCol.implicitWidth + Theme.spacingS * 2
-        height: tooltipCol.implicitHeight + Theme.spacingXS * 2
+        width: tooltipCol.implicitWidth + Theme.spacingXS * 2
+        height: tooltipCol.implicitHeight + Theme.spacingXXS * 2
         radius: 4
         color: Theme.surfaceContainer
 
@@ -165,7 +165,7 @@ StyledRect {
                     var t = root.api.formatTokens(root.dailyTokens[root.hoveredDay]);
                     return root.overlay && root.accountSelected ? t + " " + root.api.tr("total") : t;
                 }
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSizeSmall - 1
                 font.weight: Font.DemiBold
                 color: Theme.surfaceText
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -178,7 +178,7 @@ StyledRect {
                         return "";
                     return root.api.formatTokens(root.accountDaily[root.hoveredDay]) + " " + root.accountName;
                 }
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSizeSmall - 1
                 color: Theme.primary
                 anchors.horizontalCenter: parent.horizontalCenter
             }
@@ -186,7 +186,7 @@ StyledRect {
             StyledText {
                 visible: root.hoveredDay >= 0 && root.dailyCosts[root.hoveredDay] > 0
                 text: root.hoveredDay >= 0 ? root.api.formatCost(root.dailyCosts[root.hoveredDay]) : ""
-                font.pixelSize: 11
+                font.pixelSize: Theme.fontSizeSmall - 1
                 color: Theme.surfaceVariantText
                 anchors.horizontalCenter: parent.horizontalCenter
             }

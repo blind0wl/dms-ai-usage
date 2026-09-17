@@ -5,6 +5,20 @@ import qs.Common
 // are both just an ordered list of Sections, so this stays the only renderer
 // (ADR 0003).
 //
+// The compact scale is stated here, because this is where a tab's rhythm lives.
+// An inset, and the gap between two Sections, are the same single size:
+// `Theme.spacingS`. The rhythm inside one Section is a step tighter,
+// `Theme.spacingXS`, with `Theme.spacingXXS` between a label and the value or
+// sub-line under it. A Section's headline is `Theme.fontSizeSmall` at
+// `Font.Medium`, which is DMS's own compact header idiom; body copy is already
+// at the scale's floor, `Theme.fontSizeSmall` itself. No Section invents a
+// number: every value it spaces or sizes with is a `Theme.spacing*` or
+// `Theme.fontSize*` token.
+//
+// A Section whose height is its content's carries a compact content size too (a
+// Window card's Ring, the activity chart), because there the drawn thing is the
+// height rather than the inset around it.
+//
 // Each Section component takes a `section` (its own entry in that list) and a
 // shared `ctx`: the resolved Source state for a Source's tab, the ranking for the
 // Overview's, plus the formatters and actions either needs. Both are bound rather
@@ -16,7 +30,7 @@ Column {
     property var ctx: null
 
     width: parent.width
-    spacing: Theme.spacingL
+    spacing: Theme.spacingS
 
     function componentFor(type) {
         switch (type) {
