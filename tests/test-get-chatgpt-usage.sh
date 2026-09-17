@@ -15,6 +15,9 @@ assert_eq() {
 assert_match() {
     if echo "$1" | grep -qE "$2"; then pass "$3"; else fail "$3 (no match for '$2')"; fi
 }
+assert_no_match() {
+    if echo "$1" | grep -qE "$2"; then fail "$3 (unexpected match for '$2')"; else pass "$3"; fi
+}
 
 # --- Setup isolated environment ---
 TMPDIR_ROOT=$(mktemp -d)
@@ -37,11 +40,11 @@ fake_jwt() {
 }
 
 write_auth() {
-    local dir="$1" exp="$2" last_refresh="$3"
+    local dir="$1" exp="$2" last_refresh="$3" account_id="${4:-acct-1}"
     mkdir -p "$dir"
     cat > "$dir/auth.json" << AUTHEOF
 {
-    "tokens": {"access_token": "$(fake_jwt "$exp")", "account_id": "acct-1"},
+    "tokens": {"access_token": "$(fake_jwt "$exp")", "account_id": "$account_id"},
     "last_refresh": "$last_refresh"
 }
 AUTHEOF
@@ -101,7 +104,7 @@ ENV1=$(setup_env "test1")
 write_auth "$ENV1/.codex" 9999999999 "$(date -Iseconds)"
 OUTPUT1=$(run_script "$ENV1")
 
-EXPECTED_KEYS="PLAN_TYPE PRIMARY_UTIL PRIMARY_RESET PRIMARY_WINDOW_SECONDS SECONDARY_UTIL SECONDARY_RESET SECONDARY_WINDOW_SECONDS CREDITS_BALANCE CREDITS_HAS CREDS_STATUS WEEK_TOKENS WEEK_MESSAGES WEEK_SESSIONS MONTH_TOKENS DAILY WEEK_MODELS ACCOUNTS ACCOUNT_PLAN ACCOUNT_PRIMARY_UTIL ACCOUNT_PRIMARY_RESET ACCOUNT_SECONDARY_UTIL ACCOUNT_SECONDARY_RESET ACCOUNT_CREDITS_BALANCE ACCOUNT_CREDS_STATUS ACCOUNT_WEEK_TOKENS ACCOUNT_MONTH_TOKENS ACCOUNT_WEEK_MESSAGES ACCOUNT_WEEK_SESSIONS ACCOUNT_DAILY ACCOUNT_WEEK_MODELS"
+EXPECTED_KEYS="PLAN_TYPE PRIMARY_UTIL PRIMARY_RESET PRIMARY_WINDOW_SECONDS SECONDARY_UTIL SECONDARY_RESET SECONDARY_WINDOW_SECONDS CREDITS_BALANCE CREDITS_HAS CREDS_STATUS WEEK_TOKENS WEEK_MESSAGES WEEK_SESSIONS MONTH_TOKENS DAILY WEEK_MODELS ACCOUNTS PROFILE_SUBSCRIPTION PROFILE_FIVE_HOUR_UTIL PROFILE_FIVE_HOUR_RESET PROFILE_SEVEN_DAY_UTIL PROFILE_SEVEN_DAY_RESET PROFILE_CREDS_STATUS PROFILE_WEEK_TOKENS PROFILE_MONTH_TOKENS PROFILE_WEEK_MESSAGES PROFILE_WEEK_SESSIONS PROFILE_DAILY PROFILE_WEEK_MODELS"
 for key in $EXPECTED_KEYS; do
     if echo "$OUTPUT1" | grep -q "^${key}="; then
         pass "key $key present"
@@ -109,6 +112,11 @@ for key in $EXPECTED_KEYS; do
         fail "key $key missing"
     fi
 done
+
+# The Popout's account adapter reads PROFILE_*, so the old ACCOUNT_* namespace is
+# dead output and must be gone. ACCOUNTS is the Source-level list and stays.
+assert_no_match "$OUTPUT1" "^ACCOUNT_" "no per-Account ACCOUNT_* keys remain"
+assert_match "$OUTPUT1" "^ACCOUNTS=" "the Source-level ACCOUNTS key stays"
 
 # ============================================================
 echo "=== Test 2: Fresh credentials — rate_limit fields from the API ==="
@@ -316,6 +324,84 @@ if echo "$ACCOUNTS13B" | tr ',' '\n' | grep -q '^alias$'; then
 else
     pass "duplicate codex home dir registered only once"
 fi
+
+# ============================================================
+echo "=== Test 14: Per-Account readings the Popout overlays ==="
+# ============================================================
+# Two Accounts with different credentials and different local token counts, so
+# each PROFILE_* list has something to tell them apart by.
+multi_curl_dir="$TMPDIR_ROOT/test14"
+mkdir -p "$multi_curl_dir"
+cat > "$multi_curl_dir/curl" << 'CURLEOF'
+#!/usr/bin/env bash
+acct=""
+for a in "$@"; do
+    case "$a" in
+        ChatGPT-Account-Id:*) acct="${a#ChatGPT-Account-Id: }" ;;
+    esac
+done
+case "$acct" in
+    acct-work) plan=pro primary=7 primary_reset="2099-02-01T00:00:00Z" secondary=3 secondary_reset="2099-02-07T00:00:00Z" ;;
+    *) plan=plus primary=42 primary_reset="2099-01-01T00:00:00Z" secondary=15 secondary_reset="2099-01-07T00:00:00Z" ;;
+esac
+cat << JSONEOF
+{
+    "plan_type": "$plan",
+    "rate_limit": {
+        "primary_window": {"used_percent": $primary, "reset_at": "$primary_reset", "limit_window_seconds": 18000},
+        "secondary_window": {"used_percent": $secondary, "reset_at": "$secondary_reset", "limit_window_seconds": 604800}
+    },
+    "credits": {"balance": 5, "has_credits": true}
+}
+JSONEOF
+CURLEOF
+chmod +x "$multi_curl_dir/curl"
+
+ENV14=$(setup_env "test14")
+write_auth "$ENV14/.codex" 9999999999 "$(date -Iseconds)"
+mkdir -p "$ENV14/work/sessions"
+write_auth "$ENV14/work" 9999999999 "$(date -Iseconds)" acct-work
+append_turn "$ENV14/.codex/sessions/a.jsonl" "$TODAY" "gpt-5-codex" 100
+append_turn "$ENV14/work/sessions/b.jsonl" "$TODAY" "gpt-5-codex" 300
+
+OUTPUT14=$(HOME="$ENV14" CODEX_HOME="$ENV14/.codex" PATH="$multi_curl_dir:$TMPDIR_ROOT:$PATH" bash "$SCRIPT" "work=$ENV14/work" 2>/dev/null)
+
+assert_eq "$(echo "$OUTPUT14" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "ACCOUNTS lists both Accounts"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_SUBSCRIPTION=" | cut -d= -f2)" "default:plus,work:pro" "PROFILE_SUBSCRIPTION carries each Account's plan"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_CREDS_STATUS=" | cut -d= -f2)" "default:ok,work:ok" "PROFILE_CREDS_STATUS carries each Account's own status"
+# The primary Window is only Claude's five-hour slot by name; #29 replaces these
+# Claude-shaped keys with ones each descriptor declares.
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_FIVE_HOUR_UTIL=" | cut -d= -f2)" "default:42,work:7" "PROFILE_FIVE_HOUR_UTIL carries each Account's primary Window"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_FIVE_HOUR_RESET=" | cut -d= -f2)" "default:2099-01-01T00:00:00Z,work:2099-02-01T00:00:00Z" "PROFILE_FIVE_HOUR_RESET carries each Account's primary reset"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_SEVEN_DAY_UTIL=" | cut -d= -f2)" "default:15,work:3" "PROFILE_SEVEN_DAY_UTIL carries each Account's secondary Window"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_SEVEN_DAY_RESET=" | cut -d= -f2)" "default:2099-01-07T00:00:00Z,work:2099-02-07T00:00:00Z" "PROFILE_SEVEN_DAY_RESET carries each Account's secondary reset"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_WEEK_TOKENS=" | cut -d= -f2)" "default:100,work:300" "PROFILE_WEEK_TOKENS carries each Account's own weekly tokens"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_MONTH_TOKENS=" | cut -d= -f2)" "default:100,work:300" "PROFILE_MONTH_TOKENS carries each Account's own monthly tokens"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_WEEK_MESSAGES=" | cut -d= -f2)" "default:1,work:1" "PROFILE_WEEK_MESSAGES carries each Account's own message count"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_WEEK_SESSIONS=" | cut -d= -f2)" "default:1,work:1" "PROFILE_WEEK_SESSIONS carries each Account's own session count"
+assert_eq "$(echo "$OUTPUT14" | grep "^PROFILE_WEEK_MODELS=" | cut -d= -f2-)" "default:gpt-5-codex=100|work:gpt-5-codex=300" "PROFILE_WEEK_MODELS carries each Account's own model breakdown"
+
+PROFILE_DAILY14=$(echo "$OUTPUT14" | grep "^PROFILE_DAILY=" | cut -d= -f2-)
+DEFAULT_DAILY14=$(echo "$PROFILE_DAILY14" | tr '|' '\n' | grep '^default:' | cut -d: -f2-)
+WORK_DAILY14=$(echo "$PROFILE_DAILY14" | tr '|' '\n' | grep '^work:' | cut -d: -f2-)
+assert_eq "$(echo "$DEFAULT_DAILY14" | tr ',' '\n' | sed -n "$((TODAY_IDX + 1))p")" "100" "PROFILE_DAILY carries the default Account's own daily series"
+assert_eq "$(echo "$WORK_DAILY14" | tr ',' '\n' | sed -n "$((TODAY_IDX + 1))p")" "300" "PROFILE_DAILY carries the work Account's own daily series"
+
+# ============================================================
+echo "=== Test 15: An Account with rejected credentials stays visible ==="
+# ============================================================
+# The work Account has no auth.json, so its credentials are missing. Its own
+# reading must still appear beside the healthy default's rather than vanish.
+ENV15=$(setup_env "test15")
+write_auth "$ENV15/.codex" 9999999999 "$(date -Iseconds)"
+mkdir -p "$ENV15/work/sessions"
+
+OUTPUT15=$(run_script "$ENV15" "work=$ENV15/work")
+
+assert_eq "$(echo "$OUTPUT15" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "a rejected Account stays listed in ACCOUNTS"
+assert_eq "$(echo "$OUTPUT15" | grep "^PROFILE_CREDS_STATUS=" | cut -d= -f2)" "default:ok,work:missing" "the Account whose credentials were rejected is reported as missing beside the healthy one"
+assert_eq "$(echo "$OUTPUT15" | grep "^PROFILE_FIVE_HOUR_UTIL=" | cut -d= -f2)" "default:42,work:0" "the rejected Account's own primary Window is reported, not masked by the healthy Account's"
+assert_eq "$(echo "$OUTPUT15" | grep "^PROFILE_SEVEN_DAY_UTIL=" | cut -d= -f2)" "default:15,work:0" "the rejected Account's own secondary Window is reported, not masked by the healthy Account's"
 
 # ============================================================
 echo ""

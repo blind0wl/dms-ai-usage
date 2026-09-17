@@ -114,6 +114,7 @@ var SOURCES = [
         planStyle: "plan",
         sections: [
             { type: "header" },
+            { type: "accounts" },
             { type: "login" },
             { type: "windows", which: "primary" },
             { type: "windows", which: "secondary" },
