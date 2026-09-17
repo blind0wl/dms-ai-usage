@@ -60,11 +60,12 @@ Column {
     // the Source rather than a verdict on the user's rows.
     property bool sourceAbsent: false
 
-    // The row the Script was last asked about, and what that answer said about it.
-    // Add must not save before the Script has answered: a Custom Account that takes
-    // a detected one's place is exactly the accident this guard exists to stop. The
-    // row is what keeps an answer attached to the fields it belongs to, since the
-    // user can keep typing while the Script runs.
+    // The row the Script has been asked about: `asked*` while the question is out,
+    // `probed*` once it has been answered. Both exist because the user can keep
+    // typing while the Script runs, and an answer may only decide for the row it
+    // was asked about - never for whatever the fields happen to hold when it lands.
+    property string askedName: ""
+    property string askedValue: ""
     property string probedName: ""
     property string probedValue: ""
     // null, or the outcome of Sources.addOutcome() for the row in the fields.
@@ -184,9 +185,17 @@ Column {
         if (!probeProcess || !root.settingsRoot || !root.descriptor)
             return;
 
-        root.probedName = name;
-        root.probedValue = value;
         root.addWarning = null;
+        if (probeProcess.running) {
+            // A question about another row is still out. Its answer is not this
+            // row's, so wait for it and ask again rather than letting it decide.
+            root.addPending = true;
+            return;
+        }
+
+        root.addPending = false;
+        root.askedName = name;
+        root.askedValue = value;
         root.candidateAccounts = "";
         root.candidateOrigins = "";
         root.candidateShadowed = "";
@@ -196,14 +205,7 @@ Column {
             name: name
         };
         entry[root.argField] = value;
-        if (probeProcess.running) {
-            // The previous question is still out; ask again when it lands.
-            root.addPending = true;
-            return;
-        }
-        root.addPending = false;
-        probeProcess.command = Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
-                                                    [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items.concat([entry]))));
+        probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.items.concat([entry])));
         probeProcess.running = true;
     }
 
@@ -212,11 +214,17 @@ Column {
     // about, because the user can keep typing while the Script runs, and a verdict
     // for a row that is no longer there is no verdict at all.
     function finishAdd(exitCode) {
-        var name = nameInput.text.trim();
-        var value = valueInput.text.trim();
-        // The answer is about the row the Script was asked for. A row the user has
-        // typed over since has no verdict yet, and the next Add asks again.
-        if (name !== root.probedName || value !== root.probedValue) {
+        var name = root.askedName;
+        var value = root.askedValue;
+        root.askedName = "";
+        root.askedValue = "";
+        root.probedName = name;
+        root.probedValue = value;
+
+        // The answer belongs to the row that was asked about, and to no other: if
+        // the fields hold something else by now, this verdict is stale and the
+        // next Add asks again.
+        if (name === "" || nameInput.text.trim() !== name || valueInput.text.trim() !== value) {
             root.addWarning = null;
             return;
         }
@@ -225,7 +233,7 @@ Column {
             return;
         }
 
-        var outcome = Sources.addOutcome(root.shownListing, root.candidateListing, root.probedName);
+        var outcome = Sources.addOutcome(root.shownListing, root.candidateListing, name);
         if (outcome !== null) {
             root.addWarning = outcome;
             return;
@@ -311,6 +319,14 @@ Column {
     // property: the Account arguments are part of the question, and a command
     // evaluated before this change would answer for the list the user has just
     // edited.
+    // The command that asks a Script for its Account list with the caller's
+    // arguments. The editor's own listing and the question Add asks about a
+    // candidate row are the same question, asked about different lists.
+    function listingCommand(args) {
+        return Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
+                                     [Sources.LIST_ACCOUNTS_FLAG].concat(args));
+    }
+
     function refreshDetected() {
         // The Script is reached through these, which are still null while the
         // component is being built, which the handlers above can be reached from.
@@ -331,8 +347,7 @@ Column {
         root.pendingShadowed = "";
         root.pendingAnswered = false;
         root.pendingAbsent = false;
-        listProcess.command = Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
-                                                   [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items)));
+        listProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.items));
         listProcess.running = true;
     }
 

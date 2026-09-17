@@ -204,18 +204,28 @@ function shadowingAccount(origins, shadowed, name) {
         var refused = refusedRegistration(pairs[i]);
         if (!refused)
             continue;
-        // Only the registration the Custom row itself asked for is its business,
-        // and only an entry that names a winner can name one back.
-        if (refused.name !== name || refused.origin !== CUSTOM_ORIGIN || refused.winner === "")
+        // Only the registration the Custom row itself asked for is its business.
+        if (refused.name !== name || refused.origin !== CUSTOM_ORIGIN)
             continue;
-        var origin = Object.prototype.hasOwnProperty.call(byName, refused.winner) ? byName[refused.winner] : "";
-        // Another Custom row is not a detected Account; a detected one the Script
-        // named without an origin still is, and the row can name it.
-        if (origin === CUSTOM_ORIGIN)
-            return null;
-        return { name: refused.winner, origin: origin };
+        return detectedWinner(byName, refused);
     }
     return null;
+}
+
+// The detected Account a refused Custom Account registration lost to, or null when
+// the winner was another Custom row (adding it back would change no credential) or
+// when the entry names no winner at all. Its origin is empty when the Script named
+// the Account without saying where it is - which still names an Account the user
+// has to be told about. Both readers that hand this back to the editor go through
+// here, so a refused row reads the same whichever one asked.
+function detectedWinner(byName, refused) {
+    if (refused.winner === "")
+        return null;
+    var known = Object.prototype.hasOwnProperty.call(byName, refused.winner);
+    var origin = known ? byName[refused.winner] : "";
+    if (origin === CUSTOM_ORIGIN)
+        return null;
+    return { name: refused.winner, origin: origin };
 }
 
 // One Script listing as a value: the four things the Script answered with, so a
@@ -271,10 +281,10 @@ function addOutcome(before, after, candidateName) {
         // origin it did not give still leaves the Account to name, so the row is
         // refused either way: it would do nothing.
         if (refused.name === candidateName && refused.origin === CUSTOM_ORIGIN) {
-            var winnerOrigin = Object.prototype.hasOwnProperty.call(byName, refused.winner) ? byName[refused.winner] : "";
-            if (refused.winner === "" || winnerOrigin === CUSTOM_ORIGIN)
+            var winner = detectedWinner(byName, refused);
+            if (winner === null)
                 continue;
-            return { reason: "taken", name: refused.winner, origin: winnerOrigin, lost: false };
+            return { reason: "taken", name: winner.name, origin: winner.origin, lost: false };
         }
     }
     return null;

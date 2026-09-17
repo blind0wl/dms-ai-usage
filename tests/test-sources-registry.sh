@@ -549,6 +549,14 @@ check(/function finishAdd/.test(editor) && /reason: "unreadable"/.test(editor),
       "the settings editor refuses to save a row when the Script has not answered for it");
 check(/function addAnyway/.test(editor) && /addWarning\.lost === true/.test(editor),
       "the settings editor offers the deliberate override only for a row that would win");
+// The row a question was asked about is snapshotted, so an answer that lands after
+// the user has typed another row cannot decide for it - the double-Add bypass.
+check(/askedName/.test(editor) && /probedName/.test(editor) && /root\.askedName = ""/.test(editor),
+      "the settings editor attaches the Script's answer to the row it was asked about");
+check(/nameInput\.text\.trim\(\) !== name/.test(editor) && /valueInput\.text\.trim\(\) !== value/.test(editor),
+      "the settings editor discards an answer the fields have moved on from");
+check(/function listingCommand/.test(editor) && /root\.listingCommand\(/.test(editor),
+      "the settings editor builds both Script questions in one place");
 const finishAdd = editor.slice(editor.indexOf("function finishAdd"));
 check(finishAdd.indexOf("Sources.addOutcome(") < finishAdd.indexOf('nameInput.text = ""'),
       "the settings editor saves a row only after the guard has let it through, so the typed values survive a refusal");
