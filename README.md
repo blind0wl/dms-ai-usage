@@ -2,7 +2,7 @@
 
 A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) plugin that monitors your Claude, ChatGPT/Codex, Z.ai and opencode Go subscription usage directly from the taskbar. All four are optional and independently toggled. Install this for one, or any combination, and whichever aren't set up stay out of the way.
 
-The Popout opens on an **[Overview](#the-overview)** that ranks every visible Source by its tightest rate window, so the budget that will stop you first is the top line. One tab per Source follows it. A single-Source monitor has nothing to rank, so upstream's Claude-only widget cannot have this.
+The Popout leads with an **[Overview](#the-overview)** whenever two or more Sources are visible, ranking them by their tightest rate window, so the budget that will stop you first is the top line. One tab per Source follows it. A single-Source monitor has nothing to rank, so upstream's Claude-only widget cannot have this.
 
 It is a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by Nicolas Bellamy, which tracks Claude Code alone. See [Credits](#credits).
 
