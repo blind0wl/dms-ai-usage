@@ -107,33 +107,77 @@ PluginComponent {
         return d.id;
     })
 
-    // Empty until the user picks a tab. The popout prefers that choice, and
-    // otherwise falls back to the first visible Source, which is the first one
-    // in the configured order. Deriving the active id rather than storing it
-    // means the popout can never come up with nothing selected.
-    property string popoutSourceTab: ""
+    // --- Popout tabs ---
 
-    readonly property string activeSourceId: {
-        var ids = root.visibleIds;
-        if (root.popoutSourceTab && ids.indexOf(root.popoutSourceTab) >= 0)
-            return root.popoutSourceTab;
+    // The visible Sources' states, in settings order, each carrying its own id:
+    // what `Sources.overviewRows` ranks. A Source whose first fetch has not
+    // landed yet still yields a state, so its Overview row is on the strip from
+    // the start and says it has no reading, rather than leaving the tab absent
+    // until the first fetch lands.
+    readonly property var overviewStates: root.visibleDescriptors.map(function (d) {
+        return root.overviewState(d.id);
+    })
+
+    // One Overview row per visible Source, ranked by Tightest Window. Ranking is
+    // a property of the whole set, so it comes from the registry rather than from
+    // any one Source's descriptor (ADR 0003), and it is empty when there are
+    // fewer than two Sources to compare.
+    readonly property var overviewRows: Sources.overviewRows(root.overviewStates)
+
+    // The Overview's own toggle is on and there is something to rank. Below two
+    // visible Sources the tab is absent, so the single-Source installs inherited
+    // from upstream see the popout they already know.
+    readonly property bool overviewShown: root.overviewEnabled && root.overviewRows.length > 0
+
+    // The Popout's tabs, in strip order: the Overview first, then one tab per
+    // visible Source. One list drives both the strip and the tab body, so the two
+    // cannot disagree about what is showing.
+    readonly property var popoutTabs: root.popoutTabsFor(root.overviewShown, root.visibleDescriptors)
+
+    // The Overview leads the strip whenever it applies, so the tab that ranks
+    // every Source is the one the popout opens on.
+    function popoutTabsFor(overviewShown, descriptors) {
+        return overviewShown ? [Sources.OVERVIEW_TAB].concat(descriptors) : descriptors;
+    }
+
+    readonly property var popoutTabIds: root.popoutTabs.map(function (tab) {
+        return tab.id;
+    })
+
+    // Empty until the user picks a tab, so the popout opens on the first tab,
+    // which is the Overview whenever it applies.
+    property string popoutTabId: ""
+
+    readonly property string activeTabId: root.resolveTabId(root.popoutTabId, root.popoutTabIds)
+
+    readonly property var activeTab: {
+        for (var i = 0; i < root.popoutTabs.length; i++) {
+            if (root.popoutTabs[i].id === root.activeTabId)
+                return root.popoutTabs[i];
+        }
+        return null;
+    }
+
+    // The tab a stored choice selects: the choice itself while it is still on the
+    // strip, and the first tab otherwise. Deriving it rather than storing it
+    // means the popout can never come up with nothing selected, and a tab the
+    // user picked keeps winning while it is still there.
+    function resolveTabId(stored, ids) {
+        if (stored && ids.indexOf(stored) >= 0)
+            return stored;
         return ids.length > 0 ? ids[0] : "";
     }
 
-    readonly property var activeDescriptor: Sources.byId(root.activeSourceId)
-
-    onVisibleIdsChanged: {
-        root.ensureActiveTab();
-        root.updatePillVisibility();
+    // A Source's state for the Overview, with its id attached. Unlike stateFor(),
+    // a Source whose first fetch has not landed yet yields the empty state rather
+    // than nothing, so it produces a row that says it has no reading yet.
+    function overviewState(id) {
+        var st = root.stateFor(id) || root.emptyState();
+        st.id = id;
+        return st;
     }
 
-    function ensureActiveTab() {
-        var ids = root.visibleIds;
-        if (ids.length === 0)
-            return;
-        if (ids.indexOf(root.popoutSourceTab) < 0)
-            root.popoutSourceTab = ids[0];
-    }
+    onVisibleIdsChanged: root.updatePillVisibility()
 
     function updatePillVisibility() {
         if (root.visibleIds.length === 0)
@@ -142,10 +186,7 @@ PluginComponent {
             root.clearVisibilityOverride();
     }
 
-    Component.onCompleted: {
-        root.ensureActiveTab();
-        root.updatePillVisibility();
-    }
+    Component.onCompleted: root.updatePillVisibility()
 
     // --- Per-Source state ---
 
@@ -298,8 +339,16 @@ PluginComponent {
         var w = d && d.windows[which] ? d.windows[which] : null;
         if (w && w.labelKey)
             return root.tr(w.labelKey);
+        return root.windowLabelForLength(root.windowSeconds(source.id, which), which);
+    }
+
+    // The label for a Window known only by its slot and its length. A descriptor
+    // that names its Windows never gets here; one whose script reports the length
+    // (ChatGPT, Z.ai) falls back to the length itself, and a Window whose length
+    // has not arrived yet falls back to its slot's generic name.
+    function windowLabelForLength(seconds, which) {
         var generic = which === "primary" ? "Primary Window" : "Secondary Window";
-        return root.formatWindowLabel(root.windowSeconds(source.id, which), generic);
+        return root.formatWindowLabel(seconds, generic);
     }
 
     function accountNames(id) {
@@ -404,7 +453,6 @@ PluginComponent {
 
     // Toggling a Source on fetches immediately rather than waiting a tick.
     onSourceOrderChanged: {
-        root.ensureActiveTab();
         root.updatePillVisibility();
         for (var i = 0; i < root.sourceOrder.length; i++)
             root.requestFetch(root.sourceOrder[i]);
@@ -636,6 +684,14 @@ PluginComponent {
             return root.windowLabelFor(source, which);
         }
 
+        function windowLabelForLength(seconds, which) {
+            return root.windowLabelForLength(seconds, which);
+        }
+
+        function formatCountdown(resetMs) {
+            return root.formatCountdown(resetMs);
+        }
+
         function paceLabel(p) {
             return root.paceLabel(p);
         }
@@ -648,13 +704,31 @@ PluginComponent {
             root.startLogin(id);
         }
 
+        function loginInProgress(id) {
+            return root.loginInProgress[id] === true;
+        }
+
         function selectAccount(id, name) {
             root.selectAccount(id, name);
         }
+
+        // Selecting a tab is what a press on an Overview row does: the Overview
+        // answers "which one", the Source's own tab answers "why".
+        function selectTab(id) {
+            root.popoutTabId = id;
+        }
     }
 
-    // Everything a Section needs beyond its own descriptor entry.
+    // Everything a Section needs beyond its own entry in the tab's Section list.
+    // The Overview's tab is not a Source, so its Sections read the ranking instead
+    // of one Source's state, and no non-Source travels under the Descriptor name.
     function contextFor(id) {
+        if (id === Sources.OVERVIEW_TAB.id) {
+            return {
+                api: root.api,
+                rows: root.overviewRows
+            };
+        }
         var d = Sources.byId(id);
         var sel = root.selectedAccount[id] || "all";
         return {
@@ -669,7 +743,7 @@ PluginComponent {
             selected: sel,
             accountSelected: sel !== "all",
             accountName: sel,
-            loginInProgress: root.loginInProgress[id] === true
+            loginInProgress: root.api.loginInProgress(id)
         };
     }
 
@@ -801,24 +875,25 @@ PluginComponent {
                 anchors.horizontalCenter: parent.horizontalCenter
                 spacing: Theme.spacingL
 
-                // Only one Source's cards render at a time, keeping the popout
+                // Only one tab's Sections render at a time, keeping the popout
                 // short on small screens. Hidden when there is nothing to switch
-                // between; an all-hidden pill already hides the whole widget.
+                // between: with the Overview absent that is a single Source, and
+                // an all-hidden pill already hides the whole widget.
                 Row {
                     width: parent.width
                     spacing: Theme.spacingXS
-                    visible: root.visibleDescriptors.length > 1
+                    visible: root.popoutTabs.length > 1
 
                     Repeater {
-                        model: root.visibleDescriptors
+                        model: root.popoutTabs
 
                         delegate: Rectangle {
                             required property var modelData
 
-                            width: (parent.width - Theme.spacingXS * (root.visibleDescriptors.length - 1)) / root.visibleDescriptors.length
+                            width: (parent.width - Theme.spacingXS * (root.popoutTabs.length - 1)) / root.popoutTabs.length
                             height: 32
                             radius: 16
-                            color: root.activeSourceId === modelData.id ? Theme.primary : Theme.surfaceVariant
+                            color: root.activeTabId === modelData.id ? Theme.primary : Theme.surfaceVariant
 
                             Behavior on color {
                                 ColorAnimation {
@@ -828,24 +903,32 @@ PluginComponent {
 
                             StyledText {
                                 anchors.centerIn: parent
+                                // A fifth tab in a 380px strip, so the longest
+                                // Source name elides rather than spilling over
+                                // its neighbours. NoWrap is what lets the styling
+                                // base's ElideRight apply: Qt ignores elide on
+                                // wrapped text.
+                                width: parent.width - Theme.spacingS
                                 text: root.tr(modelData.labelKey)
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.NoWrap
                                 font.pixelSize: Theme.fontSizeSmall
-                                font.weight: root.activeSourceId === modelData.id ? Font.Medium : Font.Normal
-                                color: root.activeSourceId === modelData.id ? Theme.primaryText : Theme.surfaceVariantText
+                                font.weight: root.activeTabId === modelData.id ? Font.Medium : Font.Normal
+                                color: root.activeTabId === modelData.id ? Theme.primaryText : Theme.surfaceVariantText
                             }
 
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: root.popoutSourceTab = modelData.id
+                                onClicked: root.popoutTabId = modelData.id
                             }
                         }
                     }
                 }
 
                 SourceTab {
-                    descriptor: root.activeDescriptor
-                    ctx: root.activeDescriptor ? root.contextFor(root.activeDescriptor.id) : null
+                    tab: root.activeTab
+                    ctx: root.activeTab ? root.contextFor(root.activeTab.id) : null
                 }
 
                 // Bottom padding to match the sides, compensating Column spacing.
