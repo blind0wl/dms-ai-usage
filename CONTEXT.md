@@ -33,6 +33,11 @@ How much of a Window has been consumed, as a percentage of the Window's
 allowance.
 _Avoid_: usage, consumption, burn
 
+**Tightest Window**:
+The one of a Source's Windows with the highest Utilisation: the limit that will
+stop the user first. Which of the two it is varies by Source and over time.
+_Avoid_: worst, nearest, critical, primary
+
 **Pacing**:
 Whether a Window's Utilisation is ahead of or behind the linear burn rate for the
 elapsed part of that Window. Being ahead is over pace.
@@ -49,8 +54,16 @@ Source.
 _Avoid_: badge, chip, widget
 
 **Popout**:
-The panel opened from the Pill, holding one tab per visible Source.
+The panel opened from the Pill, holding the Overview followed by one tab per
+visible Source.
 _Avoid_: dropdown, panel, flyout
+
+**Overview**:
+The Popout's first tab, ranking every visible Source by its Tightest Window so
+the scarcest budget is the top line. It is not a Source: it has no provider, no
+credentials and nothing of its own to fetch. It is absent when fewer than two
+Sources are visible, because a comparison of one is noise.
+_Avoid_: summary, dashboard, all-tab, home
 
 **Section**:
 One typed card in a popout tab. A Source's tab is an ordered list of Sections.
