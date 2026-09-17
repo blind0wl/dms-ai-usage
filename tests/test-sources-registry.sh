@@ -557,11 +557,21 @@ check(/nameInput\.text\.trim\(\) !== name/.test(editor) && /valueInput\.text\.tr
       "the settings editor discards an answer the fields have moved on from");
 check(/function listingCommand/.test(editor) && /root\.listingCommand\(/.test(editor),
       "the settings editor builds both Script questions in one place");
+const probeExit = editor.slice(editor.indexOf("onExited"), editor.indexOf("function readProbeLine"));
+check(probeExit.indexOf("root.addPending") >= 0 && probeExit.indexOf("return") < 0,
+      "the settings editor honours an Add queued while the Script was answering, whatever the answer was");
 // The guard asks both questions for the same Add, because the listing on screen can
 // be a cycle behind the store: a clash it has not caught up with must not be blamed
 // on the row being added.
-check(/function askCandidate/.test(editor) && /probeStage === 1/.test(editor) && /root\.baselineListing/.test(editor),
+check(/function askCandidate/.test(editor) && /probeStage === 2/.test(editor) && /root\.baselineListing/.test(editor),
       "the settings editor asks what the list does now and what it would do with the row, in one Add");
+// Both questions are asked about one snapshot of the list, and a verdict for a list
+// the editor no longer holds is asked again rather than believed: otherwise a Remove
+// between the two runs lets a clash an earlier row caused mask the new row's own.
+check(/root\.askedList = root\.items\.slice\(\)/.test(editor)
+      && /Sources\.accountArgs\(root\.descriptor, root\.askedList/.test(editor)
+      && /JSON\.stringify\(root\.items\) !== JSON\.stringify\(root\.askedList\)/.test(editor),
+      "the settings editor asks both questions about one snapshot of the list, and re-asks when the list moves");
 const finishAdd = editor.slice(editor.indexOf("function finishAdd"));
 check(finishAdd.indexOf("Sources.addOutcome(") < finishAdd.indexOf('nameInput.text = ""'),
       "the settings editor saves a row only after the guard has let it through, so the typed values survive a refusal");

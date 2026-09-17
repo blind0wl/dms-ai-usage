@@ -76,6 +76,11 @@ Column {
     // was asked about - never for whatever the fields happen to hold when it lands.
     property string askedName: ""
     property string askedValue: ""
+    // The row list the guard's two questions are about, snapshotted when Add is
+    // pressed. Both commands are built from it, so a Remove (or a store write)
+    // between the two runs cannot leave them describing different lists - which
+    // would let a clash an earlier row caused mask the new row's own.
+    property var askedList: []
     property string probedName: ""
     property string probedValue: ""
     // null, or the outcome of Sources.addOutcome() for the row in the fields.
@@ -205,6 +210,7 @@ Column {
         root.addPending = false;
         root.askedName = name;
         root.askedValue = value;
+        root.askedList = root.items.slice();
         root.baselineAccounts = "";
         root.baselineOrigins = "";
         root.baselineShadowed = "";
@@ -218,7 +224,7 @@ Column {
         // of the list with this row: the difference between the two answers is what
         // this row would do.
         root.probeStage = 1;
-        probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.items));
+        probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.askedList));
         probeProcess.running = true;
     }
 
@@ -245,7 +251,7 @@ Column {
         };
         entry[root.argField] = value;
         root.probeStage = 2;
-        probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.items.concat([entry])));
+        probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.askedList.concat([entry])));
         probeProcess.running = true;
         return true;
     }
@@ -267,6 +273,14 @@ Column {
         // next Add asks again.
         if (name === "" || nameInput.text.trim() !== name || valueInput.text.trim() !== value) {
             root.addWarning = null;
+            return;
+        }
+        // The row list moved under the questions (a Remove, or the store changing
+        // underneath): this verdict is about a list the editor no longer holds, so
+        // it is dropped and the same row is asked again against the current one.
+        if (JSON.stringify(root.items) !== JSON.stringify(root.askedList)) {
+            root.addWarning = null;
+            root.addPending = true;
             return;
         }
         if (exitCode !== 0) {
@@ -426,12 +440,13 @@ Column {
         }
 
         onExited: (exitCode, exitStatus) => {
-            if (root.probeStage === 1) {
-                if (!root.askCandidate(exitCode))
-                    return;
-            } else {
+            if (root.probeStage === 2)
                 root.finishAdd(exitCode);
-            }
+            else
+                root.askCandidate(exitCode);
+
+            // A press that arrived while the Script was answering is asked again,
+            // whatever this answer turned out to be: a queued Add is never dropped.
             if (root.addPending) {
                 root.addPending = false;
                 Qt.callLater(root.addItem);
