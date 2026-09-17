@@ -22,7 +22,7 @@ vm.createContext(sandbox);
 vm.runInContext(catalogSource, sandbox, { filename: catalogPath });
 
 const keys = new Set();
-for (const filename of ["ClaudeCodeUsageWidget.qml", "ClaudeCodeUsageSettings.qml"]) {
+for (const filename of ["AiUsageWidget.qml", "AiUsageSettings.qml"]) {
     const source = fs.readFileSync(path.join(root, filename), "utf8");
     const pattern = /(?:root\.)?tr\("([^"]+)"\)/g;
     let match;
@@ -53,7 +53,7 @@ for (const [key, expected] of [
     }
 }
 
-const widget = fs.readFileSync(path.join(root, "ClaudeCodeUsageWidget.qml"), "utf8");
+const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
 if (!/es:\s*\["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"\]/.test(widget)) {
     console.error("FAIL: Spanish weekday labels are missing");
     failed = true;

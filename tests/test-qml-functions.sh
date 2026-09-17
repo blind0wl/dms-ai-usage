@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for QML widget JavaScript functions
-# Extracts pure JS functions from ClaudeCodeUsageWidget.qml and tests them via Node.js
+# Extracts pure JS functions from AiUsageWidget.qml and tests them via Node.js
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,7 +27,7 @@ run_js() {
 
 # Build JS test harness with functions extracted from the QML widget
 JS_HARNESS='
-// --- Functions extracted from ClaudeCodeUsageWidget.qml ---
+// --- Functions extracted from AiUsageWidget.qml ---
 
 function formatTokens(n) {
     if (n >= 1000000000) return (n / 1000000000).toFixed(1) + "B"
@@ -697,7 +697,7 @@ echo "=== Test 10: endpoint failures keep the last good reading ==="
 # is pulled out of the widget itself rather than copied into this harness, and
 # exercised for real.
 CREDS_REPORT=/tmp/creds-status-report.txt
-node - "$SCRIPT_DIR/ClaudeCodeUsageWidget.qml" > "$CREDS_REPORT" 2>&1 <<'NODE'
+node - "$SCRIPT_DIR/AiUsageWidget.qml" > "$CREDS_REPORT" 2>&1 <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
@@ -758,7 +758,7 @@ echo "=== Test 11: the Pill's no-reading rule ==="
 # pillHasReading decides whether a Pill slot draws a reading or a hollow
 # no-reading ring. Extracted from the widget so the rule cannot drift.
 PILL_REPORT=/tmp/pill-reading-report.txt
-node - "$SCRIPT_DIR/ClaudeCodeUsageWidget.qml" > "$PILL_REPORT" 2>&1 <<'NODE'
+node - "$SCRIPT_DIR/AiUsageWidget.qml" > "$PILL_REPORT" 2>&1 <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
@@ -810,7 +810,7 @@ const path = require("path");
 const vm = require("vm");
 const repo = process.argv[2];
 
-const source = fs.readFileSync(path.join(repo, "ClaudeCodeUsageWidget.qml"), "utf8");
+const source = fs.readFileSync(path.join(repo, "AiUsageWidget.qml"), "utf8");
 
 function extract(name) {
     const m = source.match(new RegExp("function " + name + "\\([\\s\\S]*?\\n    \\}"));

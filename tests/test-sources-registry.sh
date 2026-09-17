@@ -39,7 +39,7 @@ const load = (file, suffix) => {
 const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
-const widget = fs.readFileSync(path.join(root, "ClaudeCodeUsageWidget.qml"), "utf8");
+const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
 const tab = fs.readFileSync(path.join(root, "ui/SourceTab.qml"), "utf8");
 
 // State keys the widget produces: declared in emptyState(), or derived onto the
