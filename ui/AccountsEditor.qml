@@ -333,14 +333,13 @@ Column {
                     // The origin is a path or an environment variable's name, so
                     // it is shown as it is: the user's own word for where the key
                     // lives. A Script that reports no origin leaves this saying
-                    // only that the Account was detected rather than lying about
-                    // where from.
+                    // only that the origin is unknown rather than inventing one.
                     StyledText {
                         width: parent.width - root.nameColumnWidth - Theme.spacingXS
                         anchors.verticalCenter: parent.verticalCenter
                         text: modelData.origin
                             ? root.settingsRoot.tr("Detected from") + " " + modelData.origin
-                            : root.settingsRoot.tr("Detected automatically")
+                            : root.settingsRoot.tr("Origin unknown")
                         color: Theme.surfaceVariantText
                         font.pixelSize: Theme.fontSizeMedium
                         elide: Text.ElideMiddle

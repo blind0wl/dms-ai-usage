@@ -194,8 +194,8 @@ var strings = {
         },
     "Detected from":
         { fr: "Détecté depuis", es: "Detectado desde" },
-    "Detected automatically":
-        { fr: "Détecté automatiquement", es: "Detectado automáticamente" },
+    "Origin unknown":
+        { fr: "Origine inconnue", es: "Origen desconocido" },
     // Login action
     "Not logged in":
         { fr: "Non connecté", es: "No has iniciado sesión" },

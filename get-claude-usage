@@ -473,14 +473,16 @@ PROFILE_ORIGINS=()
 # add_profile <name> <claude_config_dir> <origin>
 # First registration of a name wins. The origin is where the directory came
 # from, as the user would look for it: a file path, or "settings" for an entry
-# from the plugin settings. It is a path, so it carries no "|" and no ","
-# either - they are list delimiters and add_profile does not strip them from an
-# origin.
+# from the plugin settings. It is display text, so the two list delimiters are
+# stripped from it just as they are from a name.
 add_profile() {
     local name="$1" dir="$2" origin="${3:-}"
 
-    # , | : are output delimiters, they cannot survive in a profile name
+    # , | : are output delimiters, they cannot survive in a profile name. An
+    # origin is display text, so only the two list delimiters are kept out of it:
+    # a "name:origin" pair is split on its first colon, which a path may carry.
     name="${name//[,|:]/}"
+    origin="${origin//[,|]/}"
     [ -n "$name" ] || return 0
     [ -n "$dir" ] || return 0
 

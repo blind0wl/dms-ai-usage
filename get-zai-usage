@@ -25,13 +25,16 @@ ACCOUNT_ORIGINS=()
 # before the pi/env fallbacks take priority over them. The origin is where the
 # key was found, as the user would look for it: a file's path, the name of an
 # environment variable, or "settings" for an entry from the plugin settings.
-# It is a path or a variable name, so it carries no "|" and no "," either -
-# add_account does not strip them from an origin, and they are list delimiters.
+# It is display text, so the two list delimiters are stripped from it just as
+# they are from a name.
 add_account() {
     local name="$1" key="$2" origin="${3:-}"
 
-    # , | : are output delimiters, they cannot survive in an account name
+    # , | : are output delimiters, they cannot survive in an account name. An
+    # origin is display text, so only the two list delimiters are kept out of it:
+    # a "name:origin" pair is split on its first colon, which a path may carry.
     name="${name//[,|:]/}"
+    origin="${origin//[,|]/}"
     [ -n "$name" ] || return 0
     [ -n "$key" ] || return 0
 

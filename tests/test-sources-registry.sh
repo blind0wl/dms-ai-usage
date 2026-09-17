@@ -140,6 +140,10 @@ for (const d of reg.SOURCES) {
         for (const key of [d.accounts.listKey, d.accounts.originsKey])
             check(script.includes(`${key}=`), `${tag} script ${d.script} reports ${key}`);
         check(script.includes(reg.LIST_ACCOUNTS_FLAG), `${tag} script ${d.script} answers the listing mode the settings editor asks for`);
+        // The editor drops an Account the settings list provided by its exact
+        // origin tag, so a Script that spelled it differently would look like it
+        // had detected the user's own Accounts.
+        check(script.includes(`"${reg.SETTINGS_ORIGIN}"`), `${tag} script ${d.script} tags a settings Account with the origin the editor knows`);
         check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its output fields`);
         // The prefix a Source's per-Account keys wear is descriptor data, so
         // nothing here has to ask which Source it is. Claude declares PROFILE_

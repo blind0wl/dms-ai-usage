@@ -380,7 +380,9 @@ PluginComponent {
     // the first registration of a name, so the two calls have to agree.
     function accountArgs(id) {
         var d = Sources.byId(id);
-        return Sources.accountArgs(d, d && d.accounts ? root.settingList(d.accounts.settingKey) : []);
+        if (!d || !d.accounts)
+            return [];
+        return Sources.accountArgs(d, root.settingList(d.accounts.settingKey));
     }
 
     function commandFor(id) {
