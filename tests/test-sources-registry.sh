@@ -30,13 +30,13 @@ const root = process.argv[2];
 
 const load = (file, suffix) => {
     const source = fs.readFileSync(path.join(root, file), "utf8").replace(/^\.pragma library\s*/, "");
-    const sandbox = {};
+    const sandbox = { console };
     vm.createContext(sandbox);
     vm.runInContext(source + suffix, sandbox, { filename: file });
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "ClaudeCodeUsageWidget.qml"), "utf8");
@@ -62,15 +62,17 @@ const implemented = new Set();
 for (const m of tab.matchAll(/case "([a-z]+)":/g))
     implemented.add(m[1]);
 
-// Properties the widget exposes for Account argument sources.
-const accountSettingKeys = new Set();
-for (const m of widget.matchAll(/property var (\w*[Aa]ccounts?\w*|\w*[Pp]rofiles\w*): pluginData/g))
-    accountSettingKeys.add(m[1]);
-
 const results = [];
 const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
 
 // --- Descriptor completeness ---
+// Every key a descriptor lists in accounts.fields has to have an ACCOUNT_FIELDS
+// row, because pickFields() copies the row rather than a name: a missing row
+// would otherwise drop the key from the wire with no error anywhere. The table
+// is keyed by the unprefixed concept, so the two wire prefixes share one row.
+const accountFields = reg.ACCOUNT_FIELDS || {};
+check(Object.keys(accountFields).every((k) => !/^(PROFILE|ACCOUNT)_/.test(k)),
+      "ACCOUNT_FIELDS is keyed by concept, not once per prefix");
 for (const d of reg.SOURCES) {
     const tag = `descriptor "${d.id}"`;
     check(typeof d.id === "string" && d.id.length > 0, `${tag} has an id`);
@@ -123,9 +125,38 @@ for (const d of reg.SOURCES) {
     if (sawAccountsSection)
         check(d.accounts !== undefined, `${tag} has an accounts section so declares account settings`);
     if (d.accounts) {
+        check(sawAccountsSection, `${tag} declares account settings so renders an accounts section`);
         check(/^w*[Aa]ccounts?$|^custom\w+$/.test(d.accounts.settingKey), `${tag} account settingKey looks like a settings key`);
-        check(widget.indexOf(`property var ${d.accounts.settingKey}`) >= 0, `${tag} account settingKey "${d.accounts.settingKey}" is a property the widget reads`);
+        check(widget.indexOf("pluginData[d.accounts.settingKey]") >= 0, `${tag} account settingKey is resolved generically by the widget`);
         check(["path", "key"].indexOf(d.accounts.argField) >= 0, `${tag} account argField is path or key`);
+        check(typeof d.accounts.listKey === "string" && d.accounts.listKey.length > 0, `${tag} account declares the output key that lists its Accounts`);
+        check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its output fields`);
+        // The prefix a Source's per-Account keys wear is descriptor data, so
+        // nothing here has to ask which Source it is. Claude declares PROFILE_
+        // because get-claude-usage is upstream's file; the rest declare
+        // ACCOUNT_, which CONTEXT.md's Account term implies.
+        check(typeof d.accounts.keyPrefix === "string" && /^[A-Z]+_$/.test(d.accounts.keyPrefix),
+              `${tag} account declares the prefix its output keys wear`);
+        const keyPrefix = typeof d.accounts.keyPrefix === "string" ? d.accounts.keyPrefix : "";
+        const declaredFields = new Set();
+        for (const [key, spec] of Object.entries(d.accounts.fields || {})) {
+            check(keyPrefix.length > 0 && key.indexOf(keyPrefix) === 0,
+                  `${tag} account field "${key}" wears the prefix the descriptor declares`);
+            const suffix = keyPrefix.length > 0 ? key.slice(keyPrefix.length) : key;
+            check(accountFields[suffix] !== undefined,
+                  `${tag} account field "${key}" has an ACCOUNT_FIELDS row for suffix "${suffix}"`);
+            if (!spec) {
+                check(false, `${tag} account field "${key}" resolves in ACCOUNT_FIELDS`);
+                continue;
+            }
+            check(typeof spec.field === "string" && spec.field.length > 0, `${tag} account field "${key}" names an overlay field`);
+            check(["text", "number", "boolean", "series", "models"].indexOf(spec.type) >= 0, `${tag} account field "${key}" has a known reader`);
+            declaredFields.add(spec.field);
+        }
+        // Selecting an Account moves both Window cards, so the overlay slots the
+        // cards read have to be covered by the fields the descriptor lists.
+        for (const slot of ["primaryUtil", "primaryReset", "secondaryUtil", "secondaryReset"])
+            check(declaredFields.has(slot), `${tag} account fields cover the ${slot} overlay slot`);
         check(tr[d.accounts.titleKey] !== undefined, `${tag} account title is translated`);
         check(tr[d.accounts.descriptionKey] !== undefined, `${tag} account description is translated`);
         check(tr[d.accounts.fieldLabelKey] !== undefined, `${tag} account field label is translated`);
@@ -174,6 +205,30 @@ check(/visible:\s*item\s*\?\s*item\.shown\s*!==\s*false\s*:\s*true/.test(tab), "
 for (const name of ["AccountsSection", "LoginSection", "StatusSection", "WindowsSection", "ModelsSection", "AlltimeSection"]) {
     const sectionSource = fs.readFileSync(path.join(root, `ui/${name}.qml`), "utf8");
     check(/property bool shown:/.test(sectionSource), `${name} declares shown so the renderer can collapse it`);
+}
+
+// --- The widget holds no per-Source branches ---
+// ADR-0001: a Source is data. The Account setting key, the Account output keys
+// and the login action all come from the descriptor, so a Source added to the
+// registry needs no edit here and none of these strings should appear in the
+// widget.
+check(widget.indexOf("PROFILE_") < 0, "the widget names no Account output keys; they are descriptor data");
+check(widget.indexOf("fiveHour") < 0 && widget.indexOf("sevenDay") < 0, "the widget holds no Claude-shaped Account fields");
+for (const key of ["customProfiles", "customChatgptAccounts", "customZaiAccounts", "customOpencodeAccounts"])
+    check(widget.indexOf(`"${key}"`) < 0, `the widget does not hardcode the setting key "${key}"`);
+check(widget.indexOf("claudeLogin") < 0 && widget.indexOf("chatgptLogin") < 0, "the widget hardcodes no login action ids");
+check(!/command:\s*root\.loginCommandFor\(/.test(widget),
+      "no login Process binds its command to the live Account selection");
+for (const d of reg.SOURCES) {
+    if (d.login && d.login.kind === "cli") {
+        check(typeof d.login.program === "string" && d.login.program.length > 0, `descriptor "${d.id}" cli login names its program`);
+        check(Array.isArray(d.login.args), `descriptor "${d.id}" cli login declares its args`);
+        if (d.login.env) {
+            check(typeof d.login.env.variable === "string" && d.login.env.variable.length > 0, `descriptor "${d.id}" login env names its variable`);
+            check(d.login.env.settingKey === undefined, `descriptor "${d.id}" login env does not reuse the accounts settingKey name`);
+            check(typeof d.login.env.accountField === "string" && d.login.env.accountField.length > 0, `descriptor "${d.id}" login env names the Account field it exports`);
+        }
+    }
 }
 
 // --- Settings list rules ---

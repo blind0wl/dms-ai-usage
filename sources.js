@@ -12,6 +12,53 @@
 //   login         How this Source offers to fix missing credentials, if it can.
 //   sections      Ordered Sections making up the popout tab.
 
+// The per-Account output keys a Source may emit, keyed by the unprefixed
+// concept, and the overlay field each fills plus how to read it. Declared as
+// data so no Source's Window shape is baked into the widget's Account adapter.
+// A descriptor picks the subset it emits with pickFields() and declares the
+// prefix its own wire keys wear, so the two prefixes share one row per concept.
+var ACCOUNT_FIELDS = {
+    SUBSCRIPTION: { field: "subscriptionType", type: "text" },
+    TIER: { field: "rateLimitTier", type: "text" },
+    CREDS_STATUS: { field: "credsStatus", type: "text" },
+    WEEK_TOKENS: { field: "weekTokens", type: "number" },
+    MONTH_TOKENS: { field: "monthTokens", type: "number" },
+    WEEK_MESSAGES: { field: "weekMessages", type: "number" },
+    WEEK_SESSIONS: { field: "weekSessions", type: "number" },
+    TODAY_COST: { field: "todayCost", type: "number" },
+    WEEK_COST: { field: "weekCost", type: "number" },
+    MONTH_COST: { field: "monthCost", type: "number" },
+    EXTRA_USAGE: { field: "extraUsageEnabled", type: "boolean" },
+    DAILY: { field: "daily", type: "series" },
+    DAILY_COSTS: { field: "dailyCosts", type: "series" },
+    WEEK_MODELS: { field: "weekModels", type: "models" },
+    // Two genuinely different wire names for the same slot, not a prefix pair.
+    FIVE_HOUR_UTIL: { field: "primaryUtil", type: "number" },
+    FIVE_HOUR_RESET: { field: "primaryReset", type: "text" },
+    SEVEN_DAY_UTIL: { field: "secondaryUtil", type: "number" },
+    SEVEN_DAY_RESET: { field: "secondaryReset", type: "text" },
+    PRIMARY_UTIL: { field: "primaryUtil", type: "number" },
+    PRIMARY_RESET: { field: "primaryReset", type: "text" },
+    SECONDARY_UTIL: { field: "secondaryUtil", type: "number" },
+    SECONDARY_RESET: { field: "secondaryReset", type: "text" }
+};
+
+// Builds a descriptor's wire-key map from its prefix and the bare suffixes its
+// script emits. An unknown suffix would otherwise be copied through as
+// undefined and dropped from the wire with nothing to show for it, so the full
+// wire key is named here instead.
+function pickFields(id, prefix, suffixes) {
+    var out = {};
+    for (var i = 0; i < suffixes.length; i++) {
+        var key = prefix + suffixes[i];
+        var spec = ACCOUNT_FIELDS[suffixes[i]];
+        if (!spec)
+            console.warn("sources.js: descriptor \"" + id + "\" declares Account key " + key + " with no ACCOUNT_FIELDS row for suffix \"" + suffixes[i] + "\"");
+        out[key] = spec;
+    }
+    return out;
+}
+
 var SOURCES = [
     {
         id: "claude",
@@ -37,17 +84,41 @@ var SOURCES = [
         },
         accounts: {
             settingKey: "customProfiles",
+            // Claude lists its Accounts under PROFILES; every other Source uses
+            // ACCOUNTS. The widget reads whichever the descriptor names.
+            listKey: "PROFILES",
+            // Claude's per-Account keys keep PROFILE_ because get-claude-usage
+            // is upstream's file and those names are its existing output
+            // contract. Every other Source declares ACCOUNT_, the general term
+            // CONTEXT.md reserves over Profile.
+            keyPrefix: "PROFILE_",
             argField: "path",
             labelKey: "Profile",
             overlay: true,
             titleKey: "Custom Profiles",
             descriptionKey: "Track extra Claude config directories. Point at a CLAUDE_CONFIG_DIR (the folder containing projects/). ~/.claude, Claude Code Switcher and claude-code-profiles are detected automatically.",
             fieldLabelKey: "Config directory",
-            placeholder: "~/.ccp/data/work"
+            placeholder: "~/.ccp/data/work",
+            fields: pickFields("claude", "PROFILE_", [
+                "SUBSCRIPTION", "TIER", "CREDS_STATUS",
+                "WEEK_TOKENS", "MONTH_TOKENS", "WEEK_MESSAGES",
+                "WEEK_SESSIONS", "TODAY_COST", "WEEK_COST",
+                "MONTH_COST", "EXTRA_USAGE", "DAILY",
+                "DAILY_COSTS", "WEEK_MODELS",
+                "FIVE_HOUR_UTIL", "FIVE_HOUR_RESET",
+                "SEVEN_DAY_UTIL", "SEVEN_DAY_RESET"
+            ])
         },
         login: {
             kind: "cli",
-            action: "claudeLogin"
+            program: "claude",
+            args: ["auth", "login", "--claudeai"],
+            // The selected Account's config directory is exported for the CLI,
+            // so logging into one Account does not touch another.
+            env: {
+                variable: "CLAUDE_CONFIG_DIR",
+                accountField: "path"
+            }
         },
         planStyle: "subscription",
         sections: [
@@ -100,16 +171,26 @@ var SOURCES = [
         },
         accounts: {
             settingKey: "customChatgptAccounts",
+            listKey: "ACCOUNTS",
+            keyPrefix: "ACCOUNT_",
             argField: "path",
             labelKey: "Account",
             titleKey: "Custom ChatGPT Accounts",
             descriptionKey: "Track extra Codex accounts. Point at a CODEX_HOME (the folder containing auth.json). ~/.codex is detected automatically as \"default\".",
             fieldLabelKey: "Config directory",
-            placeholder: "~/.codex-work"
+            placeholder: "~/.codex-work",
+            fields: pickFields("chatgpt", "ACCOUNT_", [
+                "SUBSCRIPTION", "CREDS_STATUS", "WEEK_TOKENS",
+                "MONTH_TOKENS", "WEEK_MESSAGES", "WEEK_SESSIONS",
+                "DAILY", "WEEK_MODELS",
+                "PRIMARY_UTIL", "PRIMARY_RESET",
+                "SECONDARY_UTIL", "SECONDARY_RESET"
+            ])
         },
         login: {
             kind: "cli",
-            action: "chatgptLogin"
+            program: "codex",
+            args: ["login"]
         },
         planStyle: "plan",
         sections: [
@@ -169,12 +250,19 @@ var SOURCES = [
             // opencode Go is keyed rather than directory-backed, so Accounts
             // are passed to the script as name=api-key, like Z.ai.
             settingKey: "customOpencodeAccounts",
+            listKey: "ACCOUNTS",
+            keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
             titleKey: "Custom opencode Accounts",
             descriptionKey: "Track extra opencode Go Accounts by API key. An API key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".",
             fieldLabelKey: "API key",
-            placeholder: ""
+            placeholder: "",
+            fields: pickFields("opencode", "ACCOUNT_", [
+                "CREDS_STATUS",
+                "PRIMARY_UTIL", "PRIMARY_RESET",
+                "SECONDARY_UTIL", "SECONDARY_RESET"
+            ])
         },
         login: {
             // There is no CLI login flow to shell out to, and the opencode
@@ -196,6 +284,7 @@ var SOURCES = [
         // Source name and its two Window cards, with no stats, chart or models.
         sections: [
             { type: "header" },
+            { type: "accounts" },
             { type: "login" },
             { type: "status" },
             { type: "windows", which: "primary" },
@@ -222,12 +311,19 @@ var SOURCES = [
             // Z.ai has no local config directory to point at, so Accounts are
             // passed to the script as name=api-key rather than name=path.
             settingKey: "customZaiAccounts",
+            listKey: "ACCOUNTS",
+            keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
             titleKey: "Custom Z.ai Accounts",
             descriptionKey: "Track extra Z.ai accounts by API key. A key from the pi coding agent config (~/.pi/agent/models.json) is detected automatically as \"default\".",
             fieldLabelKey: "API key",
-            placeholder: ""
+            placeholder: "",
+            fields: pickFields("zai", "ACCOUNT_", [
+                "CREDS_STATUS",
+                "PRIMARY_UTIL", "PRIMARY_RESET",
+                "SECONDARY_UTIL", "SECONDARY_RESET"
+            ])
         },
         login: {
             // Text only: there is no CLI login flow to shell out to. The fix is
@@ -239,6 +335,7 @@ var SOURCES = [
         planStyle: "plan",
         sections: [
             { type: "header" },
+            { type: "accounts" },
             { type: "login" },
             { type: "windows", which: "primary" },
             { type: "windows", which: "secondary" },

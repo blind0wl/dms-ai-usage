@@ -794,6 +794,213 @@ if ! grep -q "^PASS\|^FAIL" "$PILL_REPORT"; then
     fail "pill-reading report produced no results (node failed?) see $PILL_REPORT"
 fi
 
+# ============================================================
+echo "=== Test 12: descriptor-declared Accounts, login and Account keys ==="
+# ============================================================
+
+# The widget's Account adapter is exercised against the real descriptors. The
+# Account setting key, the Account output keys and the login command all come
+# from sources.js, so this is where a Source-shaped branch creeping back into
+# the widget would show up. Functions are extracted from the widget itself and
+# wired to the real registry rather than copied into this harness.
+ACCOUNT_REPORT=/tmp/account-overlay-report.txt
+node - "$SCRIPT_DIR" > "$ACCOUNT_REPORT" 2>&1 <<'NODE' || true
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
+const repo = process.argv[2];
+
+const source = fs.readFileSync(path.join(repo, "ClaudeCodeUsageWidget.qml"), "utf8");
+
+function extract(name) {
+    const m = source.match(new RegExp("function " + name + "\\([\\s\\S]*?\\n    \\}"));
+    if (!m) throw new Error("could not extract " + name);
+    return m[0];
+}
+
+const registrySource = fs.readFileSync(path.join(repo, "sources.js"), "utf8").replace(/^\.pragma library\s*/, "");
+const registry = {};
+vm.createContext(registry);
+vm.runInContext(registrySource + "; this.api = { SOURCES, byId, ids };", registry, { filename: "sources.js" });
+const Sources = registry.api;
+
+const names = [
+    "settingList", "accountFieldFor", "loginCommandFor", "shellQuote",
+    "emptyState", "updateSource", "setWindow",
+    "parseWindowKey", "parseAccountKey", "parseLine", "applyAccounts",
+    "applyAccountField", "applyAccountNumber", "applyAccountBool",
+    "applyAccountList", "applyAccountModels", "mutateAccounts",
+    "parseAccountScalars", "parseAccountSeries", "parseAccountModels",
+    "parseDaily", "parseModels", "parseResetMs", "applyCredsStatus",
+    "stateFor", "windowSeconds", "selectAccount", "accountNames",
+    "setLoginInProgress", "loginProcessFor", "startLogin",
+    "refetchChangedAccounts"
+];
+
+const sandbox = {
+    Sources: Sources,
+    pluginData: {},
+    console: console,
+    root: {
+        sourceData: {},
+        accountData: {},
+        selectedAccount: {},
+        accountSettings: {},
+        loginCommands: {},
+        sourceOrder: [],
+        lastAccountSettings: null,
+        usdEurRate: 0,
+        todayIndex: 0,
+        cliSearchPathAdditions: "$HOME/.local/bin"
+    }
+};
+vm.createContext(sandbox);
+let code = "";
+for (const n of names)
+    code += extract(n) + "\n";
+code += "for (var i = 0; i < " + JSON.stringify(names) + ".length; i++) { var n = " + JSON.stringify(names) + "[i]; root[n] = this[n]; }\n";
+vm.runInContext(code, sandbox, { filename: "widget-functions" });
+
+const widget = sandbox.root;
+const results = [];
+const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
+const parse = (id, line) => sandbox.parseLine(id, line);
+
+// --- The Account setting key is resolved from the descriptor ---
+sandbox.pluginData = { customOpencodeAccounts: [{ name: "work", key: "sk-1" }] };
+widget.accountSettings = { customOpencodeAccounts: sandbox.pluginData.customOpencodeAccounts };
+check(widget.settingList("customOpencodeAccounts").length === 1, "settingList resolves a descriptor's settingKey");
+check(widget.settingList("notAKey").length === 0, "settingList returns an empty list for an unknown key");
+
+// --- opencode Go: descriptor-declared Account keys fill the overlay ---
+parse("opencode", "ACCOUNTS=default,work");
+parse("opencode", "ACCOUNT_PRIMARY_UTIL=default:1,work:80");
+parse("opencode", "ACCOUNT_PRIMARY_RESET=default:2026-09-16T15:31:05.155Z,work:2026-09-17T00:00:00.000Z");
+parse("opencode", "ACCOUNT_SECONDARY_UTIL=default:6,work:2");
+parse("opencode", "ACCOUNT_CREDS_STATUS=default:ok,work:ok");
+check(widget.accountData.opencode.work.primaryUtil === 80, "opencode ACCOUNT_PRIMARY_UTIL lands on the generic primary slot");
+check(widget.accountData.opencode.work.primaryReset === "2026-09-17T00:00:00.000Z", "opencode ACCOUNT_PRIMARY_RESET lands on the generic primary reset");
+check(widget.accountData.opencode.work.secondaryUtil === 2, "opencode ACCOUNT_SECONDARY_UTIL lands on the generic secondary slot");
+
+// --- Claude keeps its existing PROFILES + PROFILE_* contract ---
+parse("claude", "PROFILES=default,work");
+parse("claude", "PROFILE_FIVE_HOUR_UTIL=default:42,work:7");
+parse("claude", "PROFILE_FIVE_HOUR_RESET=default:2099-01-01T00:00:00Z,work:2099-02-01T00:00:00Z");
+check(widget.accountData.claude.work.primaryUtil === 7, "Claude's PROFILE_FIVE_HOUR_UTIL still fills the primary slot");
+check(widget.accountData.claude.work.primaryReset === "2099-02-01T00:00:00Z", "Claude's PROFILE_FIVE_HOUR_RESET still fills the primary reset");
+
+// --- ChatGPT's per-Account keys wear its own Window names ---
+parse("chatgpt", "ACCOUNTS=default,work");
+parse("chatgpt", "ACCOUNT_PRIMARY_UTIL=default:42,work:7");
+parse("chatgpt", "ACCOUNT_SECONDARY_UTIL=default:15,work:3");
+check(widget.accountData.chatgpt.work.primaryUtil === 7, "ChatGPT's ACCOUNT_PRIMARY_UTIL fills the primary slot");
+check(widget.accountData.chatgpt.work.secondaryUtil === 3, "ChatGPT's ACCOUNT_SECONDARY_UTIL fills the secondary slot");
+
+// --- stateFor overlays the selected Account, and falls back to the aggregate ---
+widget.sourceData.opencode = Object.assign(widget.sourceData.opencode, {
+    primary: { util: 1, resetMs: 0, windowSeconds: 18000 },
+    secondary: { util: 6, resetMs: 0, windowSeconds: 604800 }
+});
+widget.selectedAccount.opencode = "work";
+const stWork = widget.stateFor("opencode");
+check(stWork.primary.util === 80, "stateFor overlays the selected Account's primary Window");
+check(stWork.id === "opencode", "stateFor carries the Source id");
+widget.selectedAccount.opencode = "all";
+check(widget.stateFor("opencode").primary.util === 1, "stateFor with the aggregate selected keeps the aggregate");
+
+parse("opencode", "ACCOUNTS=default,work,spare");
+parse("opencode", "ACCOUNT_CREDS_STATUS=spare:missing");
+widget.selectedAccount.opencode = "spare";
+check(widget.stateFor("opencode").primary.util === 1, "an Account with no reading falls back to the aggregate");
+
+// An endpoint failure omits an Account from the Window lists (ADR-0002), so its
+// overlay must keep the last good reading rather than parse the silence as 0.
+parse("opencode", "ACCOUNT_PRIMARY_UTIL=default:1");
+widget.selectedAccount.opencode = "work";
+check(widget.stateFor("opencode").primary.util === 80, "an Account omitted from an Unavailable run keeps its last good reading");
+
+// --- The login command is built from the descriptor ---
+widget.accountSettings = { customProfiles: [{ name: "work", path: "/home/u/.ccp/work" }] };
+widget.selectedAccount = { claude: "work" };
+const cmd = widget.loginCommandFor(Sources.byId("claude"), "claude");
+check(cmd[0] === "bash" && cmd[1] === "-c", "a cli login runs through bash -c");
+check(cmd[2].indexOf("CLAUDE_CONFIG_DIR='/home/u/.ccp/work'") === 0, "Claude's login exports the selected Account's config directory");
+check(cmd[2].indexOf("exec claude 'auth' 'login' '--claudeai'") >= 0, "the login program and args come from the descriptor");
+check(cmd[2].indexOf("exec claude auth login") < 0, "descriptor args are shell-quoted, not concatenated raw");
+const cmdCg = widget.loginCommandFor(Sources.byId("chatgpt"), "chatgpt");
+check(cmdCg[2].indexOf("CLAUDE_CONFIG_DIR=") < 0, "a login with no declared environment exports nothing");
+check(cmdCg[2].indexOf("exec codex 'login'") >= 0, "ChatGPT's login program comes from its descriptor");
+widget.selectedAccount = { claude: "all" };
+check(widget.loginCommandFor(Sources.byId("claude"), "claude")[2].indexOf("CLAUDE_CONFIG_DIR=") < 0, "the aggregate selection leaves the CLI's own default in place");
+
+// An arg with a space or a quote is the extension point this schema exists to
+// create, so it must survive into the bash string intact.
+const spacedCmd = widget.loginCommandFor({ login: { kind: "cli", program: "mycli", args: ["a b", "c'd"] } }, "synthetic");
+check(spacedCmd[2].indexOf("exec mycli 'a b' 'c'\\''d'") >= 0, "a descriptor arg with a space or quote is shell-quoted");
+
+// --- Two Sources can log in at the same time ---
+// Each CLI descriptor gets its own Process, so a press on one Source must not
+// be dropped because another Source's login is already running.
+widget.loginInProgress = {};
+widget.loginProcesses = { claude: { running: true }, chatgpt: { running: false }, opencode: { running: false } };
+widget.startLogin("chatgpt");
+check(widget.loginProcesses.chatgpt.running === true, "a second Source's login starts while the first is running");
+check(widget.loginInProgress.chatgpt === true, "the second Source shows login progress");
+check(widget.loginProcesses.claude.running === true, "the first Source's login keeps running");
+widget.startLogin("chatgpt");
+check(widget.loginInProgress.chatgpt === true, "re-pressing a running login leaves its progress shown");
+widget.startLogin("opencode");
+check(widget.loginProcesses.opencode.running === false, "a text-only login has no Process to start");
+
+// The command a login runs with is fixed when the button is pressed. Changing
+// the Account selection afterwards must not reach into a running Process.
+widget.accountSettings = { customProfiles: [{ name: "work", path: "/home/u/.ccp/work" }, { name: "home", path: "/home/u/.claude" }] };
+widget.selectedAccount = { claude: "work" };
+widget.loginCommands = {};
+widget.loginProcesses = { claude: { running: false } };
+widget.startLogin("claude");
+const snapshot = widget.loginCommands.claude;
+check(!!snapshot && snapshot[2].indexOf("CLAUDE_CONFIG_DIR='/home/u/.ccp/work'") === 0,
+      "pressing login snapshots the command for the Account selected at press time");
+widget.selectedAccount = { claude: "home" };
+check(widget.loginCommands.claude === snapshot,
+      "changing the Account selection leaves a running login's command untouched");
+widget.startLogin("claude");
+check(widget.loginCommands.claude === snapshot,
+      "re-pressing a running login does not rewrite its command");
+
+// The first evaluation of the Account settings is the baseline, so it must not
+// queue a refetch of every Source on top of the startup fetch.
+const fetched = [];
+widget.requestFetch = (id) => fetched.push(id);
+widget.sourceOrder = ["claude", "chatgpt", "opencode", "zai"];
+widget.lastAccountSettings = null;
+widget.accountSettings = {
+    customProfiles: [{ name: "work", path: "/p" }],
+    customChatgptAccounts: [],
+    customOpencodeAccounts: [],
+    customZaiAccounts: []
+};
+widget.refetchChangedAccounts();
+check(fetched.length === 0, "the first Account settings evaluation seeds the baseline and fetches nothing");
+widget.accountSettings = Object.assign({}, widget.accountSettings, { customChatgptAccounts: [{ name: "work", path: "/c" }] });
+widget.refetchChangedAccounts();
+check(fetched.length === 1 && fetched[0] === "chatgpt", "a later change refetches only the Source whose Account list changed");
+widget.refetchChangedAccounts();
+check(fetched.length === 1, "an unchanged settings save refetches nothing");
+
+console.log(results.join("\n"));
+NODE
+
+while IFS=$'\t' read -r status label; do
+    [ -z "${status:-}" ] && continue
+    if [ "$status" = "PASS" ]; then pass "$label"; else fail "$label"; fi
+done < "$ACCOUNT_REPORT"
+
+if ! grep -q "^PASS\|^FAIL" "$ACCOUNT_REPORT"; then
+    fail "account overlay report produced no results (node failed?) see $ACCOUNT_REPORT"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
