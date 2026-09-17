@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, scriptPath, wirePair, splitList, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -297,6 +297,37 @@ check(pair("ACCOUNTS=") === JSON.stringify({ key: "ACCOUNTS", value: "" }),
 check(reg.wirePair("no delimiter") === null && reg.wirePair("") === null && reg.wirePair(null) === null,
       "wirePair reports nothing for a line that carries no key");
 
+// One parser for the Scripts' "name:value" lists, which the per-Account values,
+// the origins and the model breakdowns all wear. Only the separator differs, and
+// the caller splits on its own.
+const mapped = (entries, mapValue) => JSON.stringify(reg.nameValueMap(entries, mapValue));
+check(mapped(["work:k1", "default:k2"]) === JSON.stringify({ work: "k1", default: "k2" }),
+      "nameValueMap keys each entry by the name before its first colon");
+check(mapped(["ACCOUNT_CREDITS:work:80"]) === JSON.stringify({ ACCOUNT_CREDITS: "work:80" }),
+      "nameValueMap keeps a colon inside the value");
+check(mapped(["work:k1", "nocolon", "empty:"]) === JSON.stringify({ work: "k1", empty: "" }),
+      "nameValueMap skips an entry with no colon and keeps an empty value");
+check(mapped(["work:1"]) === JSON.stringify({ work: "1" })
+      && mapped(["work:1,2"], (v) => v.split(",")) === JSON.stringify({ work: ["1", "2"] }),
+      "nameValueMap maps each value through the reader the caller gives it");
+check(mapped([]) === "{}" && mapped(null) === "{}", "nameValueMap reports nothing for a missing entry list");
+
+// The Script is started one way, watchdog included, so a fetch and a listing
+// cannot diverge on how long they wait or which file they run.
+check(JSON.stringify(reg.scriptCommand("/plugins", "aiUsage", reg.SOURCES[0], ["work=k1"])) ===
+      JSON.stringify(["timeout", "120", "bash", `/plugins/aiUsage/${reg.SOURCES[0].script}`, "work=k1"]),
+      "scriptCommand runs the Script under the watchdog with the caller's arguments");
+check(JSON.stringify(reg.scriptCommand("/plugins", "aiUsage", reg.SOURCES[0])) ===
+      JSON.stringify(["timeout", "120", "bash", `/plugins/aiUsage/${reg.SOURCES[0].script}`]),
+      "scriptCommand runs a Script with no arguments when the caller passes none");
+check(JSON.stringify(reg.scriptCommand("/plugins", "aiUsage", null)) === JSON.stringify(["timeout", "120", "bash", ""]),
+      "scriptCommand still names the watchdog when it cannot name a file");
+for (const name of ["AiUsageWidget.qml", "ui/AccountsEditor.qml"]) {
+    const source = fs.readFileSync(path.join(root, name), "utf8");
+    check(source.includes("Sources.scriptCommand("), `${name} starts a Script through scriptCommand`);
+    check(!/\[\s*"timeout"/.test(source), `${name} does not restate the Script's launch prefix`);
+}
+
 // The arguments decide which of two Accounts sharing a name survives the
 // Script's own de-duplication, so the widget's fetch and the settings editor's
 // listing are built by one function rather than two.
@@ -323,7 +354,7 @@ check(reg.scriptPath("/plugins", "aiUsage", null) === "" && reg.scriptPath("", "
 // them pointing at different files.
 for (const name of ["AiUsageWidget.qml", "ui/AccountsEditor.qml"]) {
     const source = fs.readFileSync(path.join(root, name), "utf8");
-    check(source.includes("Sources.scriptPath("), `${name} reaches a Script through scriptPath`);
+    check(source.includes("Sources.scriptCommand("), `${name} reaches a Script through scriptCommand`);
     check(!/pluginDirectory\s*\+/.test(source), `${name} does not build a Script path by hand`);
 }
 

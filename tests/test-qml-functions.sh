@@ -821,7 +821,7 @@ function extract(name) {
 const registrySource = fs.readFileSync(path.join(repo, "sources.js"), "utf8").replace(/^\.pragma library\s*/, "");
 const registry = {};
 vm.createContext(registry);
-vm.runInContext(registrySource + "; this.api = { SOURCES, byId, ids, wirePair, splitList };", registry, { filename: "sources.js" });
+vm.runInContext(registrySource + "; this.api = { SOURCES, byId, ids, wirePair, splitList, nameValueMap, scriptCommand, scriptPath };", registry, { filename: "sources.js" });
 const Sources = registry.api;
 
 const names = [

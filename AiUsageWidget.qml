@@ -367,10 +367,6 @@ PluginComponent {
 
     // --- Fetching ---
 
-    function scriptPathFor(id) {
-        return Sources.scriptPath(PluginService.pluginDirectory, root.pluginId, Sources.byId(id));
-    }
-
     function settingList(key) {
         return root.accountSettings[key] || [];
     }
@@ -386,7 +382,7 @@ PluginComponent {
     }
 
     function commandFor(id) {
-        return ["timeout", "120", "bash", root.scriptPathFor(id)].concat(root.accountArgs(id));
+        return Sources.scriptCommand(PluginService.pluginDirectory, root.pluginId, Sources.byId(id), root.accountArgs(id));
     }
 
     function processFor(id) {
@@ -1329,43 +1325,20 @@ PluginComponent {
 
     // --- Per-Account overlay state ---
 
-    // "name:a,b,c|name2:..." — a per-Account 7-day series.
+    // "name:a,b,c|name2:..." — a per-Account 7-day series. Its entries are
+    // pipe-separated because each value is itself a comma-separated list.
     function parseAccountSeries(val) {
-        var out = {};
-        var blocks = val.split("|");
-        for (var i = 0; i < blocks.length; i++) {
-            var colon = blocks[i].indexOf(":");
-            if (colon < 0)
-                continue;
-            out[blocks[i].substring(0, colon)] = root.parseDaily(blocks[i].substring(colon + 1));
-        }
-        return out;
+        return Sources.nameValueMap(val.split("|"), root.parseDaily);
     }
 
     // "name:value,name2:value2" — a per-Account scalar.
     function parseAccountScalars(val) {
-        var out = {};
-        var entries = val.split(",");
-        for (var i = 0; i < entries.length; i++) {
-            var colon = entries[i].indexOf(":");
-            if (colon < 0)
-                continue;
-            out[entries[i].substring(0, colon)] = entries[i].substring(colon + 1);
-        }
-        return out;
+        return Sources.nameValueMap(Sources.splitList(val));
     }
 
     // "name:model=123,model2=456|name2:..." — per-Account model breakdowns.
     function parseAccountModels(val) {
-        var out = {};
-        var blocks = val.split("|");
-        for (var i = 0; i < blocks.length; i++) {
-            var colon = blocks[i].indexOf(":");
-            if (colon < 0)
-                continue;
-            out[blocks[i].substring(0, colon)] = root.parseModels(blocks[i].substring(colon + 1));
-        }
-        return out;
+        return Sources.nameValueMap(val.split("|"), root.parseModels);
     }
 
     function mutateAccounts(id, mutate) {

@@ -33,9 +33,11 @@ _Avoid_: auto, built-in, hidden, automatic account
 **Custom Account**:
 An Account the user added to a Source's setting list. The plugin owns it: the
 settings page can edit it, and the Script is handed it as an argument instead of
-finding it itself. A Script resolves a clash between a Custom Account and a
-Detected one by keeping whichever it registers first, and reports the Origin it
-kept.
+finding it itself. A Script resolves a clash between two Accounts - a Custom one
+and a Detected one, or two Custom ones - by keeping the first registration of a
+name or of a value, and reports the Origin it kept. A row that lost that clash is
+not registered: the selector cannot offer it, and the settings page marks it not
+in use.
 _Avoid_: manual account, user account, settings account
 
 **Origin**:

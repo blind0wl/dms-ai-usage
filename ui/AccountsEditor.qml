@@ -107,11 +107,10 @@ Column {
     readonly property var listCommand: {
         if (!root.settingsRoot || !root.descriptor)
             return [];
-        // Wrapped in `timeout` as the widget's fetch is: a listing that never
-        // exits must not leave the editor waiting on it.
-        return ["timeout", "120", "bash",
-                Sources.scriptPath(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor),
-                Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items));
+        // Started the way the widget's fetch starts a Script, watchdog included,
+        // so a listing that never exits cannot leave the editor waiting on it.
+        return Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
+                                     [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items)));
     }
 
     // Asks the Script which Accounts it would report and where each came from.

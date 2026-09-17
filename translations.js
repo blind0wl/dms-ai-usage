@@ -185,7 +185,7 @@ var strings = {
         { fr: "Supprimer", es: "Eliminar" },
     "No items added yet":
         { fr: "Aucun élément ajouté pour le moment", es: "Todavía no se ha añadido ningún elemento" },
-    "Detected accounts":
+    "Detected Accounts":
         { fr: "Comptes détectés", es: "Cuentas detectadas" },
     "Detected Profiles":
         { fr: "Profils détectés", es: "Perfiles detectados" },

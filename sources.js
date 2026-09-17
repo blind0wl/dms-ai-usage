@@ -181,17 +181,34 @@ function splitList(value) {
 // One comma-separated origin list as a name -> origin map. A pair with no colon
 // names no origin, so it is skipped rather than guessed at.
 function originsByName(origins) {
-    var pairs = splitList(origins);
+    return nameValueMap(splitList(origins));
+}
+
+// One "name:value" entry list as a name -> value map. The Scripts' per-Account
+// keys, their origins and their model breakdowns all wear this shape, so it is
+// parsed in one place; only the separator differs by key, and the caller splits
+// on its own. `mapValue` transforms each value on the way in, for a value that is
+// itself a list. An entry with no colon names no value, so it is skipped rather
+// than guessed at.
+function nameValueMap(entries, mapValue) {
     var out = {};
-    for (var i = 0; i < pairs.length; i++) {
-        var at = pairs[i].indexOf(":");
-        // The name never carries a colon (the Scripts strip them), so the first
-        // one ends it. An origin is a path or a variable name and may carry one.
+    for (var i = 0; Array.isArray(entries) && i < entries.length; i++) {
+        var at = entries[i].indexOf(":");
         if (at < 0)
             continue;
-        out[pairs[i].substring(0, at)] = pairs[i].substring(at + 1);
+        var value = entries[i].substring(at + 1);
+        out[entries[i].substring(0, at)] = mapValue ? mapValue(value) : value;
     }
     return out;
+}
+
+// The command that runs a Source's Script: a watchdog around bash, because a run
+// that never exits (a hung CLI, a stalled curl) would otherwise leave a fetch or
+// a settings page waiting on it. Built here so the widget's fetch and the
+// settings editor's listing are started the same way, `args` being whatever that
+// caller passes the Script.
+function scriptCommand(pluginDirectory, pluginId, descriptor, args) {
+    return ["timeout", "120", "bash", scriptPath(pluginDirectory, pluginId, descriptor)].concat(args || []);
 }
 
 // One line of a Script's output split into its key and its value, or null when
@@ -327,7 +344,7 @@ var SOURCES = [
             settingKey: "customChatgptAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
-            detectedTitleKey: "Detected accounts",
+            detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "path",
             labelKey: "Account",
@@ -408,7 +425,7 @@ var SOURCES = [
             settingKey: "customOpencodeAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
-            detectedTitleKey: "Detected accounts",
+            detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
@@ -471,7 +488,7 @@ var SOURCES = [
             settingKey: "customZaiAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
-            detectedTitleKey: "Detected accounts",
+            detectedTitleKey: "Detected Accounts",
             keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
