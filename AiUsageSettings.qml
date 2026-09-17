@@ -159,6 +159,17 @@ PluginSettings {
             wrapMode: Text.WordWrap
         }
 
+        // The Overview is not a Source: it ranks every visible Source against
+        // the others, so it is toggleable but never movable and stays out of
+        // the ordered `sources` array (ADR 0003). Pinned above the draggable
+        // list rather than inside it, with no move buttons.
+        ToggleSetting {
+            settingKey: "overviewEnabled"
+            label: root.tr("Overview")
+            description: root.tr("Show the Overview tab, ranking your Sources by their tightest Window. It appears once two or more Sources are visible.")
+            defaultValue: true
+        }
+
         Repeater {
             model: root.displayDescriptors
 

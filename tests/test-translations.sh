@@ -41,12 +41,13 @@ for (const key of [...keys].sort()) {
     }
 }
 
-for (const [key, expected] of [
-    ["Custom Profiles", "Perfiles personalizados"],
-    ["No items added yet", "Todavía no se ha añadido ningún elemento"],
-    ["msgs", "messages"]
+for (const [key, language, expected] of [
+    ["Custom Profiles", "es", "Perfiles personalizados"],
+    ["No items added yet", "es", "Todavía no se ha añadido ningún elemento"],
+    ["Overview", "fr", "Vue d'ensemble"],
+    ["Overview", "es", "Vista general"],
+    ["msgs", "fr", "messages"]
 ]) {
-    const language = key === "msgs" ? "fr" : "es";
     if (sandbox.tr(key, language) !== expected) {
         console.error(`FAIL: unexpected ${language} translation for "${key}"`);
         failed = true;
