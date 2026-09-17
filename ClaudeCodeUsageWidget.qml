@@ -494,49 +494,85 @@ PluginComponent {
 
     // --- CLI logins ---
 
-    property string loginSourceId: ""
-
     // `command` is built rather than declared, because Quickshell's own PATH is
     // a bare `/usr/local/bin:/usr/bin` and would not find a `claude` under
     // ~/.local/bin or ~/.npm-global/bin, leaving the button stuck on
     // "Logging in…" because the Process never spawned and never exited. The
     // program, its args and any environment come from the descriptor, so a new
-    // Source's login needs no Process or branch here.
+    // Source's login needs no branch here. Every value that can carry a space
+    // or quote is shell-quoted, the env value and the args alike.
     function loginCommandFor(d, id) {
         var cmd = "";
         if (d.login.env && d.login.env.accountField) {
             var value = root.accountFieldFor(id, root.selectedAccount[id] || "all", d.login.env.accountField);
             if (value)
-                cmd = d.login.env.settingKey + "=" + root.shellQuote(value) + " ";
+                cmd = d.login.env.variable + "=" + root.shellQuote(value) + " ";
         }
         cmd += 'PATH="$PATH:' + root.cliSearchPathAdditions + '" exec ' + d.login.program;
         var args = d.login.args || [];
         for (var i = 0; i < args.length; i++)
-            cmd += " " + args[i];
+            cmd += " " + root.shellQuote(args[i]);
         return ["bash", "-c", cmd];
+    }
+
+    // One Process per descriptor that has a CLI login, built the same way the
+    // fetch processes are, so two Sources can log in at once and a new Source's
+    // login needs no Process here.
+    readonly property var cliLoginDescriptors: Sources.SOURCES.filter(function (d) {
+        return d.login && d.login.kind === "cli";
+    })
+
+    property var loginProcesses: ({})
+
+    function loginProcessFor(id) {
+        return root.loginProcesses[id] || null;
     }
 
     function startLogin(id) {
         var d = Sources.byId(id);
         if (!d || !d.login || d.login.kind !== "cli")
             return;
-        if (loginProcess.running)
+        var p = root.loginProcessFor(id);
+        // Re-pressing a Source whose login is already running does nothing new,
+        // but that press is never silent: the Source already shows the progress
+        // state the first press set. Another Source's press is unaffected
+        // because each has its own Process.
+        if (!p || p.running)
             return;
-        loginProcess.command = root.loginCommandFor(d, id);
-        root.loginSourceId = id;
         root.setLoginInProgress(id, true);
-        loginProcess.running = true;
+        p.running = true;
     }
 
-    Process {
-        id: loginProcess
-        running: false
+    Instantiator {
+        id: loginPool
+        model: root.cliLoginDescriptors
 
-        onExited: (exitCode, exitStatus) => {
-            var id = root.loginSourceId;
-            root.loginSourceId = "";
-            root.setLoginInProgress(id, false);
-            root.requestFetch(id);
+        delegate: Process {
+            required property var modelData
+
+            readonly property string sourceId: modelData.id
+
+            command: root.loginCommandFor(modelData, sourceId)
+            running: false
+
+            onExited: (exitCode, exitStatus) => {
+                root.setLoginInProgress(sourceId, false);
+                root.requestFetch(sourceId);
+            }
+        }
+
+        // Indexed by model position rather than by a property on the created
+        // object, which keeps the delegate's identity out of these handlers.
+        onObjectAdded: (index, object) => {
+            var next = Object.assign({}, root.loginProcesses);
+            next[root.cliLoginDescriptors[index].id] = object;
+            root.loginProcesses = next;
+        }
+
+        onObjectRemoved: (index, object) => {
+            var next = Object.assign({}, root.loginProcesses);
+            delete next[root.cliLoginDescriptors[index].id];
+            root.loginProcesses = next;
         }
     }
 
@@ -1165,17 +1201,6 @@ PluginComponent {
             root.updateSource(id, function (st) {
                 root.setWindow(st, which, "windowSeconds", parseFloat(val) || 0);
             });
-            return true;
-        }
-        // The Account-scoped form of the same slot. Each Source names these in
-        // its descriptor, because what one calls its five-hour Window another
-        // calls its primary.
-        if (w.account && key === w.account.util) {
-            root.applyAccountNumber(id, val, which + "Util");
-            return true;
-        }
-        if (w.account && key === w.account.reset) {
-            root.applyAccountField(id, val, which + "Reset");
             return true;
         }
         return false;

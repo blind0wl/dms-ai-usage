@@ -30,13 +30,13 @@ const root = process.argv[2];
 
 const load = (file, suffix) => {
     const source = fs.readFileSync(path.join(root, file), "utf8").replace(/^\.pragma library\s*/, "");
-    const sandbox = {};
+    const sandbox = { console };
     vm.createContext(sandbox);
     vm.runInContext(source + suffix, sandbox, { filename: file });
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "ClaudeCodeUsageWidget.qml"), "utf8");
@@ -66,6 +66,10 @@ const results = [];
 const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
 
 // --- Descriptor completeness ---
+// Every key a descriptor lists in accounts.fields has to have an ACCOUNT_FIELDS
+// row, because pickFields() copies the row rather than a name: a missing row
+// would otherwise drop the key from the wire with no error anywhere.
+const accountFields = reg.ACCOUNT_FIELDS || {};
 for (const d of reg.SOURCES) {
     const tag = `descriptor "${d.id}"`;
     check(typeof d.id === "string" && d.id.length > 0, `${tag} has an id`);
@@ -83,9 +87,6 @@ for (const d of reg.SOURCES) {
         check(typeof w.reset === "string" && w.reset.length > 0, `${tag} ${which} names a reset key`);
         const hasLength = typeof w.windowSeconds === "number" || typeof w.windowSecondsKey === "string";
         check(hasLength, `${tag} ${which} declares a window length or the key for one`);
-        // The Account-scoped form of the same slot. A Source's per-Account
-        // Window keys are descriptor data, not shared with Claude's naming.
-        check(w.account !== undefined && typeof w.account.util === "string" && typeof w.account.reset === "string", `${tag} ${which} names its per-Account util and reset keys`);
         if (w.labelKey)
             check(tr[w.labelKey] !== undefined, `${tag} ${which} label "${w.labelKey}" is translated`);
     }
@@ -126,12 +127,26 @@ for (const d of reg.SOURCES) {
         check(widget.indexOf("pluginData[d.accounts.settingKey]") >= 0, `${tag} account settingKey is resolved generically by the widget`);
         check(["path", "key"].indexOf(d.accounts.argField) >= 0, `${tag} account argField is path or key`);
         check(typeof d.accounts.listKey === "string" && d.accounts.listKey.length > 0, `${tag} account declares the output key that lists its Accounts`);
-        check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its non-Window output fields`);
+        check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its output fields`);
+        // Claude's keys are its upstream output contract and keep PROFILE_;
+        // every other Source follows CONTEXT.md's Account term with ACCOUNT_.
+        const prefix = d.id === "claude" ? /^PROFILE_/ : /^ACCOUNT_/;
+        const declaredFields = new Set();
         for (const [key, spec] of Object.entries(d.accounts.fields || {})) {
-            check(/^PROFILE_/.test(key), `${tag} account field "${key}" is a per-Account key`);
+            check(prefix.test(key), `${tag} account field "${key}" uses the right prefix`);
+            check(accountFields[key] !== undefined, `${tag} account field "${key}" has an ACCOUNT_FIELDS row`);
+            if (!spec) {
+                check(false, `${tag} account field "${key}" resolves in ACCOUNT_FIELDS`);
+                continue;
+            }
             check(typeof spec.field === "string" && spec.field.length > 0, `${tag} account field "${key}" names an overlay field`);
             check(["text", "number", "boolean", "series", "models"].indexOf(spec.type) >= 0, `${tag} account field "${key}" has a known reader`);
+            declaredFields.add(spec.field);
         }
+        // Selecting an Account moves both Window cards, so the overlay slots the
+        // cards read have to be covered by the fields the descriptor lists.
+        for (const slot of ["primaryUtil", "primaryReset", "secondaryUtil", "secondaryReset"])
+            check(declaredFields.has(slot), `${tag} account fields cover the ${slot} overlay slot`);
         check(tr[d.accounts.titleKey] !== undefined, `${tag} account title is translated`);
         check(tr[d.accounts.descriptionKey] !== undefined, `${tag} account description is translated`);
         check(tr[d.accounts.fieldLabelKey] !== undefined, `${tag} account field label is translated`);
@@ -192,10 +207,17 @@ check(widget.indexOf("fiveHour") < 0 && widget.indexOf("sevenDay") < 0, "the wid
 for (const key of ["customProfiles", "customChatgptAccounts", "customZaiAccounts", "customOpencodeAccounts"])
     check(widget.indexOf(`"${key}"`) < 0, `the widget does not hardcode the setting key "${key}"`);
 check(widget.indexOf("claudeLogin") < 0 && widget.indexOf("chatgptLogin") < 0, "the widget hardcodes no login action ids");
+check(widget.indexOf("loginPool") >= 0, "the widget builds one login Process per cli descriptor");
+check(!/\bif\s*\(\s*loginProcess\.running\s*\)/.test(widget), "the widget does not serialise every login through one Process");
 for (const d of reg.SOURCES) {
     if (d.login && d.login.kind === "cli") {
         check(typeof d.login.program === "string" && d.login.program.length > 0, `descriptor "${d.id}" cli login names its program`);
         check(Array.isArray(d.login.args), `descriptor "${d.id}" cli login declares its args`);
+        if (d.login.env) {
+            check(typeof d.login.env.variable === "string" && d.login.env.variable.length > 0, `descriptor "${d.id}" login env names its variable`);
+            check(d.login.env.settingKey === undefined, `descriptor "${d.id}" login env does not reuse the accounts settingKey name`);
+            check(typeof d.login.env.accountField === "string" && d.login.env.accountField.length > 0, `descriptor "${d.id}" login env names the Account field it exports`);
+        }
     }
 }
 

@@ -832,7 +832,8 @@ const names = [
     "applyAccountList", "applyAccountModels", "mutateAccounts",
     "parseAccountScalars", "parseAccountSeries", "parseAccountModels",
     "parseDaily", "parseModels", "parseResetMs", "applyCredsStatus",
-    "stateFor", "windowSeconds", "selectAccount", "accountNames"
+    "stateFor", "windowSeconds", "selectAccount", "accountNames",
+    "setLoginInProgress", "loginProcessFor", "startLogin"
 ];
 
 const sandbox = {
@@ -869,13 +870,13 @@ check(widget.settingList("notAKey").length === 0, "settingList returns an empty 
 
 // --- opencode Go: descriptor-declared Account keys fill the overlay ---
 parse("opencode", "ACCOUNTS=default,work");
-parse("opencode", "PROFILE_PRIMARY_UTIL=default:1,work:80");
-parse("opencode", "PROFILE_PRIMARY_RESET=default:2026-09-16T15:31:05.155Z,work:2026-09-17T00:00:00.000Z");
-parse("opencode", "PROFILE_SECONDARY_UTIL=default:6,work:2");
-parse("opencode", "PROFILE_CREDS_STATUS=default:ok,work:ok");
-check(widget.accountData.opencode.work.primaryUtil === 80, "opencode PROFILE_PRIMARY_UTIL lands on the generic primary slot");
-check(widget.accountData.opencode.work.primaryReset === "2026-09-17T00:00:00.000Z", "opencode PROFILE_PRIMARY_RESET lands on the generic primary reset");
-check(widget.accountData.opencode.work.secondaryUtil === 2, "opencode PROFILE_SECONDARY_UTIL lands on the generic secondary slot");
+parse("opencode", "ACCOUNT_PRIMARY_UTIL=default:1,work:80");
+parse("opencode", "ACCOUNT_PRIMARY_RESET=default:2026-09-16T15:31:05.155Z,work:2026-09-17T00:00:00.000Z");
+parse("opencode", "ACCOUNT_SECONDARY_UTIL=default:6,work:2");
+parse("opencode", "ACCOUNT_CREDS_STATUS=default:ok,work:ok");
+check(widget.accountData.opencode.work.primaryUtil === 80, "opencode ACCOUNT_PRIMARY_UTIL lands on the generic primary slot");
+check(widget.accountData.opencode.work.primaryReset === "2026-09-17T00:00:00.000Z", "opencode ACCOUNT_PRIMARY_RESET lands on the generic primary reset");
+check(widget.accountData.opencode.work.secondaryUtil === 2, "opencode ACCOUNT_SECONDARY_UTIL lands on the generic secondary slot");
 
 // --- Claude keeps its existing PROFILES + PROFILE_* contract ---
 parse("claude", "PROFILES=default,work");
@@ -886,10 +887,10 @@ check(widget.accountData.claude.work.primaryReset === "2099-02-01T00:00:00Z", "C
 
 // --- ChatGPT's per-Account keys wear its own Window names ---
 parse("chatgpt", "ACCOUNTS=default,work");
-parse("chatgpt", "PROFILE_PRIMARY_UTIL=default:42,work:7");
-parse("chatgpt", "PROFILE_SECONDARY_UTIL=default:15,work:3");
-check(widget.accountData.chatgpt.work.primaryUtil === 7, "ChatGPT's PROFILE_PRIMARY_UTIL fills the primary slot");
-check(widget.accountData.chatgpt.work.secondaryUtil === 3, "ChatGPT's PROFILE_SECONDARY_UTIL fills the secondary slot");
+parse("chatgpt", "ACCOUNT_PRIMARY_UTIL=default:42,work:7");
+parse("chatgpt", "ACCOUNT_SECONDARY_UTIL=default:15,work:3");
+check(widget.accountData.chatgpt.work.primaryUtil === 7, "ChatGPT's ACCOUNT_PRIMARY_UTIL fills the primary slot");
+check(widget.accountData.chatgpt.work.secondaryUtil === 3, "ChatGPT's ACCOUNT_SECONDARY_UTIL fills the secondary slot");
 
 // --- stateFor overlays the selected Account, and falls back to the aggregate ---
 widget.sourceData.opencode = Object.assign(widget.sourceData.opencode, {
@@ -904,13 +905,13 @@ widget.selectedAccount.opencode = "all";
 check(widget.stateFor("opencode").primary.util === 1, "stateFor with the aggregate selected keeps the aggregate");
 
 parse("opencode", "ACCOUNTS=default,work,spare");
-parse("opencode", "PROFILE_CREDS_STATUS=spare:missing");
+parse("opencode", "ACCOUNT_CREDS_STATUS=spare:missing");
 widget.selectedAccount.opencode = "spare";
 check(widget.stateFor("opencode").primary.util === 1, "an Account with no reading falls back to the aggregate");
 
 // An endpoint failure omits an Account from the Window lists (ADR-0002), so its
 // overlay must keep the last good reading rather than parse the silence as 0.
-parse("opencode", "PROFILE_PRIMARY_UTIL=default:1");
+parse("opencode", "ACCOUNT_PRIMARY_UTIL=default:1");
 widget.selectedAccount.opencode = "work";
 check(widget.stateFor("opencode").primary.util === 80, "an Account omitted from an Unavailable run keeps its last good reading");
 
@@ -920,12 +921,32 @@ widget.selectedAccount = { claude: "work" };
 const cmd = widget.loginCommandFor(Sources.byId("claude"), "claude");
 check(cmd[0] === "bash" && cmd[1] === "-c", "a cli login runs through bash -c");
 check(cmd[2].indexOf("CLAUDE_CONFIG_DIR='/home/u/.ccp/work'") === 0, "Claude's login exports the selected Account's config directory");
-check(cmd[2].indexOf("exec claude auth login --claudeai") >= 0, "the login program and args come from the descriptor");
+check(cmd[2].indexOf("exec claude 'auth' 'login' '--claudeai'") >= 0, "the login program and args come from the descriptor");
+check(cmd[2].indexOf("exec claude auth login") < 0, "descriptor args are shell-quoted, not concatenated raw");
 const cmdCg = widget.loginCommandFor(Sources.byId("chatgpt"), "chatgpt");
 check(cmdCg[2].indexOf("CLAUDE_CONFIG_DIR=") < 0, "a login with no declared environment exports nothing");
-check(cmdCg[2].indexOf("exec codex login") >= 0, "ChatGPT's login program comes from its descriptor");
+check(cmdCg[2].indexOf("exec codex 'login'") >= 0, "ChatGPT's login program comes from its descriptor");
 widget.selectedAccount = { claude: "all" };
 check(widget.loginCommandFor(Sources.byId("claude"), "claude")[2].indexOf("CLAUDE_CONFIG_DIR=") < 0, "the aggregate selection leaves the CLI's own default in place");
+
+// An arg with a space or a quote is the extension point this schema exists to
+// create, so it must survive into the bash string intact.
+const spacedCmd = widget.loginCommandFor({ login: { kind: "cli", program: "mycli", args: ["a b", "c'd"] } }, "synthetic");
+check(spacedCmd[2].indexOf("exec mycli 'a b' 'c'\\''d'") >= 0, "a descriptor arg with a space or quote is shell-quoted");
+
+// --- Two Sources can log in at the same time ---
+// Each CLI descriptor gets its own Process, so a press on one Source must not
+// be dropped because another Source's login is already running.
+widget.loginInProgress = {};
+widget.loginProcesses = { claude: { running: true }, chatgpt: { running: false }, opencode: { running: false } };
+widget.startLogin("chatgpt");
+check(widget.loginProcesses.chatgpt.running === true, "a second Source's login starts while the first is running");
+check(widget.loginInProgress.chatgpt === true, "the second Source shows login progress");
+check(widget.loginProcesses.claude.running === true, "the first Source's login keeps running");
+widget.startLogin("chatgpt");
+check(widget.loginInProgress.chatgpt === true, "re-pressing a running login leaves its progress shown");
+widget.startLogin("opencode");
+check(widget.loginProcesses.opencode.running === false, "a text-only login has no Process to start");
 
 console.log(results.join("\n"));
 NODE
