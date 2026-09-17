@@ -115,6 +115,13 @@ var strings = {
             fr: "Indique si l'utilisation est en avance ou en retard sur la fenêtre de temps",
             es: "Indica si el consumo está adelantado o retrasado respecto a la ventana de tiempo"
         },
+    "Overview":
+        { fr: "Vue d'ensemble", es: "Vista general" },
+    "Show the Overview tab, ranking your Sources by their tightest Window. It appears once two or more Sources are visible.":
+        {
+            fr: "Afficher l'onglet Vue d'ensemble, qui classe vos sources par fenêtre la plus contrainte. Il apparaît à partir de deux sources visibles.",
+            es: "Mostrar la pestaña Vista general, que ordena tus fuentes por su ventana más ajustada. Aparece a partir de dos fuentes visibles."
+        },
     "Enable Claude Source":
         { fr: "Activer la source Claude", es: "Activar la fuente Claude" },
     "Show Claude Code usage. Off, or Claude Code not installed, hides its ring entirely.":

@@ -29,6 +29,9 @@ PluginComponent {
     // --- Settings ---
     property int refreshInterval: (pluginData.refreshInterval || 2) * 60000
     property bool showPacing: pluginData.showPacing !== false
+    // The Overview is its own toggle, not a member of sourceOrder: it ranks
+    // Sources against each other and is never movable (ADR 0003).
+    property bool overviewEnabled: pluginData.overviewEnabled !== false
     // Every Source's custom Account list, keyed by the setting key its
     // descriptor declares. One binding rather than a property and a change
     // handler per Source, so a Source added to the registry needs no widget
