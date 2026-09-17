@@ -34,6 +34,17 @@ Column {
     property string listedAccounts: ""
     property string listedOrigins: ""
     property string listedShadowed: ""
+    // The answer being read. The Script's line order is its own, and a verdict
+    // drawn from half of it would be wrong: an Account list with no origins yet,
+    // or no instalment state yet, reads as a Source full of Unknown origins or as
+    // rows that are not in use. Every field is committed together once the Script
+    // has finished, so what the page shows is always one whole answer.
+    property string pendingAccounts: ""
+    property string pendingOrigins: ""
+    property string pendingShadowed: ""
+    property bool pendingAnswered: false
+    property bool pendingAbsent: false
+
     // Set once the Script has answered with its Account list, so a Source whose
     // Script registered nothing still marks the rows it registered nothing for. A
     // listing that failed or has not arrived leaves the previous answer standing.
@@ -175,8 +186,10 @@ Column {
         }
         var shadowing = Sources.shadowingAccount(root.listedOrigins, root.listedShadowed, name);
         if (shadowing)
-            return root.settingsRoot.tr("not in use - this Source is using") + " \"" + shadowing.name + "\" ("
-                + root.settingsRoot.tr("Detected from") + " " + shadowing.origin + ")";
+            return root.settingsRoot.tr("not in use - this Source is using") + " \"" + shadowing.name + "\""
+                + (shadowing.origin.length > 0
+                    ? " (" + root.settingsRoot.tr("Detected from") + " " + shadowing.origin + ")"
+                    : "");
         return root.settingsRoot.tr("not in use - this Source does not use it. Check its name and value.");
     }
 
@@ -201,7 +214,11 @@ Column {
             return;
         }
         root.listFailed = false;
-        root.sourceAbsent = false;
+        root.pendingAccounts = "";
+        root.pendingOrigins = "";
+        root.pendingShadowed = "";
+        root.pendingAnswered = false;
+        root.pendingAbsent = false;
         listProcess.command = Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
                                                    [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items)));
         listProcess.running = true;
@@ -212,15 +229,24 @@ Column {
         if (!pair)
             return;
         if (pair.key === root.acct.listKey) {
-            root.listedAccounts = pair.value;
-            root.listingAnswered = true;
-        } else if (pair.key === "CREDS_STATUS") {
-            root.sourceAbsent = pair.value === "not_installed";
-        }
-        else if (pair.key === root.acct.originsKey)
-            root.listedOrigins = pair.value;
+            root.pendingAccounts = pair.value;
+            root.pendingAnswered = true;
+        } else if (pair.key === root.acct.originsKey)
+            root.pendingOrigins = pair.value;
         else if (pair.key === root.acct.shadowedKey)
-            root.listedShadowed = pair.value;
+            root.pendingShadowed = pair.value;
+        else if (pair.key === Sources.STATUS_KEY)
+            root.pendingAbsent = pair.value === Sources.NOT_INSTALLED;
+    }
+
+    // One whole answer at a time, and only from a Script that finished: a listing
+    // that failed leaves the last answer standing beside the line that says so.
+    function commitListing() {
+        root.listedAccounts = root.pendingAccounts;
+        root.listedOrigins = root.pendingOrigins;
+        root.listedShadowed = root.pendingShadowed;
+        root.listingAnswered = root.pendingAnswered;
+        root.sourceAbsent = root.pendingAbsent;
     }
 
     Process {
@@ -233,6 +259,8 @@ Column {
 
         onExited: (exitCode, exitStatus) => {
             root.listFailed = exitCode !== 0;
+            if (exitCode === 0)
+                root.commitListing();
             if (root.listPending) {
                 root.listPending = false;
                 Qt.callLater(root.refreshDetected);

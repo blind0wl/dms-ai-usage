@@ -59,6 +59,12 @@ function pickFields(id, prefix, suffixes) {
     return out;
 }
 
+// The output key every Script reports its credential state under, and the value
+// that means the Source is not on this machine at all. These are Source-level
+// keys rather than a descriptor's, so both readers share them from here.
+var STATUS_KEY = "CREDS_STATUS";
+var NOT_INSTALLED = "not_installed";
+
 // The origin tag a Source's Script puts on an Account it took from the Custom
 // Account list rather than detecting. Every other origin names where the
 // credential was found: a file's path, or an environment variable's name. Both
@@ -187,7 +193,8 @@ function displacedOrigin(detected, name) {
 // The detected Account that kept the name or the value a Custom Account row was
 // refused for, or null when no detected Account did: the row's registration can
 // also be refused for something the Script cannot name, such as a config
-// directory that does not exist, or because another Custom row took the name.
+// directory that does not exist, or because another Custom row took the name. Its
+// origin is empty when the Script named the Account without saying where it is.
 // `origins` and `shadowed` are the Script's own listing, so the Account this
 // names is the one the Source authenticates with in the row's place.
 function shadowingAccount(origins, shadowed, name) {
@@ -197,11 +204,14 @@ function shadowingAccount(origins, shadowed, name) {
         var refused = refusedRegistration(pairs[i]);
         if (!refused)
             continue;
-        // Only the registration the Custom row itself asked for is its business.
-        if (refused.name !== name || refused.origin !== CUSTOM_ORIGIN)
+        // Only the registration the Custom row itself asked for is its business,
+        // and only an entry that names a winner can name one back.
+        if (refused.name !== name || refused.origin !== CUSTOM_ORIGIN || refused.winner === "")
             continue;
         var origin = Object.prototype.hasOwnProperty.call(byName, refused.winner) ? byName[refused.winner] : "";
-        if (origin === "" || origin === CUSTOM_ORIGIN)
+        // Another Custom row is not a detected Account; a detected one the Script
+        // named without an origin still is, and the row can name it.
+        if (origin === CUSTOM_ORIGIN)
             return null;
         return { name: refused.winner, origin: origin };
     }

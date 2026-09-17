@@ -120,6 +120,8 @@ FIRST_SESSION="unknown"
 
 # --- Pricing cache (refresh once per day from LiteLLM) ---
 PRICING_JSON=""
+PRICING_AWK=""
+USD_EUR_RATE="0"
 refresh_pricing() {
     local raw
     raw=$(curl -s --max-time 10 "$LITELLM_URL" 2>/dev/null) || return 1
@@ -162,26 +164,32 @@ refresh_pricing() {
     return 1
 }
 
-if [ -f "$PRICING_CACHE" ]; then
-    cached_date=$(jq -r '.updated // ""' "$PRICING_CACHE" 2>/dev/null || echo "")
-    if [ "$cached_date" != "$TODAY" ]; then
+# The refresh is a network call, so it is deferred to the fetch path: the listing
+# mode below answers the settings page with Accounts and origins, and asking for
+# those must not wait on LiteLLM or Frankfurter.
+load_pricing() {
+    if [ -f "$PRICING_CACHE" ]; then
+        local cached_date
+        cached_date=$(jq -r '.updated // ""' "$PRICING_CACHE" 2>/dev/null || echo "")
+        if [ "$cached_date" != "$TODAY" ]; then
+            refresh_pricing || true
+        fi
+        PRICING_JSON=$(cat "$PRICING_CACHE")
+    else
         refresh_pricing || true
+        [ -f "$PRICING_CACHE" ] && PRICING_JSON=$(cat "$PRICING_CACHE")
     fi
-    PRICING_JSON=$(cat "$PRICING_CACHE")
-else
-    refresh_pricing || true
-    [ -f "$PRICING_CACHE" ] && PRICING_JSON=$(cat "$PRICING_CACHE")
-fi
 
-# Build awk-friendly pricing string: "opus:input:output:cache_read:cache_write,sonnet:...,haiku:..."
-PRICING_AWK=""
-USD_EUR_RATE="0"
-if [ -n "$PRICING_JSON" ]; then
-    PRICING_AWK=$(echo "$PRICING_JSON" | jq -r '
-        [.models | to_entries[] | "\(.key):\(.value.input):\(.value.output):\(.value.cache_read):\(.value.cache_write)"]
-        | join(",")' 2>/dev/null || echo "")
-    USD_EUR_RATE=$(echo "$PRICING_JSON" | jq -r '.usd_eur_rate // 0' 2>/dev/null || echo "0")
-fi
+    # Build awk-friendly pricing string: "opus:input:output:cache_read:cache_write,sonnet:...,haiku:..."
+    PRICING_AWK=""
+    USD_EUR_RATE="0"
+    if [ -n "$PRICING_JSON" ]; then
+        PRICING_AWK=$(echo "$PRICING_JSON" | jq -r '
+            [.models | to_entries[] | "\(.key):\(.value.input):\(.value.output):\(.value.cache_read):\(.value.cache_write)"]
+            | join(",")' 2>/dev/null || echo "")
+        USD_EUR_RATE=$(echo "$PRICING_JSON" | jq -r '.usd_eur_rate // 0' 2>/dev/null || echo "0")
+    fi
+}
 
 # Local vs UTC date bucketing. strflocaltime (jq >= 1.6) maps each UTC timestamp
 # to the LOCAL calendar date so daily boundaries line up with TODAY/WEEK_START/...
@@ -611,6 +619,10 @@ if [ "$LIST_ACCOUNTS" -eq 1 ]; then
     fi
     exit 0
 fi
+
+# The listing mode has answered by now, so the fetch path can spend the network
+# call the prices need.
+load_pricing
 
 # --- Run token counting + usage fetch in parallel for each profile ---
 TMPFILES=()      # token stats tmpfile per profile

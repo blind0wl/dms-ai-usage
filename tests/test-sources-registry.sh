@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -321,10 +321,12 @@ check(keptBy("work:custom", "work|work:custom", "work") === "null",
       "shadowingAccount reports nothing when another Custom row kept the name");
 check(keptBy("default:CODEX_HOME", "default|mine:custom", "default") === "null",
       "shadowingAccount reports nothing for a row the Script registered as detected");
-check(keptBy("", "ghost|mine:custom", "mine") === "null",
-      "shadowingAccount reports nothing when the winner has no origin to name");
+check(keptBy("", "ghost|mine:custom", "mine") === JSON.stringify({ name: "ghost", origin: "" }),
+      "shadowingAccount names a winner whose origin the Script did not give");
 check(keptBy("default:CODEX_HOME", "mine:custom", "mine") === "null",
       "shadowingAccount reports nothing for a refused registration that names no winner");
+check(keptBy("", "default|mine:custom", "mine") === JSON.stringify({ name: "default", origin: "" }),
+      "shadowingAccount names a detected Account whose origin the Script did not give");
 check(keptBy(null, null, "mine") === "null" && keptBy("default:CODEX_HOME", "default|mine:custom", "") === "null",
       "shadowingAccount reports nothing for a missing listing or a nameless row");
 
@@ -472,8 +474,10 @@ check(/!root\.settingsRoot\.pluginService/.test(editor),
       "the settings editor does not ask the Script for a listing before the store it reads is available");
 check(/listingAnswered/.test(editor),
       "the settings editor hands out a verdict only once the Script has answered with its Account list");
-check(/pair\.value === "not_installed"/.test(editor) && /sourceAbsent/.test(editor),
-      "the settings editor tells a Source that is not installed from the user's rows being wrong");
+check(/Sources\.STATUS_KEY/.test(editor) && /Sources\.NOT_INSTALLED/.test(editor) && /sourceAbsent/.test(editor),
+      "the settings editor tells a Source that is not installed from the user's rows being wrong, off the registry's own keys");
+check(/function commitListing/.test(editor) && /pendingAccounts/.test(editor),
+      "the settings editor commits one whole Script answer at a time rather than field by field");
 
 // One wire, one splitter: the widget's fetch parser and the settings editor's
 // listing parser take their key and value from wirePair, and read a
