@@ -221,6 +221,8 @@ var strings = {
         { fr: "Se connecter", es: "Iniciar sesión" },
     "Logging in…":
         { fr: "Connexion en cours…", es: "Iniciando sesión…" },
+    "Setup guide":
+        { fr: "Guide de configuration", es: "Guía de configuración" },
 }
 
 function tr(key, lang) {
