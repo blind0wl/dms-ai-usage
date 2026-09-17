@@ -336,12 +336,12 @@ write_pi_key "$H15" k1
 LIST15=$(run_script "$H15" --list-accounts "default=k2")
 assert_eq "$(val "$LIST15" ACCOUNTS)" "default" "the Custom Account is the one registered"
 assert_eq "$(val "$LIST15" ACCOUNT_ORIGINS)" "default:custom" "the Custom Account is reported as coming from the Custom list"
-assert_eq "$(val "$LIST15" ACCOUNT_SHADOWED)" "default:~/.pi/agent/models.json" "the detected key the Custom Account took the name of is reported as refused"
+assert_eq "$(val "$LIST15" ACCOUNT_SHADOWED)" "default|default:~/.pi/agent/models.json" "the detected key the Custom Account took the name of is reported as refused, naming the row that took it"
 
 # The clash can be the value rather than the name: the Script keeps one key once.
 LIST16=$(run_script "$H15" --list-accounts "work=k1")
 assert_eq "$(val "$LIST16" ACCOUNTS)" "work" "a Custom Account whose key is the detected one's is registered"
-assert_eq "$(val "$LIST16" ACCOUNT_SHADOWED)" "default:~/.pi/agent/models.json" "the detected key it took the value of is reported as refused"
+assert_eq "$(val "$LIST16" ACCOUNT_SHADOWED)" "work|default:~/.pi/agent/models.json" "the detected key it took the value of is reported as refused, naming the row that took it"
 
 # No clash, no report.
 assert_eq "$(val "$LIST12" ACCOUNT_SHADOWED)" "" "a Custom Account beside the detected key refuses nothing"

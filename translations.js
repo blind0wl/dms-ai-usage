@@ -206,10 +206,15 @@ var strings = {
         { fr: "remplacé par votre compte personnalisé", es: "reemplazado por tu cuenta personalizada" },
     "overridden by your Custom Profile":
         { fr: "remplacé par votre profil personnalisé", es: "reemplazado por tu perfil personalizado" },
-    "not in use - its name or value is already taken":
+    "not in use - the Script did not register it. Check its name and value.":
         {
-            fr: "non utilisé - son nom ou sa valeur est déjà pris",
-            es: "sin usar - su nombre o su valor ya está en uso"
+            fr: "non utilisé - le script ne l'a pas enregistré. Vérifiez son nom et sa valeur.",
+            es: "sin usar - el script no lo ha registrado. Comprueba su nombre y su valor."
+        },
+    "replacing what the Script detected":
+        {
+            fr: "remplace ce que le script a détecté",
+            es: "reemplaza lo que el script ha detectado"
         },
     "Could not ask the Script what it detects.":
         {

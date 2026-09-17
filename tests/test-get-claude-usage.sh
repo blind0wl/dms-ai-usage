@@ -813,7 +813,7 @@ assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default
 mkdir -p "$ENV29B/elsewhere/work/projects"
 LIST29E=$(run_script "$ENV29B" --list-accounts "default=$ENV29B/elsewhere/work")
 assert_eq "$(echo "$LIST29E" | grep "^PROFILES=" | cut -d= -f2)" "default,work,ranqia" "the detected Profile keeps the name"
-assert_eq "$(echo "$LIST29E" | grep "^PROFILE_SHADOWED=" | cut -d= -f2)" "default:custom" "the refused Custom registration is reported with its origin"
+assert_eq "$(echo "$LIST29E" | grep "^PROFILE_SHADOWED=" | cut -d= -f2)" "default|default:custom" "the refused Custom registration is reported with its origin"
 
 # Without the claude CLI, the not-installed answer is what the listing mode
 # returns, so it carries the origins key too: a Source the Script cannot read

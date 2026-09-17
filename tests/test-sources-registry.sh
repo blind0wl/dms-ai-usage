@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -250,8 +250,8 @@ for (const name of ["AccountsSection", "LoginSection", "StatusSection", "Windows
 // Custom Account instead of the key on this machine, and the editor has to say so
 // rather than let the user meet it as a rejected key.
 const listed = (...args) => JSON.stringify(reg.detectedAccounts(...args));
-const live = (name, origin) => ({ name: name, origin: origin, overridden: false });
-const lost = (name, origin) => ({ name: name, origin: origin, overridden: true });
+const live = (name, origin) => ({ name: name, origin: origin, overridden: false, winner: "" });
+const lost = (name, origin, winner) => ({ name: name, origin: origin, overridden: true, winner: winner });
 check(listed("work,default", "work:custom,default:~/.pi/agent/models.json") === JSON.stringify([live("default", "~/.pi/agent/models.json")]),
       "detectedAccounts drops the Accounts the settings list provided");
 check(listed("work,default", "work:custom,default:ZAI_API_KEY") === JSON.stringify([live("default", "ZAI_API_KEY")]),
@@ -275,20 +275,36 @@ check(listed(null, null) === "[]", "detectedAccounts reports nothing for a missi
 // A detected Account the Script refused because a Custom Account took its name
 // or its value: still reported, marked, and in the Script's own order after the
 // Accounts that are live.
-check(listed("default", "default:custom", "default:~/.pi/agent/models.json") === JSON.stringify([lost("default", "~/.pi/agent/models.json")]),
+check(listed("default", "default:custom", "default|default:~/.pi/agent/models.json") === JSON.stringify([lost("default", "~/.pi/agent/models.json", "default")]),
       "detectedAccounts reports a detected registration a Custom Account took the name of");
-check(listed("work", "work:custom", "default:~/.pi/agent/models.json") === JSON.stringify([lost("default", "~/.pi/agent/models.json")]),
-      "detectedAccounts reports a detected registration a Custom Account took the value of");
-check(listed("a", "a:~/.claude", "b:~/.ccs/instances") === JSON.stringify([live("a", "~/.claude"), lost("b", "~/.ccs/instances")]),
+check(listed("work", "work:custom", "work|default:~/.pi/agent/models.json") === JSON.stringify([lost("default", "~/.pi/agent/models.json", "work")]),
+      "detectedAccounts reports a detected registration a Custom Account took the value of, naming the row that took it");
+check(listed("a", "a:~/.claude", "b|b:~/.ccs/instances") === JSON.stringify([live("a", "~/.claude"), lost("b", "~/.ccs/instances", "b")]),
       "detectedAccounts marks only the refused registration as overridden");
-check(listed("a", "a:~/.claude", "a:~/.claude") === JSON.stringify([live("a", "~/.claude")]),
+check(listed("a", "a:~/.claude", "a|a:~/.claude") === JSON.stringify([live("a", "~/.claude")]),
       "detectedAccounts does not call a detected Account overridden when it is the one in use");
 // The reverse direction is the Custom row's business, not this list's: a refused
 // Custom registration is reported by unregisteredRows and marked there.
-check(listed("default", "default:~/.codex", "default:custom") === JSON.stringify([live("default", "~/.codex")]),
+check(listed("default", "default:~/.codex", "default|default:custom") === JSON.stringify([live("default", "~/.codex")]),
       "detectedAccounts ignores a refused Custom registration");
-check(listed("work", "work:custom", "ghost:custom") === "[]",
+check(listed("work", "work:custom", "default|ghost:custom") === "[]",
       "detectedAccounts reports nothing when the only refused registration was a Custom one");
+// A pair without the winner is still read, so a Script that has not been updated
+// leaves the row marked and its origin shown rather than dropping it.
+check(listed("default", "default:custom", "default:~/.pi/agent/models.json") === JSON.stringify([lost("default", "~/.pi/agent/models.json", "")]),
+      "detectedAccounts reads a refused registration that names no winner");
+
+// Which Custom row is the one authenticating instead of a detected Account: the
+// editor marks that row, and only the Script can say which it was.
+const displaced = (detected, name) => reg.displacedOrigin(detected, name);
+const sample = JSON.parse(listed("work", "work:custom", "work|default:~/.pi/agent/models.json"));
+check(displaced(sample, "work") === "~/.pi/agent/models.json",
+      "displacedOrigin names the origin the Custom row took the place of");
+check(displaced(sample, "other") === "", "displacedOrigin reports nothing for a row that displaced nothing");
+check(displaced(JSON.parse(listed("work", "work:custom", "")), "work") === "",
+      "displacedOrigin reports nothing when no registration was refused");
+check(displaced(null, "work") === "" && displaced([], "work") === "",
+      "displacedOrigin reports nothing for a missing listing");
 
 // The Custom Accounts the Script did not register. Its listing is the only
 // source of that fact: the settings list cannot tell whether the Script kept a
@@ -411,8 +427,12 @@ check(editor.includes("onPluginServiceChanged") && editor.includes("onPluginData
       "the settings editor re-reads the Account list when the store becomes readable and whenever it changes");
 check(/listProcess\.command\s*=/.test(editor) && !/\blistCommand\b/.test(editor),
       "the settings editor builds the Script's command as it asks, rather than starting a cached one");
-check(/modelData\.overridden/.test(editor),
-      "the settings editor renders a detected Account a Custom one replaced, rather than hiding it");
+check(/modelData\.overridden/.test(editor) && /modelData\.winner/.test(editor),
+      "the settings editor renders a detected Account a Custom one replaced, and names the row that did it");
+check(editor.includes("Sources.displacedOrigin("),
+      "the settings editor marks the Custom row that is authenticating instead of a detected Account");
+check(/!root\.settingsRoot\.pluginService/.test(editor),
+      "the settings editor does not ask the Script for a listing before the store it reads is available");
 
 // One wire, one splitter: the widget's fetch parser and the settings editor's
 // listing parser take their key and value from wirePair, and read a

@@ -42,12 +42,21 @@ add_account() {
     [ -n "$key" ] || return 0
 
     local idx
-    for idx in "${!ACCOUNT_NAMES[@]}"; do
-        if [ "${ACCOUNT_NAMES[$idx]}" = "$name" ] || [ "${ACCOUNT_KEYS[$idx]}" = "$key" ]; then
-            ACCOUNT_SHADOWED+=("${name}:${origin}")
-            return 0
-        fi
-    done
+    # Nothing to clash with while the list is empty, and the guard keeps that
+    # true on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#ACCOUNT_NAMES[@]}" -gt 0 ]; then
+        for idx in "${!ACCOUNT_NAMES[@]}"; do
+            if [ "${ACCOUNT_NAMES[$idx]}" = "$name" ] || [ "${ACCOUNT_KEYS[$idx]}" = "$key" ]; then
+                # Only a clash a user can act on is reported: one side of it has
+                # to be a Custom Account. Two detected registrations clashing is
+                # the Script's own precedence, which its description explains.
+                if [ "$origin" = "custom" ] || [ "${ACCOUNT_ORIGINS[$idx]}" = "custom" ]; then
+                    ACCOUNT_SHADOWED+=("${ACCOUNT_NAMES[$idx]}|${name}:${origin}")
+                fi
+                return 0
+            fi
+        done
+    fi
 
     ACCOUNT_NAMES+=("$name")
     ACCOUNT_KEYS+=("$key")
@@ -64,10 +73,12 @@ account_origins() {
     printf '%s' "$out"
 }
 
-# account_shadowed -> "name:origin,name:origin" for the registrations the list
-# refused because something already held their name or their value. The settings
-# page is how the user learns that a Custom Account took a detected one's place,
-# which is otherwise only visible as an API rejection.
+# account_shadowed -> "<winner>|<name>:<origin>" for the registrations the list
+# refused because something already held their name or their value: what kept it,
+# then what lost and where it came from. The settings page is how the user learns
+# that a Custom Account took a detected one's place, which is otherwise only
+# visible as an API rejection. The winner makes that link explicit even when the
+# two names differ, as they do when the value is what clashed.
 account_shadowed() {
     local out="" idx
     for idx in "${!ACCOUNT_SHADOWED[@]}"; do

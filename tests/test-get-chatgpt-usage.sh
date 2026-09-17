@@ -438,7 +438,7 @@ assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_SHADOWED=" | cut -d= -f2)" "" "no 
 # settings page can mark the row the selector does not offer.
 LIST16E=$(run_script "$ENV16" --list-accounts "default=$ENV16/elsewhere")
 assert_eq "$(echo "$LIST16E" | grep "^ACCOUNTS=" | cut -d= -f2)" "default" "the detected Account keeps the name"
-assert_eq "$(echo "$LIST16E" | grep "^ACCOUNT_SHADOWED=" | cut -d= -f2)" "default:custom" "the refused Custom registration is reported with its origin"
+assert_eq "$(echo "$LIST16E" | grep "^ACCOUNT_SHADOWED=" | cut -d= -f2)" "default|default:custom" "the refused Custom registration is reported with its origin"
 
 # Without codex, the not-installed answer is what the listing mode returns, so it
 # carries the origins key too: a Source the Script cannot read Accounts for must

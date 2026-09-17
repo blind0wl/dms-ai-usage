@@ -110,15 +110,19 @@ function accountArgs(descriptor, list) {
 //
 // `names` is the Script's Account list (the descriptor's listKey), `origins` its
 // "name:origin" pairs (its originsKey) and `shadowed` the registrations it
-// refused (its shadowedKey), all comma-separated as the wire has them. An Account
-// the Custom Account list provided is reported with the CUSTOM_ORIGIN tag and
-// dropped from the first list: it is the editor's own row already.
+// refused (its shadowedKey), all comma-separated as the wire has them. A refused
+// registration is "<winner>|<name>:<origin>": what kept the name or the value,
+// then what lost and where it came from. An Account the Custom Account list
+// provided is reported with the CUSTOM_ORIGIN tag and dropped from the first
+// list: it is the editor's own row already.
 //
 // An overridden registration matters as much as a live one. The Script keeps the
 // first registration of a name or of a value, so a Custom Account that takes a
 // detected one's place changes which credential the Source authenticates with,
 // and the user has to be able to see that rather than meeting it as a rejected
-// key.
+// key. The winner is carried so the editor can name it: on a clash of values the
+// two names differ, and a row that only says "a Custom Account" would leave the
+// user guessing which of their rows did it.
 //
 // An Account the Script lists without an origin is still reported, with an empty
 // origin. It is detected - the Custom Account list did not provide it - and
@@ -134,26 +138,41 @@ function detectedAccounts(names, origins, shadowed) {
         var known = Object.prototype.hasOwnProperty.call(byName, name);
         if (known && byName[name] === CUSTOM_ORIGIN)
             continue;
-        out.push({ name: name, origin: known ? byName[name] : "", overridden: false });
+        out.push({ name: name, origin: known ? byName[name] : "", overridden: false, winner: "" });
     }
 
     var pairs = splitList(shadowed);
     for (var j = 0; j < pairs.length; j++) {
-        var at = pairs[j].indexOf(":");
+        var entry = pairs[j];
+        var bar = entry.indexOf("|");
+        var winner = bar < 0 ? "" : entry.substring(0, bar);
+        var lost = bar < 0 ? entry : entry.substring(bar + 1);
+        var at = lost.indexOf(":");
         if (at < 0)
             continue;
-        var lost = pairs[j].substring(0, at);
-        var lostOrigin = pairs[j].substring(at + 1);
+        var lostName = lost.substring(0, at);
+        var lostOrigin = lost.substring(at + 1);
         // A Custom Account the Script refused is the editor's own row's business,
         // and a detected Account still registered under that name was not lost.
         if (lostOrigin === CUSTOM_ORIGIN)
             continue;
-        var live = Object.prototype.hasOwnProperty.call(byName, lost);
-        if (live && byName[lost] !== CUSTOM_ORIGIN)
+        var live = Object.prototype.hasOwnProperty.call(byName, lostName);
+        if (live && byName[lostName] !== CUSTOM_ORIGIN)
             continue;
-        out.push({ name: lost, origin: lostOrigin, overridden: true });
+        out.push({ name: lostName, origin: lostOrigin, overridden: true, winner: winner });
     }
     return out;
+}
+
+// The origin of the detected Account a Custom Account row displaced, or "" when
+// the row displaced nothing. `detected` is what detectedAccounts() returned, so
+// the two lists cannot disagree about which row is authenticating instead.
+function displacedOrigin(detected, name) {
+    for (var i = 0; Array.isArray(detected) && i < detected.length; i++) {
+        if (detected[i].overridden && detected[i].winner === name)
+            return detected[i].origin;
+    }
+    return "";
 }
 
 // The rows of a Custom Account list a Script did not register, by their index in

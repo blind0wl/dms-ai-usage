@@ -82,7 +82,7 @@ Column {
         ignoreUnknownSignals: true
 
         function onPluginServiceChanged() {
-            root.reloadFromStore();
+            root.reloadFromStore(true);
         }
     }
 
@@ -106,13 +106,18 @@ Column {
     // Re-reads the Custom Account list from the store, which is the only thing
     // that knows what a fresh page should show. A change that does not move the
     // list (a sibling setting being saved, or this editor's own write coming
-    // back) is left alone rather than asked of the Script again.
-    function reloadFromStore() {
+    // back) is left alone rather than asked of the Script again - unless this is
+    // the store becoming readable, when the listing has to be asked whatever the
+    // list says, because the one already asked was asked without it.
+    function reloadFromStore(askAnyway) {
         if (!settingsRoot || !settingKey)
             return;
         var stored = settingsRoot.loadValue(settingKey, []);
-        if (JSON.stringify(stored) === JSON.stringify(root.items))
+        if (JSON.stringify(stored) === JSON.stringify(root.items)) {
+            if (askAnyway)
+                refreshDetected();
             return;
+        }
         root.items = stored;
     }
 
@@ -155,13 +160,15 @@ Column {
         // component is being built, which the handlers above can be reached from.
         if (!listProcess || !root.settingsRoot || !root.descriptor)
             return;
+        // The Account arguments are the Custom Account list, so a listing asked
+        // before the store is readable would answer the wrong question: it would
+        // show a detected Account as live that a Custom row is about to replace.
+        if (!root.settingsRoot.pluginService)
+            return;
         if (listProcess.running) {
             root.listPending = true;
             return;
         }
-        root.listedAccounts = "";
-        root.listedOrigins = "";
-        root.listedShadowed = "";
         root.listFailed = false;
         listProcess.command = Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
                                                    [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items)));
@@ -292,12 +299,17 @@ Column {
                 // something else holds the name or the value the user typed: the
                 // selector offers that one and this row does nothing.
                 readonly property bool unused: root.unregistered.indexOf(index) >= 0
+                // The Script refused a detected registration because of this row,
+                // so this is the row the Source authenticates with instead of the
+                // key that was found on the machine.
+                readonly property string replaces: unused ? "" : Sources.displacedOrigin(root.detected, modelData.name)
+                readonly property bool flagged: unused || replaces.length > 0
 
                 width: parent.width
-                height: unused ? 62 : 44
+                height: flagged ? 62 : 44
                 radius: Theme.cornerRadius
                 color: Theme.withAlpha(Theme.surfaceContainerHigh, Theme.popupTransparency)
-                border.width: unused ? 1 : 0
+                border.width: flagged ? 1 : 0
                 border.color: Theme.withAlpha(Theme.warning, 0.5)
 
                 Column {
@@ -355,7 +367,7 @@ Column {
                     Row {
                         width: parent.width
                         spacing: Theme.spacingXXS
-                        visible: unused
+                        visible: flagged
 
                         DankIcon {
                             anchors.verticalCenter: parent.verticalCenter
@@ -367,7 +379,9 @@ Column {
                         StyledText {
                             width: parent.width - 14 - Theme.spacingXXS
                             anchors.verticalCenter: parent.verticalCenter
-                            text: root.settingsRoot.tr("not in use - its name or value is already taken")
+                            text: unused
+                                ? root.settingsRoot.tr("not in use - the Script did not register it. Check its name and value.")
+                                : root.settingsRoot.tr("replacing what the Script detected") + " (" + replaces + ")"
                             color: Theme.warning
                             font.pixelSize: Theme.fontSizeSmall
                             elide: Text.ElideRight
@@ -488,7 +502,12 @@ Column {
                         StyledText {
                             width: parent.width - 14 - Theme.spacingXXS
                             anchors.verticalCenter: parent.verticalCenter
+                            // The winner is named because a clash of values puts a
+                            // Custom row of a different name in this Account's
+                            // place, and a line that only said "a Custom Account"
+                            // would leave the user guessing which row it was.
                             text: root.settingsRoot.tr(root.acct.overriddenKey)
+                                + (modelData.winner ? " \"" + modelData.winner + "\"" : "")
                             color: Theme.warning
                             font.pixelSize: Theme.fontSizeSmall
                             elide: Text.ElideRight

@@ -66,6 +66,7 @@ PROFILE_SEVEN_DAY_RESET=
 PROFILE_EXTRA_USAGE=
 PROFILE_CREDS_STATUS=
 PROFILE_ORIGINS=
+PROFILE_SHADOWED=
 NOTINSTALLED
     exit 0
 fi
@@ -499,12 +500,21 @@ add_profile() {
     [ -d "${dir}/projects" ] || return 0
 
     local idx
-    for idx in "${!PROFILE_NAMES[@]}"; do
-        if [ "${PROFILE_NAMES[$idx]}" = "$name" ] || [ "${PROFILE_DIRS[$idx]}" -ef "${dir}/projects" ]; then
-            PROFILE_SHADOWED+=("${name}:${origin}")
-            return 0
-        fi
-    done
+    # Nothing to clash with while the list is empty, and the guard keeps that
+    # true on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#PROFILE_NAMES[@]}" -gt 0 ]; then
+        for idx in "${!PROFILE_NAMES[@]}"; do
+            if [ "${PROFILE_NAMES[$idx]}" = "$name" ] || [ "${PROFILE_DIRS[$idx]}" -ef "${dir}/projects" ]; then
+                # Only a clash a user can act on is reported: one side of it has
+                # to be a Custom Account. Two detected registrations clashing is
+                # the Script's own precedence, which its description explains.
+                if [ "$origin" = "custom" ] || [ "${PROFILE_ORIGINS[$idx]}" = "custom" ]; then
+                    PROFILE_SHADOWED+=("${PROFILE_NAMES[$idx]}|${name}:${origin}")
+                fi
+                return 0
+            fi
+        done
+    fi
 
     PROFILE_DIRS+=("${dir}/projects")
     PROFILE_NAMES+=("$name")
@@ -522,10 +532,12 @@ profile_origins() {
     printf '%s' "$out"
 }
 
-# profile_shadowed -> "name:origin,name:origin" for the registrations the list
-# refused because something already held their name or their directory. The
-# settings page is how the user learns that a Custom Account took a detected
-# one's place, which is otherwise only visible as an API rejection.
+# profile_shadowed -> "<winner>|<name>:<origin>" for the registrations the list
+# refused because something already held their name or their directory: what kept
+# it, then what lost and where it came from. The settings page is how the user
+# learns that a Custom Account took a detected one's place, which is otherwise
+# only visible as an API rejection. The winner makes that link explicit even when
+# the two names differ, as they do when the directory is what clashed.
 profile_shadowed() {
     local out="" idx
     for idx in "${!PROFILE_SHADOWED[@]}"; do

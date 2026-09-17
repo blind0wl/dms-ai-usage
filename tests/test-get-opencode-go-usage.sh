@@ -346,7 +346,7 @@ assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json,work
 H13=$(new_home home13)
 write_pi_key "$H13" k1
 LIST13=$(run_script "$H13" --list-accounts "default=k2")
-assert_eq "$(val "$LIST13" ACCOUNT_SHADOWED)" "default:custom" "the refused Custom registration is reported with its origin, because here detection registers first"
+assert_eq "$(val "$LIST13" ACCOUNT_SHADOWED)" "default|default:custom" "the refused Custom registration is reported with its origin, because here detection registers first"
 assert_eq "$(val "$LIST13" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "a detected name that wins against a Custom one keeps its origin"
 
 # ============================================================
