@@ -500,7 +500,8 @@ PluginComponent {
 
     // --- CLI logins ---
 
-    // `command` is built rather than declared, because Quickshell's own PATH is
+    // The command string is assembled here rather than handed to the Process
+    // as a bare program name, because Quickshell's own PATH is
     // a bare `/usr/local/bin:/usr/bin` and would not find a `claude` under
     // ~/.local/bin or ~/.npm-global/bin, leaving the button stuck on
     // "Logging in…" because the Process never spawned and never exited. The
