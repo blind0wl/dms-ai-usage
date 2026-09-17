@@ -35,10 +35,13 @@ Column {
     property string listedOrigins: ""
     property string listedShadowed: ""
     // Set once the Script has answered with its Account list, so a Source whose
-    // Script registered nothing - a CLI that is not installed, a config directory
-    // that does not exist - still marks the rows it registered nothing for. A
+    // Script registered nothing still marks the rows it registered nothing for. A
     // listing that failed or has not arrived leaves the previous answer standing.
     property bool listingAnswered: false
+    // Set when the Script answered that the Source is not installed: nothing it
+    // reports is in use because the Source itself is absent, which is a state of
+    // the Source rather than a verdict on the user's rows.
+    property bool sourceAbsent: false
     // Set when the Script that answers the listing fails, so a listing that never
     // arrived is not shown as a Source with nothing detected.
     property bool listFailed: false
@@ -53,7 +56,9 @@ Column {
     // and their row here does nothing. The listing is the only thing that can say
     // which rows those are, so it says nothing until it has answered with an
     // Account: an uninstalled Source leaves every row unmarked.
-    readonly property var unregistered: Sources.unregisteredRows(root.listedAccounts, root.listedOrigins, root.items, root.listingAnswered)
+    readonly property var unregistered: root.sourceAbsent
+        ? []
+        : Sources.unregisteredRows(root.listedAccounts, root.listedOrigins, root.items, root.listingAnswered)
 
     readonly property var acct: descriptor ? descriptor.accounts : null
     readonly property string settingKey: acct ? acct.settingKey : ""
@@ -163,9 +168,10 @@ Column {
     function customRowStatus(index, name) {
         if (root.unregistered.indexOf(index) < 0) {
             var replaced = Sources.displacedOrigin(root.detected, name);
-            return replaced
-                ? root.settingsRoot.tr("replacing what was detected on this machine") + " (" + replaced + ")"
-                : "";
+            if (replaced === null)
+                return "";
+            return root.settingsRoot.tr("replacing what was detected on this machine")
+                + (replaced.length > 0 ? " (" + replaced + ")" : "");
         }
         var shadowing = Sources.shadowingAccount(root.listedOrigins, root.listedShadowed, name);
         if (shadowing)
@@ -195,6 +201,7 @@ Column {
             return;
         }
         root.listFailed = false;
+        root.sourceAbsent = false;
         listProcess.command = Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
                                                    [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items)));
         listProcess.running = true;
@@ -207,6 +214,8 @@ Column {
         if (pair.key === root.acct.listKey) {
             root.listedAccounts = pair.value;
             root.listingAnswered = true;
+        } else if (pair.key === "CREDS_STATUS") {
+            root.sourceAbsent = pair.value === "not_installed";
         }
         else if (pair.key === root.acct.originsKey)
             root.listedOrigins = pair.value;
@@ -426,7 +435,7 @@ Column {
 
         width: parent.width
         spacing: Theme.spacingXS
-        visible: root.detected.length > 0 || root.listFailed
+        visible: root.detected.length > 0 || root.sourceAbsent || root.listFailed
 
         Row {
             spacing: Theme.spacingXS
@@ -452,6 +461,17 @@ Column {
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap
+        }
+
+        // A Source that is not installed uses none of its Accounts, whatever the
+        // user put in the list above, and nothing about those rows is wrong.
+        StyledText {
+            width: parent.width
+            text: root.settingsRoot.tr("This Source is not installed, so nothing here is in use.")
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            wrapMode: Text.WordWrap
+            visible: root.sourceAbsent
         }
 
         Repeater {

@@ -425,9 +425,16 @@ done
 # Account a name refers to. This returns before the first request: opening the
 # settings page must not spend an API call.
 if [ "$LIST_ACCOUNTS" -eq 1 ]; then
-    printf 'ACCOUNTS=%s\n' "$(IFS=,; echo "${ACCOUNT_NAMES[*]}")"
+    # The listing answer says why it is empty when it is: an empty Account list
+    # is this Script's own Not installed state, and the settings page needs to
+    # know that as a state of the Source rather than as a verdict on the user's
+    # rows.
+    printf 'ACCOUNTS=%s\n' "$(IFS=,; echo "${ACCOUNT_NAMES[*]:-}")"
     printf 'ACCOUNT_ORIGINS=%s\n' "$(account_origins)"
     printf 'ACCOUNT_SHADOWED=%s\n' "$(account_shadowed)"
+    if [ "${#ACCOUNT_NAMES[@]}" -eq 0 ]; then
+        printf 'CREDS_STATUS=not_installed\n'
+    fi
     exit 0
 fi
 

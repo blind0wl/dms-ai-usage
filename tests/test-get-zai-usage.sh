@@ -352,6 +352,7 @@ assert_eq "$(val "$LIST14" ACCOUNTS)" "" "listing mode lists nothing when no key
 assert_eq "$(echo "$LIST14" | grep -c "^ACCOUNTS=")" "1" "listing mode answers with the Account key even with nothing to list"
 assert_eq "$(val "$LIST14" ACCOUNT_ORIGINS)" "" "listing mode reports no origin when no key is found anywhere"
 assert_eq "$(echo "$LIST14" | grep -c "^ACCOUNT_ORIGINS=")" "1" "listing mode answers with the origins key even with nothing to list"
+assert_eq "$(echo "$LIST14" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an empty listing says the Source is not installed, rather than leaving the page to blame the rows"
 
 # ============================================================
 echo ""

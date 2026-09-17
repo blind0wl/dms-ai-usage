@@ -216,6 +216,11 @@ var strings = {
             fr: "non utilisé - cette source utilise",
             es: "sin usar - esta fuente está usando"
         },
+    "This Source is not installed, so nothing here is in use.":
+        {
+            fr: "Cette source n'est pas installée, donc rien ici n'est utilisé.",
+            es: "Esta fuente no está instalada, así que aquí no se usa nada."
+        },
     "replacing what was detected on this machine":
         {
             fr: "remplace ce qui a été détecté sur cette machine",

@@ -599,9 +599,16 @@ done
 # settings page must not spend an API call, and before the token counting, which
 # reads and prices every transcript since the first of the month.
 if [ "$LIST_ACCOUNTS" -eq 1 ]; then
-    printf 'PROFILES=%s\n' "$(IFS=,; echo "${PROFILE_NAMES[*]}")"
+    # The listing answer says why it is empty when it is: an empty Account list
+    # is this Script's own Not installed state, and the settings page needs to
+    # know that as a state of the Source rather than as a verdict on the user's
+    # rows.
+    printf 'PROFILES=%s\n' "$(IFS=,; echo "${PROFILE_NAMES[*]:-}")"
     printf 'PROFILE_ORIGINS=%s\n' "$(profile_origins)"
     printf 'PROFILE_SHADOWED=%s\n' "$(profile_shadowed)"
+    if [ "${#PROFILE_NAMES[@]}" -eq 0 ]; then
+        printf 'CREDS_STATUS=not_installed\n'
+    fi
     exit 0
 fi
 

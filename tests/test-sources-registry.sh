@@ -300,11 +300,13 @@ const displaced = (detected, name) => reg.displacedOrigin(detected, name);
 const sample = JSON.parse(listed("work", "work:custom", "work|default:~/.pi/agent/models.json"));
 check(displaced(sample, "work") === "~/.pi/agent/models.json",
       "displacedOrigin names the origin the Custom row took the place of");
-check(displaced(sample, "other") === "", "displacedOrigin reports nothing for a row that displaced nothing");
-check(displaced(JSON.parse(listed("work", "work:custom", "")), "work") === "",
+check(displaced(sample, "other") === null, "displacedOrigin reports nothing for a row that displaced nothing");
+check(displaced(JSON.parse(listed("work", "work:custom", "")), "work") === null,
       "displacedOrigin reports nothing when no registration was refused");
-check(displaced(null, "work") === "" && displaced([], "work") === "",
+check(displaced(null, "work") === null && displaced([], "work") === null,
       "displacedOrigin reports nothing for a missing listing");
+check(displaced(JSON.parse(listed("work", "work:custom", "work|default:")), "work") === "",
+      "displacedOrigin marks a displacement whose origin the Script did not name");
 
 // The other half of the same question: which detected Account kept what a Custom
 // row asked for. The Script names it, and on a clash of values the two names
@@ -470,6 +472,8 @@ check(/!root\.settingsRoot\.pluginService/.test(editor),
       "the settings editor does not ask the Script for a listing before the store it reads is available");
 check(/listingAnswered/.test(editor),
       "the settings editor hands out a verdict only once the Script has answered with its Account list");
+check(/pair\.value === "not_installed"/.test(editor) && /sourceAbsent/.test(editor),
+      "the settings editor tells a Source that is not installed from the user's rows being wrong");
 
 // One wire, one splitter: the widget's fetch parser and the settings editor's
 // listing parser take their key and value from wirePair, and read a

@@ -449,6 +449,7 @@ assert_eq "$(echo "$LIST16D" | grep "^ACCOUNTS=" | cut -d= -f2)" "" "an uninstal
 assert_eq "$(echo "$LIST16D" | grep -c "^ACCOUNTS=")" "1" "an uninstalled Source still answers with the Account key"
 assert_eq "$(echo "$LIST16D" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
 assert_eq "$(echo "$LIST16D" | grep -c "^ACCOUNT_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
+assert_eq "$(echo "$LIST16D" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an uninstalled Source says so in its listing answer"
 
 # ============================================================
 echo ""

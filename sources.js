@@ -171,15 +171,17 @@ function refusedRegistration(entry) {
     return { winner: winner, name: lost.substring(0, at), origin: lost.substring(at + 1) };
 }
 
-// The origin of the detected Account a Custom Account row displaced, or "" when
-// the row displaced nothing. `detected` is what detectedAccounts() returned, so
-// the two lists cannot disagree about which row is authenticating instead.
+// The origin of the detected Account a Custom Account row displaced, or null when
+// the row displaced nothing. An empty string is a displaced Account whose origin
+// the Script did not name, which is still a displacement. `detected` is what
+// detectedAccounts() returned, so the two lists cannot disagree about which row is
+// authenticating instead.
 function displacedOrigin(detected, name) {
     for (var i = 0; Array.isArray(detected) && i < detected.length; i++) {
         if (detected[i].overridden && detected[i].winner === name)
             return detected[i].origin;
     }
-    return "";
+    return null;
 }
 
 // The detected Account that kept the name or the value a Custom Account row was

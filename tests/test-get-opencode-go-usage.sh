@@ -326,6 +326,8 @@ LIST9=$(run_script "$H9" --list-accounts)
 assert_eq "$(val "$LIST9" ACCOUNTS)" "default" "listing mode lists the detected Account"
 assert_eq "$(val "$LIST9" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "listing mode names the pi auth store as the origin"
 assert_eq "$(echo "$LIST9" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
+LIST9B=$(run_script "$(new_home home9b)" --list-accounts)
+assert_eq "$(echo "$LIST9B" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an empty listing says the Source is not installed, rather than leaving the page to blame the rows"
 
 H10=$(new_home home10)
 write_opencode_key "$H10" k1

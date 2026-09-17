@@ -824,6 +824,7 @@ assert_eq "$(echo "$LIST29D" | grep "^PROFILES=" | cut -d= -f2)" "" "an uninstal
 assert_eq "$(echo "$LIST29D" | grep -c "^PROFILES=")" "1" "an uninstalled Source still answers with the Profile key"
 assert_eq "$(echo "$LIST29D" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
 assert_eq "$(echo "$LIST29D" | grep -c "^PROFILE_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
+assert_eq "$(echo "$LIST29D" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an uninstalled Source says so in its listing answer"
 
 # ============================================================
 echo ""
