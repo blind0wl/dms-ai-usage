@@ -816,7 +816,9 @@ assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default
 ENV29D=$(setup_env "test29d")
 LIST29D=$(HOME="$ENV29D" PATH="/usr/bin:/bin" bash "$SCRIPT" --list-accounts 2>/dev/null)
 assert_eq "$(echo "$LIST29D" | grep "^PROFILES=" | cut -d= -f2)" "" "an uninstalled Source lists no Profile"
+assert_eq "$(echo "$LIST29D" | grep -c "^PROFILES=")" "1" "an uninstalled Source still answers with the Profile key"
 assert_eq "$(echo "$LIST29D" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
+assert_eq "$(echo "$LIST29D" | grep -c "^PROFILE_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
 
 # ============================================================
 echo ""

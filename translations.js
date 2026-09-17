@@ -187,6 +187,8 @@ var strings = {
         { fr: "Aucun élément ajouté pour le moment", es: "Todavía no se ha añadido ningún elemento" },
     "Detected accounts":
         { fr: "Comptes détectés", es: "Cuentas detectadas" },
+    "Detected Profiles":
+        { fr: "Profils détectés", es: "Perfiles detectados" },
     "Detected outside the plugin. Add or remove them where they come from, not here.":
         {
             fr: "Détectés en dehors du plugin. Ajoutez-les ou supprimez-les à leur source, pas ici.",

@@ -438,7 +438,9 @@ assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default
 ENV16D=$(setup_env "test16d")
 LIST16D=$(HOME="$ENV16D" CODEX_HOME="$ENV16D/.codex" PATH="$NOCODEX_PATH" bash "$SCRIPT" --list-accounts 2>/dev/null)
 assert_eq "$(echo "$LIST16D" | grep "^ACCOUNTS=" | cut -d= -f2)" "" "an uninstalled Source lists no Account"
+assert_eq "$(echo "$LIST16D" | grep -c "^ACCOUNTS=")" "1" "an uninstalled Source still answers with the Account key"
 assert_eq "$(echo "$LIST16D" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
+assert_eq "$(echo "$LIST16D" | grep -c "^ACCOUNT_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
 
 # ============================================================
 echo ""

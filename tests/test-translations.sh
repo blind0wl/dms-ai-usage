@@ -38,7 +38,56 @@ for (const filename of rendered) {
         keys.add(match[1]);
 }
 
+// The descriptors render copy too, and a descriptor that names a key is asking
+// for it to exist: a heading the editor reads off the descriptor never appears in
+// a tr("...") call for this sweep to find.
+const registrySource = fs.readFileSync(path.join(root, "sources.js"), "utf8").replace(/^\.pragma library\s*/, "");
+const registry = {};
+vm.createContext(registry);
+vm.runInContext(registrySource + "; this.api = { SOURCES };", registry, { filename: "sources.js" });
+const named = [];
+const nameKey = (key) => {
+    if (key !== undefined && key !== null)
+        named.push(key);
+};
+for (const d of registry.api.SOURCES) {
+    nameKey(d.labelKey);
+    for (const which of ["primary", "secondary"]) {
+        const w = d.windows ? d.windows[which] : null;
+        if (w)
+            nameKey(w.labelKey);
+    }
+    if (d.accounts)
+        for (const key of ["labelKey", "titleKey", "descriptionKey", "fieldLabelKey", "detectedTitleKey"])
+            nameKey(d.accounts[key]);
+    if (d.login)
+        nameKey(d.login.titleKey), nameKey(d.login.bodyKey);
+    if (d.status)
+        nameKey(d.status.titleKey), nameKey(d.status.bodyKey), nameKey(d.status.emptyBodyKey);
+    for (const section of d.sections) {
+        for (const column of section.columns || []) {
+            nameKey(column.labelKey);
+            for (const slot of ["value", "sub"])
+                if (column[slot] && column[slot].kind === "count")
+                    nameKey(column[slot].unitKey);
+        }
+    }
+}
+const descriptorProblems = [];
+for (const key of named) {
+    if (typeof key !== "string" || key.length === 0)
+        descriptorProblems.push("a descriptor names an empty translation key");
+    else if (sandbox.strings[key] === undefined)
+        descriptorProblems.push(`descriptor key "${key}" has no translation entry`);
+    else
+        keys.add(key);
+}
+
 let failed = false;
+for (const problem of descriptorProblems) {
+    console.error(`FAIL: ${problem}`);
+    failed = true;
+}
 for (const key of [...keys].sort()) {
     const entry = sandbox.strings[key];
     for (const language of ["fr", "es"]) {
@@ -71,6 +120,6 @@ if (!/es:\s*\["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"\]/.test(widget)) {
 if (failed)
     process.exit(1);
 
-console.log(`PASS: ${keys.size} UI keys have complete French and Spanish translations`);
+console.log(`PASS: ${keys.size} UI and descriptor keys have complete French and Spanish translations`);
 console.log("PASS: Spanish weekday labels are present");
 NODE

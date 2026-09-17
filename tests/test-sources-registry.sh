@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredAccounts, scriptPath, wirePair, splitList, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, scriptPath, wirePair, splitList, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -136,6 +136,11 @@ for (const d of reg.SOURCES) {
         // is descriptor data, like the Account list itself.
         check(typeof d.accounts.originsKey === "string" && d.accounts.originsKey.length > 0,
               `${tag} account declares the output key its Account origins arrive under`);
+        // The settings editor's read-only list heads itself with the Source's own
+        // word for an Account, because CONTEXT.md keeps Profile for Claude-facing
+        // copy and Account for everything else.
+        check(typeof d.accounts.detectedTitleKey === "string" && tr[d.accounts.detectedTitleKey] !== undefined,
+              `${tag} account declares a translated heading for the detected list`);
         const script = fs.readFileSync(path.join(root, d.script), "utf8");
         for (const key of [d.accounts.listKey, d.accounts.originsKey])
             check(script.includes(`${key}=`), `${tag} script ${d.script} reports ${key}`);
@@ -255,28 +260,30 @@ check(listed(null, null) === "[]", "detectedAccounts reports nothing for a missi
 // The Custom Accounts the Script did not register. Its listing is the only
 // source of that fact: the settings list cannot tell whether the Script kept a
 // row, and the Popout's selector offers only what the Script kept.
-const dropped = (names, origins, list) => JSON.stringify(reg.unregisteredAccounts(names, origins, list));
+const dropped = (names, origins, list) => JSON.stringify(reg.unregisteredRows(names, origins, list));
 const rows = (...names) => names.map((name) => ({ name: name, key: "k-" + name }));
-check(dropped("default", "default:CODEX_HOME", rows("default")) === JSON.stringify(["default"]),
-      "unregisteredAccounts reports a Custom Account the Script registered under a detected origin");
+check(dropped("default", "default:CODEX_HOME", rows("default")) === JSON.stringify([0]),
+      "unregisteredRows reports the row the Script registered under a detected origin");
 check(dropped("work,default", "work:custom,default:~/.codex", rows("work")) === "[]",
-      "unregisteredAccounts reports nothing for a Custom Account the Script kept");
-check(dropped("work,default", "work:custom,default:~/.codex", rows("work", "default")) === JSON.stringify(["default"]),
-      "unregisteredAccounts marks the shadowed row and leaves the kept one alone");
-check(dropped("kept", "kept:custom", rows("kept", "ghost")) === JSON.stringify(["ghost"]),
-      "unregisteredAccounts reports a Custom Account the Script did not list at all");
-check(dropped("work", "work:custom", rows("work", "other")) === JSON.stringify(["other"]),
-      "unregisteredAccounts keeps the settings list's own order");
+      "unregisteredRows reports nothing for a row the Script kept");
+check(dropped("work,default", "work:custom,default:~/.codex", rows("work", "default")) === JSON.stringify([1]),
+      "unregisteredRows marks the shadowed row and leaves the kept one alone");
+check(dropped("kept", "kept:custom", rows("kept", "ghost")) === JSON.stringify([1]),
+      "unregisteredRows reports a row the Script did not list at all");
+check(dropped("work", "work:custom", rows("other", "work")) === JSON.stringify([0]),
+      "unregisteredRows reports the row that is not in use, whenever it sits in the list");
 check(dropped("", "", rows("work")) === "[]",
-      "unregisteredAccounts withholds a verdict when the Script reported no Account at all, as while a listing is in flight");
-check(dropped("work", "work:custom", []) === "[]", "unregisteredAccounts reports nothing for an empty settings list");
-check(dropped("work", "work:custom", null) === "[]", "unregisteredAccounts reports nothing for a missing settings list");
+      "unregisteredRows withholds a verdict when the Script reported no Account at all, as while a listing is in flight");
+check(dropped("work", "work:custom", []) === "[]", "unregisteredRows reports nothing for an empty settings list");
+check(dropped("work", "work:custom", null) === "[]", "unregisteredRows reports nothing for a missing settings list");
 check(dropped("work", "work:custom", [{ key: "k1" }]) === "[]",
-      "unregisteredAccounts ignores a settings row with no name");
-// A Script registers one Account per name, so two Custom Accounts sharing a name
-// are indistinguishable in its listing: the second is dropped and unmarked.
-check(dropped("work", "work:custom", rows("work", "work")) === "[]",
-      "unregisteredAccounts cannot see a duplicate name the Script resolved to one Account");
+      "unregisteredRows ignores a settings row with no name");
+// A Script registers one Account per name, so of two rows sharing a name only
+// the first is the Account the selector offers.
+check(dropped("work", "work:custom", rows("work", "work")) === JSON.stringify([1]),
+      "unregisteredRows marks the second of two rows sharing a name");
+check(dropped("work", "work:custom", rows("work", "work", "other")) === JSON.stringify([1, 2]),
+      "unregisteredRows keeps the row order the editor renders");
 
 // The wire-line split, shared by the widget's fetch parser and the settings
 // editor's listing parser so the two read one wire the same way.
@@ -328,7 +335,7 @@ for (const key of ["listKey", "originsKey"])
     check(editor.includes(`acct.${key}`), `the settings editor reads the Account ${key} off the descriptor`);
 check(editor.includes("Sources.accountArgs("), "the settings editor builds the Script's Account arguments with the widget's own builder");
 check(editor.includes("Sources.LIST_ACCOUNTS_FLAG"), "the settings editor asks for the listing mode by its declared flag");
-check(editor.includes("Sources.detectedAccounts(") && editor.includes("Sources.unregisteredAccounts("),
+check(editor.includes("Sources.detectedAccounts(") && editor.includes("Sources.unregisteredRows("),
       "the settings editor reads both Account lists from the registry rather than parsing them out");
 check(!/ACCOUNT_|PROFILE_/.test(editor), "the settings editor hardcodes no Account output key");
 

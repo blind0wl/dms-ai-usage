@@ -40,12 +40,12 @@ Column {
     property bool listPending: false
 
     readonly property var detected: Sources.detectedAccounts(root.listedAccounts, root.listedOrigins)
-    // The Custom Accounts the Script did not register: another Account already
-    // holds their name or their value, so the selector cannot offer them and
-    // their row here does nothing. The listing is the only thing that can say
-    // which rows those are, so it says nothing until it has answered with an
+    // The Custom Account rows the Script did not register: another Account
+    // already holds their name or their value, so the selector cannot offer them
+    // and their row here does nothing. The listing is the only thing that can
+    // say which rows those are, so it says nothing until it has answered with an
     // Account: an uninstalled Source leaves every row unmarked.
-    readonly property var unregistered: Sources.unregisteredAccounts(root.listedAccounts, root.listedOrigins, root.items)
+    readonly property var unregistered: Sources.unregisteredRows(root.listedAccounts, root.listedOrigins, root.items)
 
     readonly property var acct: descriptor ? descriptor.accounts : null
     readonly property string settingKey: acct ? acct.settingKey : ""
@@ -242,7 +242,7 @@ Column {
                 // so another Account already holds the name or the value: the
                 // selector offers that one and this row does nothing. The listing
                 // is what says so, because only the Script resolves the clash.
-                readonly property bool unused: root.unregistered.indexOf(modelData.name) >= 0
+                readonly property bool unused: root.unregistered.indexOf(index) >= 0
 
                 width: parent.width
                 height: 44
@@ -322,7 +322,7 @@ Column {
         visible: root.detected.length > 0
 
         StyledText {
-            text: root.settingsRoot.tr("Detected accounts")
+            text: root.settingsRoot.tr(root.acct.detectedTitleKey)
             font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceText

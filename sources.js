@@ -132,12 +132,13 @@ function detectedAccounts(names, origins) {
     return out;
 }
 
-// The names of the Custom Accounts a Script did not register, so the Popout's
-// selector cannot offer them. The Script keeps the first registration of a name
-// or of a value: a Custom Account that duplicates one the Script found itself
-// never reaches the selector, while the settings editor still shows its row,
-// editable and inert. Only the Script can say which rows those are, which is
-// why its listing reports where every Account came from.
+// The rows of a Custom Account list a Script did not register, by their index in
+// that list, so the editor marks a row rather than a name: two rows can carry the
+// same name, and only the first of them is one the Script kept. The Popout's
+// selector offers only what the Script kept, so these rows do nothing - the
+// Script resolves the clash by keeping the first registration of a name or of a
+// value, and only it can say which those were, which is why its listing reports
+// where every Account came from.
 //
 // `list` is the Custom Account list from the plugin settings, the form the
 // editor holds it in.
@@ -147,22 +148,24 @@ function detectedAccounts(names, origins) {
 // or a Script that failed. Blaming the user's rows for a Source that never
 // registered an Account would be the same lie as calling a failed listing an
 // empty one.
-function unregisteredAccounts(names, origins, list) {
+function unregisteredRows(names, origins, list) {
     var listed = splitList(names);
     if (listed.length === 0)
         return [];
     var byName = originsByName(origins);
+    var seen = {};
     var out = [];
     for (var i = 0; Array.isArray(list) && i < list.length; i++) {
         var row = list[i];
         if (!row || !row.name)
             continue;
         // A name the Script registered as a Custom Account is the one the
-        // selector offers. Anything else was dropped, whether by a name or by a
-        // value another Account already held.
-        var kept = listed.indexOf(row.name) >= 0 && byName[row.name] === CUSTOM_ORIGIN;
+        // selector offers, and only its first row is that registration.
+        var first = !Object.prototype.hasOwnProperty.call(seen, row.name);
+        seen[row.name] = true;
+        var kept = first && listed.indexOf(row.name) >= 0 && byName[row.name] === CUSTOM_ORIGIN;
         if (!kept)
-            out.push(row.name);
+            out.push(i);
     }
     return out;
 }
@@ -234,6 +237,10 @@ var SOURCES = [
             // Where each Profile was found, one "name:origin" pair per entry.
             // The settings editor reads it to show what it does not own.
             originsKey: "PROFILE_ORIGINS",
+            // The heading the settings editor gives the read-only list of what
+            // the Script found. It follows the Source's own word for an
+            // Account, so Claude's page says Profiles throughout.
+            detectedTitleKey: "Detected Profiles",
             // Claude's per-Account keys keep PROFILE_ because get-claude-usage
             // is upstream's file and those names are its existing output
             // contract. Every other Source declares ACCOUNT_, the general term
@@ -320,6 +327,7 @@ var SOURCES = [
             settingKey: "customChatgptAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
+            detectedTitleKey: "Detected accounts",
             keyPrefix: "ACCOUNT_",
             argField: "path",
             labelKey: "Account",
@@ -400,6 +408,7 @@ var SOURCES = [
             settingKey: "customOpencodeAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
+            detectedTitleKey: "Detected accounts",
             keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
@@ -462,6 +471,7 @@ var SOURCES = [
             settingKey: "customZaiAccounts",
             listKey: "ACCOUNTS",
             originsKey: "ACCOUNT_ORIGINS",
+            detectedTitleKey: "Detected accounts",
             keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
