@@ -382,10 +382,11 @@ Column {
 
     // A listing that never arrived is not the same as a Source with nothing
     // detected, and showing the two the same way is how the selector's Accounts
-    // went missing from this page in the first place.
+    // went missing from this page in the first place. The copy names no Account
+    // word of its own, because Claude's page calls them Profiles.
     StyledText {
         width: parent.width
-        text: root.settingsRoot.tr("The detected accounts could not be listed.")
+        text: root.settingsRoot.tr("Could not ask the Script what it detects.")
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap

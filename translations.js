@@ -200,10 +200,10 @@ var strings = {
         { fr: "Origine inconnue", es: "Origen desconocido" },
     "not in use":
         { fr: "non utilisé", es: "sin usar" },
-    "The detected accounts could not be listed.":
+    "Could not ask the Script what it detects.":
         {
-            fr: "Les comptes détectés n'ont pas pu être listés.",
-            es: "No se han podido listar las cuentas detectadas."
+            fr: "Impossible de demander au script ce qu'il détecte.",
+            es: "No se ha podido preguntar al script qué detecta."
         },
     // Login action
     "Not logged in":
