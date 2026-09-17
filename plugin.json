@@ -9,8 +9,8 @@
   "capabilities": [
     "dankbar-widget"
   ],
-  "component": "./ClaudeCodeUsageWidget.qml",
-  "settings": "./ClaudeCodeUsageSettings.qml",
+  "component": "./AiUsageWidget.qml",
+  "settings": "./AiUsageSettings.qml",
   "requires": [
     "jq",
     "curl"
