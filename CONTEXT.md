@@ -25,16 +25,24 @@ _Avoid_: using it as the general term; that is Account.
 An Account a Source's Script finds for itself rather than being handed one: a key
 or config directory the machine already had, in the Source's own config or
 environment. The plugin cannot add or remove one, so the settings page lists
-Detected Accounts read-only, each under the origin it was found at - a file's
-path, an environment variable's name - and an Account the settings list owns is
-a Custom Account instead.
-_Avoid_: automatic, auto, built-in, hidden
+Detected Accounts read-only, each under the Origin it was found at.
+Describing the detection as automatic is fine; it is the Account that is
+Detected, not automatic.
+_Avoid_: auto, built-in, hidden, automatic account
+
+**Custom Account**:
+An Account the user added to a Source's setting list. The plugin owns it: the
+settings page can edit it, and the Script is handed it as an argument instead of
+finding it itself. A Script resolves a clash between a Custom Account and a
+Detected one by keeping whichever it registers first, and reports the Origin it
+kept.
+_Avoid_: manual account, user account, settings account
 
 **Origin**:
 Where a Detected Account's credential was found, as the user would look for it:
-a file's path or an environment variable's name. A Script reports one per
-Account it lists, and _settings_ for an Account that came from the settings list
-rather than detection.
+a file's path, a directory a profile manager keeps, or an environment variable's
+name. A Script reports one per Account it lists, and _custom_ for an Account that
+came from the Custom Account list rather than detection.
 _Avoid_: source, discovery, provider
 
 **Window**:

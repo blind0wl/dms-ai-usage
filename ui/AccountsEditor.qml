@@ -31,8 +31,15 @@ Column {
     // descriptor's listKey, and the origins under its originsKey.
     property string listedAccounts: ""
     property string listedOrigins: ""
+    // Set when the Script that answers the listing fails, so a listing that
+    // never arrived is not shown as a Source with nothing detected.
+    property bool listFailed: false
 
     readonly property var detected: Sources.detectedAccounts(root.listedAccounts, root.listedOrigins)
+    // The Custom Accounts the Script did not register: another Account already
+    // holds their name or their value, so the selector cannot offer them and
+    // their row here does nothing. The listing is what says which.
+    readonly property var unregistered: Sources.unregisteredAccounts(root.listedAccounts, root.listedOrigins, root.items)
 
     readonly property var acct: descriptor ? descriptor.accounts : null
     readonly property string settingKey: acct ? acct.settingKey : ""
@@ -94,7 +101,9 @@ Column {
     readonly property var listCommand: {
         if (!root.settingsRoot || !root.descriptor)
             return [];
-        return ["bash",
+        // Wrapped in `timeout` as the widget's fetch is: a listing that never
+        // exits must not leave the editor waiting on it.
+        return ["timeout", "120", "bash",
                 Sources.scriptPath(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor),
                 Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items));
     }
@@ -111,19 +120,18 @@ Column {
             return;
         listedAccounts = "";
         listedOrigins = "";
+        listFailed = false;
         listProcess.running = true;
     }
 
     function readListLine(line) {
-        var at = line.indexOf("=");
-        if (at < 0)
+        var pair = Sources.wirePair(line);
+        if (!pair)
             return;
-        var key = line.substring(0, at);
-        var value = line.substring(at + 1);
-        if (key === root.acct.listKey)
-            root.listedAccounts = value;
-        else if (key === root.acct.originsKey)
-            root.listedOrigins = value;
+        if (pair.key === root.acct.listKey)
+            root.listedAccounts = pair.value;
+        else if (pair.key === root.acct.originsKey)
+            root.listedOrigins = pair.value;
     }
 
     Process {
@@ -132,6 +140,9 @@ Column {
         running: false
         stdout: SplitParser {
             onRead: data => root.readListLine(data.trim())
+        }
+        onExited: (exitCode, exitStatus) => {
+            root.listFailed = exitCode !== 0;
         }
     }
 
@@ -213,6 +224,12 @@ Column {
                 required property int index
                 required property var modelData
 
+                // The Script registered no Custom Account under this row's name,
+                // so another Account already holds the name or the value: the
+                // selector offers that one and this row does nothing. The listing
+                // is what says so, because only the Script resolves the clash.
+                readonly property bool unused: root.unregistered.indexOf(modelData.name) >= 0
+
                 width: parent.width
                 height: 44
                 radius: Theme.cornerRadius
@@ -236,7 +253,8 @@ Column {
                     StyledText {
                         width: root.valueColumnWidth
                         anchors.verticalCenter: parent.verticalCenter
-                        text: modelData[root.argField] || ""
+                        text: (modelData[root.argField] || "")
+                            + (unused ? " · " + root.settingsRoot.tr("not in use") : "")
                         color: Theme.surfaceVariantText
                         font.pixelSize: Theme.fontSizeMedium
                         elide: Text.ElideMiddle
@@ -347,5 +365,17 @@ Column {
                 }
             }
         }
+    }
+
+    // A listing that never arrived is not the same as a Source with nothing
+    // detected, and showing the two the same way is how the selector's Accounts
+    // went missing from this page in the first place.
+    StyledText {
+        width: parent.width
+        text: root.settingsRoot.tr("The detected accounts could not be listed.")
+        font.pixelSize: Theme.fontSizeSmall
+        color: Theme.surfaceVariantText
+        wrapMode: Text.WordWrap
+        visible: root.listFailed
     }
 }

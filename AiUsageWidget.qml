@@ -1168,13 +1168,11 @@ PluginComponent {
     }
 
     function parseLine(id, line) {
-        if (!line)
+        var pair = Sources.wirePair(line);
+        if (!pair)
             return;
-        var idx = line.indexOf("=");
-        if (idx < 0)
-            return;
-        var key = line.substring(0, idx);
-        var val = line.substring(idx + 1);
+        var key = pair.key;
+        var val = pair.value;
         var d = Sources.byId(id);
         if (!d)
             return;
@@ -1385,7 +1383,7 @@ PluginComponent {
     }
 
     function applyAccounts(id, val) {
-        var names = val.length > 0 ? val.split(",") : [];
+        var names = Sources.splitList(val);
         root.updateSource(id, function (st) {
             st.accounts = names;
         });

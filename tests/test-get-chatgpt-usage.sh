@@ -425,12 +425,12 @@ assert_eq "$(echo "$LIST16" | wc -l)" "2" "listing mode returns the two list key
 LIST16B=$(HOME="$ENV16" CODEX_HOME='' PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" --list-accounts 2>/dev/null)
 assert_eq "$(echo "$LIST16B" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:~/.codex" "listing mode names the conventional path when no CODEX_HOME is set"
 
-# A settings Account is reported as coming from settings. It cannot take the
-# name "default", which the Codex home already holds, so both are reported and
-# the origin says which one the selector shows.
+# A Custom Account is reported as coming from the Custom Account list. It cannot
+# take the name "default", which the Codex home already holds, so both are
+# reported and the origin says which one the selector shows.
 LIST16C=$(run_script "$ENV16" --list-accounts "work=$ENV16/work")
-assert_eq "$(echo "$LIST16C" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "listing mode lists settings Accounts beside detected ones"
-assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME,work:settings" "listing mode reports settings and detected origins side by side"
+assert_eq "$(echo "$LIST16C" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "listing mode lists Custom Accounts beside detected ones"
+assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME,work:custom" "listing mode reports Custom and detected origins side by side"
 
 # ============================================================
 echo ""

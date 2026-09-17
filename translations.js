@@ -196,6 +196,13 @@ var strings = {
         { fr: "Détecté depuis", es: "Detectado desde" },
     "Origin unknown":
         { fr: "Origine inconnue", es: "Origen desconocido" },
+    "not in use":
+        { fr: "non utilisé", es: "sin usar" },
+    "The detected accounts could not be listed.":
+        {
+            fr: "Les comptes détectés n'ont pas pu être listés.",
+            es: "No se han podido listar las cuentas detectadas."
+        },
     // Login action
     "Not logged in":
         { fr: "Non connecté", es: "No has iniciado sesión" },

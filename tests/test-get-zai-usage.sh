@@ -309,19 +309,19 @@ assert_eq "$(val "$LIST10" ACCOUNTS)" "default" "listing mode lists the detected
 assert_eq "$(val "$LIST10" ACCOUNT_ORIGINS)" "default:~/.pi/agent/models.json" "listing mode names the pi config key as the origin"
 assert_eq "$(echo "$LIST10" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
 
-# A settings Account is reported as coming from settings. It keeps its name
-# even where that name shadows a detected Account, because the Script's own
-# name de-duplication decides which of the two the selector shows.
+# A Custom Account is reported as coming from the Custom Account list. It keeps
+# its name even where that name shadows a detected Account, because the Script's
+# own name de-duplication decides which of the two the selector shows.
 H11=$(new_home home11)
 write_pi_key "$H11" k4
 LIST11=$(run_script "$H11" --list-accounts "default=k1")
-assert_eq "$(val "$LIST11" ACCOUNTS)" "default" "a settings name wins against a detected one"
-assert_eq "$(val "$LIST11" ACCOUNT_ORIGINS)" "default:settings" "an Account the settings list provided reports settings as its origin"
+assert_eq "$(val "$LIST11" ACCOUNTS)" "default" "a Custom Account name wins against a detected one"
+assert_eq "$(val "$LIST11" ACCOUNT_ORIGINS)" "default:custom" "an Account the Custom Account list provided reports it as its origin"
 
 H12=$(new_home home12)
 write_pi_key "$H12" k4
 LIST12=$(run_script "$H12" --list-accounts "work=k1")
-assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "work:settings,default:~/.pi/agent/models.json" "listing mode reports settings and detected origins side by side"
+assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "work:custom,default:~/.pi/agent/models.json" "listing mode reports Custom and detected origins side by side"
 
 H13=$(new_home home13)
 LIST13=$(ZAI_API_KEY_OVERRIDE=k1 run_script "$H13" --list-accounts)

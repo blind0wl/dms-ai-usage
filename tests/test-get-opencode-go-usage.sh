@@ -339,14 +339,14 @@ assert_eq "$(val "$LIST11" ACCOUNT_ORIGINS)" "default:OPENCODE_GO_KEY" "the envi
 H12=$(new_home home12)
 write_pi_key "$H12" k1
 LIST12=$(run_script "$H12" --list-accounts "work=k2")
-assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json,work:settings" "listing mode reports settings and detected origins side by side"
+assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json,work:custom" "listing mode reports Custom and detected origins side by side"
 
-# Detection runs before argv here, so a settings Account whose name a detected
-# one already holds is dropped. The origin says which of the two survives.
+# Detection runs before argv here, so a Custom Account whose name a detected one
+# already holds is dropped. The origin says which of the two survives.
 H13=$(new_home home13)
 write_pi_key "$H13" k1
 LIST13=$(run_script "$H13" --list-accounts "default=k2")
-assert_eq "$(val "$LIST13" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "a detected name that wins against a settings one keeps its origin"
+assert_eq "$(val "$LIST13" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "a detected name that wins against a Custom one keeps its origin"
 
 # ============================================================
 echo ""

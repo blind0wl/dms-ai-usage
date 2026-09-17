@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, scriptPath, SETTINGS_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredAccounts, scriptPath, wirePair, splitList, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -139,11 +139,16 @@ for (const d of reg.SOURCES) {
         const script = fs.readFileSync(path.join(root, d.script), "utf8");
         for (const key of [d.accounts.listKey, d.accounts.originsKey])
             check(script.includes(`${key}=`), `${tag} script ${d.script} reports ${key}`);
-        check(script.includes(reg.LIST_ACCOUNTS_FLAG), `${tag} script ${d.script} answers the listing mode the settings editor asks for`);
-        // The editor drops an Account the settings list provided by its exact
-        // origin tag, so a Script that spelled it differently would look like it
-        // had detected the user's own Accounts.
-        check(script.includes(`"${reg.SETTINGS_ORIGIN}"`), `${tag} script ${d.script} tags a settings Account with the origin the editor knows`);
+        // The editor drops an Account the Custom Account list provided by its
+        // exact origin tag, so a Script that spelled it differently would look
+        // like it had detected the user's own Accounts. Both strings have to be
+        // tagged where the Account is registered, not merely mentioned.
+        const lines = script.split("\n");
+        const tagAtCallSite = new RegExp(`add_(account|profile) .*"${reg.CUSTOM_ORIGIN}"\\s*;;`);
+        check(lines.some((line) => tagAtCallSite.test(line)),
+              `${tag} script ${d.script} tags a Custom Account where it registers it`);
+        check(lines.some((line) => line.includes(`"${reg.LIST_ACCOUNTS_FLAG}"`) && line.includes("LIST_ACCOUNTS=1")),
+              `${tag} script ${d.script} answers the listing mode in its argument loop`);
         check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its output fields`);
         // The prefix a Source's per-Account keys wear is descriptor data, so
         // nothing here has to ask which Source it is. Claude declares PROFILE_
@@ -227,9 +232,9 @@ for (const name of ["AccountsSection", "LoginSection", "StatusSection", "Windows
 // editor cannot edit. The Script's own listing mode says which they are, so the
 // two surfaces cannot disagree about detection.
 const listed = (names, origins) => JSON.stringify(reg.detectedAccounts(names, origins));
-check(listed("work,default", "work:settings,default:~/.pi/agent/models.json") === JSON.stringify([{ name: "default", origin: "~/.pi/agent/models.json" }]),
+check(listed("work,default", "work:custom,default:~/.pi/agent/models.json") === JSON.stringify([{ name: "default", origin: "~/.pi/agent/models.json" }]),
       "detectedAccounts drops the Accounts the settings list provided");
-check(listed("work,default", "work:settings,default:ZAI_API_KEY") === JSON.stringify([{ name: "default", origin: "ZAI_API_KEY" }]),
+check(listed("work,default", "work:custom,default:ZAI_API_KEY") === JSON.stringify([{ name: "default", origin: "ZAI_API_KEY" }]),
       "detectedAccounts carries the origin the Script named");
 check(listed("a,b", "a:~/.claude,b:~/.ccs/instances") === JSON.stringify([{ name: "a", origin: "~/.claude" }, { name: "b", origin: "~/.ccs/instances" }]),
       "detectedAccounts keeps the Script's own Account order");
@@ -238,7 +243,7 @@ check(listed("default", "default:") === JSON.stringify([{ name: "default", origi
 check(listed("default", "") === JSON.stringify([{ name: "default", origin: "" }]),
       "detectedAccounts reports an Account whose Script named no origin at all");
 check(listed("", "") === "[]", "detectedAccounts reports nothing for an empty Account list");
-check(listed("work", "work:settings") === "[]", "detectedAccounts reports nothing when every Account came from the settings list");
+check(listed("work", "work:custom") === "[]", "detectedAccounts reports nothing when every Account came from the settings list");
 // An origin is a path or a variable name and may itself carry a colon; the name
 // is what the pair is split on, and a name never carries one.
 check(listed("work", "work:~/.ccs/instances:one") === JSON.stringify([{ name: "work", origin: "~/.ccs/instances:one" }]),
@@ -246,6 +251,42 @@ check(listed("work", "work:~/.ccs/instances:one") === JSON.stringify([{ name: "w
 // A Script that reports an origin for a name it does not list adds nothing.
 check(listed("", "ghost:~/.claude") === "[]", "detectedAccounts only reports Accounts the Script listed");
 check(listed(null, null) === "[]", "detectedAccounts reports nothing for a missing listing");
+
+// The Custom Accounts the Script did not register. Its listing is the only
+// source of that fact: the settings list cannot tell whether the Script kept a
+// row, and the Popout's selector offers only what the Script kept.
+const dropped = (names, origins, list) => JSON.stringify(reg.unregisteredAccounts(names, origins, list));
+const rows = (...names) => names.map((name) => ({ name: name, key: "k-" + name }));
+check(dropped("default", "default:CODEX_HOME", rows("default")) === JSON.stringify(["default"]),
+      "unregisteredAccounts reports a Custom Account the Script registered under a detected origin");
+check(dropped("work,default", "work:custom,default:~/.codex", rows("work")) === "[]",
+      "unregisteredAccounts reports nothing for a Custom Account the Script kept");
+check(dropped("kept", "kept:custom", rows("kept", "ghost")) === JSON.stringify(["ghost"]),
+      "unregisteredAccounts reports a Custom Account the Script did not list at all");
+check(dropped("work", "work:custom", rows("work", "other")) === JSON.stringify(["other"]),
+      "unregisteredAccounts keeps the settings list's own order");
+check(dropped("", "", rows("work")) === JSON.stringify(["work"]),
+      "unregisteredAccounts reports every Custom Account when the Script listed none");
+check(dropped("work", "work:custom", []) === "[]", "unregisteredAccounts reports nothing for an empty settings list");
+check(dropped("work", "work:custom", null) === "[]", "unregisteredAccounts reports nothing for a missing settings list");
+check(dropped("work", "work:custom", [{ key: "k1" }]) === "[]",
+      "unregisteredAccounts ignores a settings row with no name");
+// A Script registers one Account per name, so two Custom Accounts sharing a name
+// are indistinguishable in its listing: the second is dropped and unmarked.
+check(dropped("work", "work:custom", rows("work", "work")) === "[]",
+      "unregisteredAccounts cannot see a duplicate name the Script resolved to one Account");
+
+// The wire-line split, shared by the widget's fetch parser and the settings
+// editor's listing parser so the two read one wire the same way.
+const pair = (line) => JSON.stringify(reg.wirePair(line));
+check(pair("ACCOUNTS=work,default") === JSON.stringify({ key: "ACCOUNTS", value: "work,default" }),
+      "wirePair splits a wire line into its key and value");
+check(pair("ACCOUNT_PRIMARY_UTIL=work:80") === JSON.stringify({ key: "ACCOUNT_PRIMARY_UTIL", value: "work:80" }),
+      "wirePair splits on the first = so a value may carry one");
+check(pair("ACCOUNTS=") === JSON.stringify({ key: "ACCOUNTS", value: "" }),
+      "wirePair keeps an empty value");
+check(reg.wirePair("no delimiter") === null && reg.wirePair("") === null && reg.wirePair(null) === null,
+      "wirePair reports nothing for a line that carries no key");
 
 // The arguments decide which of two Accounts sharing a name survives the
 // Script's own de-duplication, so the widget's fetch and the settings editor's
@@ -285,7 +326,19 @@ for (const key of ["listKey", "originsKey"])
     check(editor.includes(`acct.${key}`), `the settings editor reads the Account ${key} off the descriptor`);
 check(editor.includes("Sources.accountArgs("), "the settings editor builds the Script's Account arguments with the widget's own builder");
 check(editor.includes("Sources.LIST_ACCOUNTS_FLAG"), "the settings editor asks for the listing mode by its declared flag");
+check(editor.includes("Sources.detectedAccounts(") && editor.includes("Sources.unregisteredAccounts("),
+      "the settings editor reads both Account lists from the registry rather than parsing them out");
 check(!/ACCOUNT_|PROFILE_/.test(editor), "the settings editor hardcodes no Account output key");
+
+// One wire, one splitter: the widget's fetch parser and the settings editor's
+// listing parser take their key and value from wirePair, and read a
+// comma-separated list through splitList.
+for (const name of ["AiUsageWidget.qml", "ui/AccountsEditor.qml"]) {
+    const source = fs.readFileSync(path.join(root, name), "utf8");
+    check(source.includes("Sources.wirePair("), `${name} splits a wire line with wirePair`);
+}
+check(widget.includes("Sources.splitList(") && !/val\.length > 0 \? val\.split\(","\)/.test(widget),
+      "the widget reads a wire list with splitList rather than restating its shape");
 
 // --- The widget holds no per-Source branches ---
 // ADR-0001: a Source is data. The Account setting key, the Account output keys

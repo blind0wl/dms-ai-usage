@@ -38,15 +38,17 @@ ACCOUNT_ORIGINS=()
 # First registration of a name (or of a key) wins, so the order the callers
 # below run in is the precedence order. The origin is where the key was found,
 # as the user would look for it: a file's path, the name of an environment
-# variable, or "settings" for an entry from the plugin settings. It is display
-# text, so the two list delimiters are stripped from it just as they are from a
-# name.
+# variable, or "custom" for an entry from the plugin's Custom Account list. It
+# is display text, so the two list delimiters are stripped from it just as they
+# are from a name.
 add_account() {
     local name="$1" key="$2" origin="${3:-}"
 
     # , | : are output delimiters, they cannot survive in an account name. An
-    # origin is display text, so only the two list delimiters are kept out of it:
-    # a "name:origin" pair is split on its first colon, which a path may carry.
+    # origin is display text: the list it rides is comma-separated and the other
+    # Account lists separate entries with |, so neither can survive in it either.
+    # The ":" that ends a name is kept, because a pair is split on its first one
+    # and a path may carry a colon.
     name="${name//[,|:]/}"
     origin="${origin//[,|]/}"
     [ -n "$name" ] || return 0
@@ -95,7 +97,7 @@ LIST_ACCOUNTS=0
 for arg in "$@"; do
     case "$arg" in
         "--list-accounts") LIST_ACCOUNTS=1 ;;
-        *=*) add_account "${arg%%=*}" "${arg#*=}" "settings" ;;
+        *=*) add_account "${arg%%=*}" "${arg#*=}" "custom" ;;
     esac
 done
 

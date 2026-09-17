@@ -805,10 +805,10 @@ echo "CLAUDE_CONFIG_DIR=$ENV29B/ccpdata/ranqia" > "$ENV29B/.ccp/profiles/ranqia.
 LIST29B=$(run_script "$ENV29B" --list-accounts)
 assert_eq "$(echo "$LIST29B" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles" "listing mode names each detector's own directory"
 
-# A settings Profile is reported as coming from settings.
+# A Custom Profile is reported as coming from the Custom Account list.
 mkdir -p "$ENV29B/manual/work/projects/proj1"
 LIST29C=$(run_script "$ENV29B" --list-accounts "manual=$ENV29B/manual/work")
-assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles,manual:settings" "a settings Profile reports settings as its origin"
+assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles,manual:custom" "a Custom Profile reports the Custom Account list as its origin"
 
 # ============================================================
 echo ""

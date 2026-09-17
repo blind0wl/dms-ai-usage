@@ -59,11 +59,11 @@ function pickFields(id, prefix, suffixes) {
     return out;
 }
 
-// The origin tag a Source's Script puts on an Account it took from the plugin
-// settings list rather than detecting it. Every other origin names where the
+// The origin tag a Source's Script puts on an Account it took from the Custom
+// Account list rather than detecting. Every other origin names where the
 // credential was found: a file's path, or an environment variable's name. Both
 // are the user's own words for it, so they are shown as they come.
-var SETTINGS_ORIGIN = "settings";
+var CUSTOM_ORIGIN = "custom";
 
 // What a Script is asked for when the settings page wants its Account list and
 // the origins behind it, without any usage fetch. Detection is the Script's
@@ -102,40 +102,59 @@ function accountArgs(descriptor, list) {
     return out;
 }
 
-// The Accounts a Source's Script reports from outside the settings list, in the
-// order the Script reported them, each with the place it was detected. These are
-// the Accounts the Popout's selector offers and the settings editor cannot edit.
+// The Accounts a Source's Script reports from outside the Custom Account list,
+// in the order the Script reported them, each with the place it was detected.
+// These are the Accounts the Popout's selector offers and the settings editor
+// cannot edit.
 //
 // `names` is the Script's Account list (the descriptor's listKey) and `origins`
 // its "name:origin" pairs (its originsKey), both comma-separated as the wire has
-// them. An Account the settings list provided is reported with the
-// SETTINGS_ORIGIN tag and dropped: it is the editor's own row already, under
+// them. An Account the Custom Account list provided is reported with the
+// CUSTOM_ORIGIN tag and dropped: it is the editor's own row already, under
 // whichever name it won.
 //
 // An Account the Script lists without an origin is still reported, with an empty
-// origin. It is detected - the settings list did not provide it - and dropping
-// it would put the selector and the editor back where they started, which is
-// worse than admitting the Script did not say where it found it.
+// origin. It is detected - the Custom Account list did not provide it - and
+// dropping it would put the selector and the editor back where they started,
+// which is worse than admitting the Script did not say where it found it.
 function detectedAccounts(names, origins) {
     var listed = splitList(names);
-    var pairs = splitList(origins);
-    var byName = {};
-    for (var i = 0; i < pairs.length; i++) {
-        var at = pairs[i].indexOf(":");
-        // The name never carries a colon (the Scripts strip them), so the first
-        // one ends it. An origin is a path or a variable name and may carry one.
-        if (at < 0)
-            continue;
-        byName[pairs[i].substring(0, at)] = pairs[i].substring(at + 1);
-    }
+    var byName = originsByName(origins);
 
     var out = [];
-    for (var j = 0; j < listed.length; j++) {
-        var name = listed[j];
+    for (var i = 0; i < listed.length; i++) {
+        var name = listed[i];
         var known = Object.prototype.hasOwnProperty.call(byName, name);
-        if (known && byName[name] === SETTINGS_ORIGIN)
+        if (known && byName[name] === CUSTOM_ORIGIN)
             continue;
         out.push({ name: name, origin: known ? byName[name] : "" });
+    }
+    return out;
+}
+
+// The names of the Custom Accounts a Script did not register, so the Popout's
+// selector cannot offer them. The Script keeps the first registration of a name
+// or of a value: a Custom Account that duplicates one the Script found itself
+// never reaches the selector, while the settings editor still shows its row,
+// editable and inert. Only the Script can say which rows those are, which is
+// why its listing reports where every Account came from.
+//
+// `list` is the Custom Account list from the plugin settings, the form the
+// editor holds it in.
+function unregisteredAccounts(names, origins, list) {
+    var listed = splitList(names);
+    var byName = originsByName(origins);
+    var out = [];
+    for (var i = 0; Array.isArray(list) && i < list.length; i++) {
+        var row = list[i];
+        if (!row || !row.name)
+            continue;
+        // A name the Script registered as a Custom Account is the one the
+        // selector offers. Anything else was dropped, whether by a name or by a
+        // value another Account already held.
+        var kept = listed.indexOf(row.name) >= 0 && byName[row.name] === CUSTOM_ORIGIN;
+        if (!kept)
+            out.push(row.name);
     }
     return out;
 }
@@ -146,6 +165,34 @@ function splitList(value) {
     if (typeof value !== "string" || value.length === 0)
         return [];
     return value.split(",");
+}
+
+// One comma-separated origin list as a name -> origin map. A pair with no colon
+// names no origin, so it is skipped rather than guessed at.
+function originsByName(origins) {
+    var pairs = splitList(origins);
+    var out = {};
+    for (var i = 0; i < pairs.length; i++) {
+        var at = pairs[i].indexOf(":");
+        // The name never carries a colon (the Scripts strip them), so the first
+        // one ends it. An origin is a path or a variable name and may carry one.
+        if (at < 0)
+            continue;
+        out[pairs[i].substring(0, at)] = pairs[i].substring(at + 1);
+    }
+    return out;
+}
+
+// One line of a Script's output split into its key and its value, or null when
+// the line carries no "=". Both the widget's fetch parser and the settings
+// editor's listing parser read the same wire, so they split it the same way.
+function wirePair(line) {
+    if (!line)
+        return null;
+    var at = line.indexOf("=");
+    if (at < 0)
+        return null;
+    return { key: line.substring(0, at), value: line.substring(at + 1) };
 }
 
 var SOURCES = [
