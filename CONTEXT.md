@@ -21,6 +21,13 @@ The Claude UI's word for an Account, because Claude's Accounts are config
 directories rather than credentials. Use it only in Claude-facing copy.
 _Avoid_: using it as the general term; that is Account.
 
+**Script**:
+One Source's own program: the file the plugin runs to find that Source's Accounts,
+report them under their Origins and fetch their usage. The widget and the settings
+page ask the same Script the same questions, so the two cannot disagree about what
+exists.
+_Avoid_: helper, executable, plugin binary
+
 **Detected Account**:
 An Account a Source's Script finds for itself rather than being handed one: a
 credential or config directory the machine already had, in the Source's own

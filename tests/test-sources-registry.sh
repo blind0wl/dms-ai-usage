@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, CUSTOM_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -329,7 +329,7 @@ check(keptBy(null, null, "mine") === "null" && keptBy("default:CODEX_HOME", "def
 // The Custom Accounts the Script did not register. Its listing is the only
 // source of that fact: the settings list cannot tell whether the Script kept a
 // row, and the Popout's selector offers only what the Script kept.
-const dropped = (names, origins, list) => JSON.stringify(reg.unregisteredRows(names, origins, list));
+const dropped = (names, origins, list, answered) => JSON.stringify(reg.unregisteredRows(names, origins, list, answered === undefined ? true : answered));
 const rows = (...names) => names.map((name) => ({ name: name, key: "k-" + name }));
 check(dropped("default", "default:CODEX_HOME", rows("default")) === JSON.stringify([0]),
       "unregisteredRows reports the row the Script registered under a detected origin");
@@ -341,8 +341,12 @@ check(dropped("kept", "kept:custom", rows("kept", "ghost")) === JSON.stringify([
       "unregisteredRows reports a row the Script did not list at all");
 check(dropped("work", "work:custom", rows("other", "work")) === JSON.stringify([0]),
       "unregisteredRows reports the row that is not in use, whenever it sits in the list");
-check(dropped("", "", rows("work")) === "[]",
-      "unregisteredRows withholds a verdict when the Script reported no Account at all, as while a listing is in flight");
+// An answered listing that named no Account is a verdict: the Script ran and
+// registered nothing, so every Custom row is one it did not register.
+check(dropped("", "", rows("work")) === JSON.stringify([0]),
+      "unregisteredRows reports every Custom row when the Script answered with no Account");
+check(dropped("", "", rows("work", "other"), false) === "[]",
+      "unregisteredRows withholds a verdict until the Script has answered at all");
 check(dropped("work", "work:custom", []) === "[]", "unregisteredRows reports nothing for an empty settings list");
 check(dropped("work", "work:custom", null) === "[]", "unregisteredRows reports nothing for a missing settings list");
 check(dropped("work", "work:custom", [{ key: "k1" }]) === "[]",
@@ -353,6 +357,17 @@ check(dropped("work", "work:custom", rows("work", "work")) === JSON.stringify([1
       "unregisteredRows marks the second of two rows sharing a name");
 check(dropped("work", "work:custom", rows("work", "work", "other")) === JSON.stringify([1, 2]),
       "unregisteredRows keeps the row order the editor renders");
+
+// One refused registration as its three fields, the shape the Scripts report.
+const refusal = (entry) => JSON.stringify(reg.refusedRegistration(entry));
+check(refusal("work|default:~/.pi/agent/models.json") === JSON.stringify({ winner: "work", name: "default", origin: "~/.pi/agent/models.json" }),
+      "refusedRegistration splits what kept a registration from what lost it and where it came from");
+check(refusal("default|mine:custom") === JSON.stringify({ winner: "default", name: "mine", origin: "custom" }),
+      "refusedRegistration reads a refused Custom registration the same way");
+check(refusal("default:~/.pi/agent/models.json") === JSON.stringify({ winner: "", name: "default", origin: "~/.pi/agent/models.json" }),
+      "refusedRegistration reads an entry that names no winner");
+check(refusal("nocolon") === "null" && refusal("") === "null",
+      "refusedRegistration reports nothing for an entry that names no Account");
 
 // The wire-line split, shared by the widget's fetch parser and the settings
 // editor's listing parser so the two read one wire the same way.
@@ -453,6 +468,8 @@ check(editor.includes("Sources.displacedOrigin(") && editor.includes("Sources.sh
       "the settings editor names what each Custom row took the place of, and what took its own");
 check(/!root\.settingsRoot\.pluginService/.test(editor),
       "the settings editor does not ask the Script for a listing before the store it reads is available");
+check(/listingAnswered/.test(editor),
+      "the settings editor hands out a verdict only once the Script has answered with its Account list");
 
 // One wire, one splitter: the widget's fetch parser and the settings editor's
 // listing parser take their key and value from wirePair, and read a

@@ -34,6 +34,11 @@ Column {
     property string listedAccounts: ""
     property string listedOrigins: ""
     property string listedShadowed: ""
+    // Set once the Script has answered with its Account list, so a Source whose
+    // Script registered nothing - a CLI that is not installed, a config directory
+    // that does not exist - still marks the rows it registered nothing for. A
+    // listing that failed or has not arrived leaves the previous answer standing.
+    property bool listingAnswered: false
     // Set when the Script that answers the listing fails, so a listing that never
     // arrived is not shown as a Source with nothing detected.
     property bool listFailed: false
@@ -48,7 +53,7 @@ Column {
     // and their row here does nothing. The listing is the only thing that can say
     // which rows those are, so it says nothing until it has answered with an
     // Account: an uninstalled Source leaves every row unmarked.
-    readonly property var unregistered: Sources.unregisteredRows(root.listedAccounts, root.listedOrigins, root.items)
+    readonly property var unregistered: Sources.unregisteredRows(root.listedAccounts, root.listedOrigins, root.items, root.listingAnswered)
 
     readonly property var acct: descriptor ? descriptor.accounts : null
     readonly property string settingKey: acct ? acct.settingKey : ""
@@ -153,19 +158,20 @@ Column {
     // A row the Script did not register is either shadowed by a detected Account -
     // which the Script names, because a clash of values puts a row of another name
     // in its place - or refused for something the Script cannot name, such as a
-    // config directory that does not exist.
+    // config directory that does not exist. The copy speaks of the Source, which
+    // is the user's word for what stops working, not of the Script that runs it.
     function customRowStatus(index, name) {
         if (root.unregistered.indexOf(index) < 0) {
             var replaced = Sources.displacedOrigin(root.detected, name);
             return replaced
-                ? root.settingsRoot.tr("replacing what the Script detected") + " (" + replaced + ")"
+                ? root.settingsRoot.tr("replacing what was detected on this machine") + " (" + replaced + ")"
                 : "";
         }
         var shadowing = Sources.shadowingAccount(root.listedOrigins, root.listedShadowed, name);
         if (shadowing)
-            return root.settingsRoot.tr("not in use - the Script kept") + " \"" + shadowing.name + "\" ("
+            return root.settingsRoot.tr("not in use - this Source is using") + " \"" + shadowing.name + "\" ("
                 + root.settingsRoot.tr("Detected from") + " " + shadowing.origin + ")";
-        return root.settingsRoot.tr("not in use - the Script did not register it. Check its name and value.");
+        return root.settingsRoot.tr("not in use - this Source does not use it. Check its name and value.");
     }
 
     // --- Asking the Script ---
@@ -198,8 +204,10 @@ Column {
         var pair = Sources.wirePair(line);
         if (!pair)
             return;
-        if (pair.key === root.acct.listKey)
+        if (pair.key === root.acct.listKey) {
             root.listedAccounts = pair.value;
+            root.listingAnswered = true;
+        }
         else if (pair.key === root.acct.originsKey)
             root.listedOrigins = pair.value;
         else if (pair.key === root.acct.shadowedKey)
@@ -535,7 +543,7 @@ Column {
         // no Account word of its own, because Claude's page calls them Profiles.
         StyledText {
             width: parent.width
-            text: root.settingsRoot.tr("Could not ask the Script what it detects.")
+            text: root.settingsRoot.tr("Could not read what this Source detects.")
             font.pixelSize: Theme.fontSizeSmall
             color: Theme.surfaceVariantText
             wrapMode: Text.WordWrap

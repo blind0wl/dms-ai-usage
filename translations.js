@@ -206,25 +206,25 @@ var strings = {
         { fr: "remplacé par votre compte personnalisé", es: "reemplazado por tu cuenta personalizada" },
     "overridden by your Custom Profile":
         { fr: "remplacé par votre profil personnalisé", es: "reemplazado por tu perfil personalizado" },
-    "not in use - the Script did not register it. Check its name and value.":
+    "not in use - this Source does not use it. Check its name and value.":
         {
-            fr: "non utilisé - le script ne l'a pas enregistré. Vérifiez son nom et sa valeur.",
-            es: "sin usar - el script no lo ha registrado. Comprueba su nombre y su valor."
+            fr: "non utilisé - cette source ne l'utilise pas. Vérifiez son nom et sa valeur.",
+            es: "sin usar - esta fuente no lo utiliza. Comprueba su nombre y su valor."
         },
-    "not in use - the Script kept":
+    "not in use - this Source is using":
         {
-            fr: "non utilisé - le script a gardé",
-            es: "sin usar - el script ha conservado"
+            fr: "non utilisé - cette source utilise",
+            es: "sin usar - esta fuente está usando"
         },
-    "replacing what the Script detected":
+    "replacing what was detected on this machine":
         {
-            fr: "remplace ce que le script a détecté",
-            es: "reemplaza lo que el script ha detectado"
+            fr: "remplace ce qui a été détecté sur cette machine",
+            es: "reemplaza lo que se ha detectado en este equipo"
         },
-    "Could not ask the Script what it detects.":
+    "Could not read what this Source detects.":
         {
-            fr: "Impossible de demander au script ce qu'il détecte.",
-            es: "No se ha podido preguntar al script qué detecta."
+            fr: "Impossible de lire ce que cette source détecte.",
+            es: "No se ha podido leer lo que detecta esta fuente."
         },
     // Login action
     "Not logged in":

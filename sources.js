@@ -143,25 +143,32 @@ function detectedAccounts(names, origins, shadowed) {
 
     var pairs = splitList(shadowed);
     for (var j = 0; j < pairs.length; j++) {
-        var entry = pairs[j];
-        var bar = entry.indexOf("|");
-        var winner = bar < 0 ? "" : entry.substring(0, bar);
-        var lost = bar < 0 ? entry : entry.substring(bar + 1);
-        var at = lost.indexOf(":");
-        if (at < 0)
+        var refused = refusedRegistration(pairs[j]);
+        if (!refused)
             continue;
-        var lostName = lost.substring(0, at);
-        var lostOrigin = lost.substring(at + 1);
         // A Custom Account the Script refused is the editor's own row's business,
         // and a detected Account still registered under that name was not lost.
-        if (lostOrigin === CUSTOM_ORIGIN)
+        if (refused.origin === CUSTOM_ORIGIN)
             continue;
-        var live = Object.prototype.hasOwnProperty.call(byName, lostName);
-        if (live && byName[lostName] !== CUSTOM_ORIGIN)
+        var live = Object.prototype.hasOwnProperty.call(byName, refused.name);
+        if (live && byName[refused.name] !== CUSTOM_ORIGIN)
             continue;
-        out.push({ name: lostName, origin: lostOrigin, overridden: true, winner: winner });
+        out.push({ name: refused.name, origin: refused.origin, overridden: true, winner: refused.winner });
     }
     return out;
+}
+
+// One refused registration, "<winner>|<name>:<origin>", as its three fields, or
+// null when the entry names no Account. The winner is empty for an entry that
+// predates it, which leaves the row marked with no name to blame.
+function refusedRegistration(entry) {
+    var bar = entry.indexOf("|");
+    var winner = bar < 0 ? "" : entry.substring(0, bar);
+    var lost = bar < 0 ? entry : entry.substring(bar + 1);
+    var at = lost.indexOf(":");
+    if (at < 0)
+        return null;
+    return { winner: winner, name: lost.substring(0, at), origin: lost.substring(at + 1) };
 }
 
 // The origin of the detected Account a Custom Account row displaced, or "" when
@@ -185,21 +192,16 @@ function shadowingAccount(origins, shadowed, name) {
     var byName = originsByName(origins);
     var pairs = splitList(shadowed);
     for (var i = 0; i < pairs.length; i++) {
-        var bar = pairs[i].indexOf("|");
-        if (bar < 0)
-            continue;
-        var winner = pairs[i].substring(0, bar);
-        var lost = pairs[i].substring(bar + 1);
-        var at = lost.indexOf(":");
-        if (at < 0)
+        var refused = refusedRegistration(pairs[i]);
+        if (!refused)
             continue;
         // Only the registration the Custom row itself asked for is its business.
-        if (lost.substring(0, at) !== name || lost.substring(at + 1) !== CUSTOM_ORIGIN)
+        if (refused.name !== name || refused.origin !== CUSTOM_ORIGIN)
             continue;
-        var origin = Object.prototype.hasOwnProperty.call(byName, winner) ? byName[winner] : "";
+        var origin = Object.prototype.hasOwnProperty.call(byName, refused.winner) ? byName[refused.winner] : "";
         if (origin === "" || origin === CUSTOM_ORIGIN)
             return null;
-        return { name: winner, origin: origin };
+        return { name: refused.winner, origin: origin };
     }
     return null;
 }
@@ -213,17 +215,18 @@ function shadowingAccount(origins, shadowed, name) {
 // where every Account came from.
 //
 // `list` is the Custom Account list from the plugin settings, the form the
-// editor holds it in.
+// editor holds it in, and `answered` says whether the Script has answered with
+// its Account list at all.
 //
-// A Script that reports no Account at all resolves no clash, so it is given no
-// verdict to hand out: that is an uninstalled Source, a listing still in flight,
-// or a Script that failed. Blaming the user's rows for a Source that never
-// registered an Account would be the same lie as calling a failed listing an
-// empty one.
-function unregisteredRows(names, origins, list) {
-    var listed = splitList(names);
-    if (listed.length === 0)
+// Without an answer there is nothing to hand out a verdict on: that is a listing
+// still in flight, or one that failed, and blaming the user's rows for a Script
+// that never ran would be the same lie as calling a failed listing an empty one.
+// An answer that names no Account is different: the Script ran and registered
+// nothing, which is exactly when a row the user added does nothing.
+function unregisteredRows(names, origins, list, answered) {
+    if (!answered)
         return [];
+    var listed = splitList(names);
     var byName = originsByName(origins);
     var seen = {};
     var out = [];

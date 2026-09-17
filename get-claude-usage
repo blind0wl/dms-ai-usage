@@ -526,9 +526,13 @@ add_profile() {
 # already use, so the settings page parses one shape.
 profile_origins() {
     local out="" idx
-    for idx in "${!PROFILE_NAMES[@]}"; do
-        out="${out:+${out},}${PROFILE_NAMES[$idx]}:${PROFILE_ORIGINS[$idx]}"
-    done
+    # An empty list has nothing to join, and the guard keeps the expansion valid
+    # on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#PROFILE_NAMES[@]}" -gt 0 ]; then
+        for idx in "${!PROFILE_NAMES[@]}"; do
+            out="${out:+${out},}${PROFILE_NAMES[$idx]}:${PROFILE_ORIGINS[$idx]}"
+        done
+    fi
     printf '%s' "$out"
 }
 
@@ -540,9 +544,13 @@ profile_origins() {
 # the two names differ, as they do when the directory is what clashed.
 profile_shadowed() {
     local out="" idx
-    for idx in "${!PROFILE_SHADOWED[@]}"; do
-        out="${out:+${out},}${PROFILE_SHADOWED[$idx]}"
-    done
+    # An empty list has nothing to join, and the guard keeps the expansion valid
+    # on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#PROFILE_SHADOWED[@]}" -gt 0 ]; then
+        for idx in "${!PROFILE_SHADOWED[@]}"; do
+            out="${out:+${out},}${PROFILE_SHADOWED[$idx]}"
+        done
+    fi
     printf '%s' "$out"
 }
 

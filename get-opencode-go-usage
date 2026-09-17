@@ -81,9 +81,13 @@ add_account() {
 # already use, so the settings page parses one shape.
 account_origins() {
     local out="" idx
-    for idx in "${!ACCOUNT_NAMES[@]}"; do
-        out="${out:+${out},}${ACCOUNT_NAMES[$idx]}:${ACCOUNT_ORIGINS[$idx]}"
-    done
+    # An empty list has nothing to join, and the guard keeps the expansion valid
+    # on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#ACCOUNT_NAMES[@]}" -gt 0 ]; then
+        for idx in "${!ACCOUNT_NAMES[@]}"; do
+            out="${out:+${out},}${ACCOUNT_NAMES[$idx]}:${ACCOUNT_ORIGINS[$idx]}"
+        done
+    fi
     printf '%s' "$out"
 }
 
@@ -95,9 +99,13 @@ account_origins() {
 # two names differ, as they do when the value is what clashed.
 account_shadowed() {
     local out="" idx
-    for idx in "${!ACCOUNT_SHADOWED[@]}"; do
-        out="${out:+${out},}${ACCOUNT_SHADOWED[$idx]}"
-    done
+    # An empty list has nothing to join, and the guard keeps the expansion valid
+    # on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#ACCOUNT_SHADOWED[@]}" -gt 0 ]; then
+        for idx in "${!ACCOUNT_SHADOWED[@]}"; do
+            out="${out:+${out},}${ACCOUNT_SHADOWED[$idx]}"
+        done
+    fi
     printf '%s' "$out"
 }
 
