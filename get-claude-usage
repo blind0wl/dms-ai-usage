@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# The Account origins this script reports are display text: the path, directory
+# or environment variable a credential was found at, in the form the plugin's
+# own descriptions already use. A tilde in one is meant literally, not as a
+# shell expansion to perform.
+# shellcheck disable=SC2088
 set -eu
 
 # Cheapest possible check, before any temp dirs, network calls, or profile
@@ -463,11 +468,16 @@ fetch_profile_usage() {
 PROFILE_DIRS=()
 PROFILE_NAMES=()
 PROFILE_CREDS=()  # credentials file per profile
+PROFILE_ORIGINS=()
 
-# add_profile <name> <claude_config_dir>
-# First registration of a name wins.
+# add_profile <name> <claude_config_dir> <origin>
+# First registration of a name wins. The origin is where the directory came
+# from, as the user would look for it: a file path, or "settings" for an entry
+# from the plugin settings. It is a path, so it carries no "|" and no ","
+# either - they are list delimiters and add_profile does not strip them from an
+# origin.
 add_profile() {
-    local name="$1" dir="$2"
+    local name="$1" dir="$2" origin="${3:-}"
 
     # , | : are output delimiters, they cannot survive in a profile name
     name="${name//[,|:]/}"
@@ -493,16 +503,27 @@ add_profile() {
     PROFILE_DIRS+=("${dir}/projects")
     PROFILE_NAMES+=("$name")
     PROFILE_CREDS+=("${dir}/.credentials.json")
+    PROFILE_ORIGINS+=("$origin")
 }
 
-add_profile "default" "$CLAUDE_DIR"
+# profile_origins -> "name:origin,name:origin". The form the per-Profile lists
+# already use, so the settings page parses one shape.
+profile_origins() {
+    local out="" idx
+    for idx in "${!PROFILE_NAMES[@]}"; do
+        out="${out:+${out},}${PROFILE_NAMES[$idx]}:${PROFILE_ORIGINS[$idx]}"
+    done
+    printf '%s' "$out"
+}
+
+add_profile "default" "$CLAUDE_DIR" "~/.claude"
 
 CCS_INSTANCES_DIR="${HOME}/.ccs/instances"
 if [ -d "$CCS_INSTANCES_DIR" ]; then
     for inst in "$CCS_INSTANCES_DIR"/*/; do
         [ -d "$inst" ] || continue
         inst="${inst%/}"
-        add_profile "${inst##*/}" "$inst"
+        add_profile "${inst##*/}" "$inst" "~/.ccs/instances"
     done
 fi
 
@@ -520,16 +541,30 @@ if [ -d "$CCP_PROFILES_DIR" ]; then
         done < "$env_file"
         [ -n "$ccp_dir" ] || continue
         name="${env_file##*/}"
-        add_profile "${name%.env}" "$ccp_dir"
+        add_profile "${name%.env}" "$ccp_dir" "~/.ccp/profiles"
     done
 fi
+
+LIST_ACCOUNTS=0
 
 # Manual entries from plugin settings: "name=/path/to/config/dir"
 for arg in "$@"; do
     case "$arg" in
-        *=*) add_profile "${arg%%=*}" "${arg#*=}" ;;
+        "--list-accounts") LIST_ACCOUNTS=1 ;;
+        *=*) add_profile "${arg%%=*}" "${arg#*=}" "settings" ;;
     esac
 done
+
+# The settings page's Profile editor asks for the list on its own, with the same
+# name=value arguments the widget fetches with so that the two agree about which
+# Profile a name refers to. This returns before the first request: opening the
+# settings page must not spend an API call, and before the token counting, which
+# reads and prices every transcript since the first of the month.
+if [ "$LIST_ACCOUNTS" -eq 1 ]; then
+    printf 'PROFILES=%s\n' "$(IFS=,; echo "${PROFILE_NAMES[*]}")"
+    printf 'PROFILE_ORIGINS=%s\n' "$(profile_origins)"
+    exit 0
+fi
 
 # --- Run token counting + usage fetch in parallel for each profile ---
 TMPFILES=()      # token stats tmpfile per profile

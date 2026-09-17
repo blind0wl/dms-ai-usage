@@ -313,6 +313,42 @@ assert_eq "$(val "$OUT8" ACCOUNT_SECONDARY_UTIL)" "default:6" "an unavailable Ac
 assert_eq "$(val "$OUT8" ACCOUNT_PRIMARY_RESET)" "default:2026-09-16T15:31:05.155Z" "an unavailable Account is omitted from ACCOUNT_PRIMARY_RESET"
 assert_eq "$(val "$OUT8" ACCOUNT_SECONDARY_RESET)" "default:2026-09-21T00:00:00.155Z" "an unavailable Account is omitted from ACCOUNT_SECONDARY_RESET"
 
+# ============================================================
+echo "=== Test 9: Listing mode reports every Account and where it came from ==="
+# ============================================================
+# The settings page asks the same Script the Popout asks, so the Accounts it
+# lists can never disagree with the selector. --list-accounts returns the list
+# and its origins without fetching anything, so opening the settings page
+# costs no request.
+H9=$(new_home home9)
+write_pi_key "$H9" k1
+LIST9=$(run_script "$H9" --list-accounts)
+assert_eq "$(val "$LIST9" ACCOUNTS)" "default" "listing mode lists the detected Account"
+assert_eq "$(val "$LIST9" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "listing mode names the pi auth store as the origin"
+assert_eq "$(echo "$LIST9" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
+
+H10=$(new_home home10)
+write_opencode_key "$H10" k1
+LIST10=$(run_script "$H10" --list-accounts)
+assert_eq "$(val "$LIST10" ACCOUNT_ORIGINS)" "default:~/.local/share/opencode/auth.json" "listing mode names opencode's own credentials file as the origin"
+
+H11=$(new_home home11)
+LIST11=$(OPENCODE_GO_KEY_OVERRIDE=k1 run_script "$H11" --list-accounts)
+assert_eq "$(val "$LIST11" ACCOUNT_ORIGINS)" "default:OPENCODE_GO_KEY" "the environment variable is named as the origin"
+
+H12=$(new_home home12)
+write_pi_key "$H12" k1
+LIST12=$(run_script "$H12" --list-accounts "work=k2")
+assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json,work:settings" "listing mode reports settings and detected origins side by side"
+
+# Detection runs before argv here, so a settings Account whose name a detected
+# one already holds is dropped. The origin says which of the two survives.
+H13=$(new_home home13)
+write_pi_key "$H13" k1
+LIST13=$(run_script "$H13" --list-accounts "default=k2")
+assert_eq "$(val "$LIST13" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "a detected name that wins against a settings one keeps its origin"
+
+# ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -368,27 +368,19 @@ PluginComponent {
     // --- Fetching ---
 
     function scriptPathFor(id) {
-        var d = Sources.byId(id);
-        return PluginService.pluginDirectory + "/" + root.pluginId + "/" + d.script;
+        return Sources.scriptPath(PluginService.pluginDirectory, root.pluginId, Sources.byId(id));
     }
 
     function settingList(key) {
         return root.accountSettings[key] || [];
     }
 
+    // The Account arguments the fetch runs with, built by the registry so the
+    // settings editor's listing call builds them the same way: the Script keeps
+    // the first registration of a name, so the two calls have to agree.
     function accountArgs(id) {
         var d = Sources.byId(id);
-        if (!d.accounts)
-            return [];
-        var field = d.accounts.argField;
-        var list = root.settingList(d.accounts.settingKey);
-        var out = [];
-        for (var i = 0; i < list.length; i++) {
-            var a = list[i];
-            if (a && a.name && a[field])
-                out.push(a.name + "=" + a[field]);
-        }
-        return out;
+        return Sources.accountArgs(d, d && d.accounts ? root.settingList(d.accounts.settingKey) : []);
     }
 
     function commandFor(id) {

@@ -185,6 +185,17 @@ var strings = {
         { fr: "Supprimer", es: "Eliminar" },
     "No items added yet":
         { fr: "Aucun élément ajouté pour le moment", es: "Todavía no se ha añadido ningún elemento" },
+    "Detected accounts":
+        { fr: "Comptes détectés", es: "Cuentas detectadas" },
+    "Detected outside the plugin. Add or remove them where they come from, not here.":
+        {
+            fr: "Détectés en dehors du plugin. Ajoutez-les ou supprimez-les à leur source, pas ici.",
+            es: "Detectadas fuera del plugin. Añádelas o elimínalas en su origen, no aquí."
+        },
+    "Detected from":
+        { fr: "Détecté depuis", es: "Detectado desde" },
+    "Detected automatically":
+        { fr: "Détecté automatiquement", es: "Detectado automáticamente" },
     // Login action
     "Not logged in":
         { fr: "Non connecté", es: "No has iniciado sesión" },

@@ -407,6 +407,32 @@ assert_eq "$(echo "$OUTPUT15" | grep "^ACCOUNT_PRIMARY_UTIL=" | cut -d= -f2)" "d
 assert_eq "$(echo "$OUTPUT15" | grep "^ACCOUNT_SECONDARY_UTIL=" | cut -d= -f2)" "default:15,work:0" "the rejected Account's own secondary Window is reported, not masked by the healthy Account's"
 
 # ============================================================
+echo "=== Test 16: Listing mode reports every Account and where it came from ==="
+# ============================================================
+# The settings page asks the same Script the Popout asks, so the Accounts it
+# lists can never disagree with the selector. --list-accounts returns the list
+# and its origins without fetching anything, so opening the settings page
+# costs no request.
+ENV16=$(setup_env "test16")
+write_auth "$ENV16/.codex" 9999999999 "$(date -Iseconds)"
+
+# run_script sets CODEX_HOME, so that variable is what placed the directory.
+LIST16=$(run_script "$ENV16" --list-accounts)
+assert_eq "$(echo "$LIST16" | grep "^ACCOUNTS=" | cut -d= -f2)" "default" "listing mode lists the detected Account"
+assert_eq "$(echo "$LIST16" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME" "listing mode names CODEX_HOME as the origin when it decided the directory"
+assert_eq "$(echo "$LIST16" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
+
+LIST16B=$(HOME="$ENV16" CODEX_HOME='' PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" --list-accounts 2>/dev/null)
+assert_eq "$(echo "$LIST16B" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:~/.codex" "listing mode names the conventional path when no CODEX_HOME is set"
+
+# A settings Account is reported as coming from settings. It cannot take the
+# name "default", which the Codex home already holds, so both are reported and
+# the origin says which one the selector shows.
+LIST16C=$(run_script "$ENV16" --list-accounts "work=$ENV16/work")
+assert_eq "$(echo "$LIST16C" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work" "listing mode lists settings Accounts beside detected ones"
+assert_eq "$(echo "$LIST16C" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:CODEX_HOME,work:settings" "listing mode reports settings and detected origins side by side"
+
+# ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

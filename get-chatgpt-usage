@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# The Account origins this script reports are display text: the path, directory
+# or environment variable a credential was found at, in the form the plugin's
+# own descriptions already use. A tilde in one is meant literally, not as a
+# shell expansion to perform.
+# shellcheck disable=SC2088
 set -eu
 
 # Cheapest possible check, before any temp dirs, network calls, or account
@@ -312,11 +317,16 @@ fetch_account_usage() {
 # --- Collect account list ---
 ACCOUNT_NAMES=()
 ACCOUNT_DIRS=()  # codex home dir per account
+ACCOUNT_ORIGINS=()
 
-# add_account <name> <codex_home_dir>
-# First registration of a name wins.
+# add_account <name> <codex_home_dir> <origin>
+# First registration of a name wins. The origin is where the directory came
+# from, as the user would look for it: a file path, the name of an environment
+# variable, or "settings" for an entry from the plugin settings. It is a path or
+# a variable name, so it carries no "|" and no "," either - they are list
+# delimiters and add_account does not strip them from an origin.
 add_account() {
-    local name="$1" dir="$2"
+    local name="$1" dir="$2" origin="${3:-}"
 
     # , | : are output delimiters, they cannot survive in an account name
     name="${name//[,|:]/}"
@@ -339,17 +349,47 @@ add_account() {
 
     ACCOUNT_NAMES+=("$name")
     ACCOUNT_DIRS+=("$dir")
+    ACCOUNT_ORIGINS+=("$origin")
 }
 
-add_account "default" "${CODEX_HOME:-${HOME}/.codex}"
+# account_origins -> "name:origin,name:origin". The form the per-Account lists
+# already use, so the settings page parses one shape.
+account_origins() {
+    local out="" idx
+    for idx in "${!ACCOUNT_NAMES[@]}"; do
+        out="${out:+${out},}${ACCOUNT_NAMES[$idx]}:${ACCOUNT_ORIGINS[$idx]}"
+    done
+    printf '%s' "$out"
+}
+
+# The origin names the environment variable when it decided the directory, and
+# the conventional path otherwise.
+if [ -n "${CODEX_HOME:-}" ]; then
+    add_account "default" "$CODEX_HOME" "CODEX_HOME"
+else
+    add_account "default" "${HOME}/.codex" "~/.codex"
+fi
+
+LIST_ACCOUNTS=0
 
 # Manual entries from plugin settings: "name=/path/to/codex/home", same
 # convention as get-claude-usage's manual profile entries.
 for arg in "$@"; do
     case "$arg" in
-        *=*) add_account "${arg%%=*}" "${arg#*=}" ;;
+        "--list-accounts") LIST_ACCOUNTS=1 ;;
+        *=*) add_account "${arg%%=*}" "${arg#*=}" "settings" ;;
     esac
 done
+
+# The settings page's Account editor asks for the list on its own, with the same
+# name=value arguments the widget fetches with so that the two agree about which
+# Account a name refers to. This returns before the first request: opening the
+# settings page must not spend an API call.
+if [ "$LIST_ACCOUNTS" -eq 1 ]; then
+    printf 'ACCOUNTS=%s\n' "$(IFS=,; echo "${ACCOUNT_NAMES[*]}")"
+    printf 'ACCOUNT_ORIGINS=%s\n' "$(account_origins)"
+    exit 0
+fi
 
 # --- Fetch usage per account in parallel ---
 TMPDIR_ROOT=$(mktemp -d)

@@ -59,6 +59,95 @@ function pickFields(id, prefix, suffixes) {
     return out;
 }
 
+// The origin tag a Source's Script puts on an Account it took from the plugin
+// settings list rather than detecting it. Every other origin names where the
+// credential was found: a file's path, or an environment variable's name. Both
+// are the user's own words for it, so they are shown as they come.
+var SETTINGS_ORIGIN = "settings";
+
+// What a Script is asked for when the settings page wants its Account list and
+// the origins behind it, without any usage fetch. Detection is the Script's
+// own, so the settings editor asks it rather than re-deriving it: a second
+// implementation could disagree with the selector about what exists.
+var LIST_ACCOUNTS_FLAG = "--list-accounts";
+
+// The path to a Source's Script under the plugin directory DMS installs plugins
+// in. Built here rather than at each call site because the widget's fetch and
+// the settings editor's listing call have to reach the same file.
+function scriptPath(pluginDirectory, pluginId, descriptor) {
+    if (!pluginDirectory || !pluginId || !descriptor || !descriptor.script)
+        return "";
+    return pluginDirectory + "/" + pluginId + "/" + descriptor.script;
+}
+
+// Builds the "name=value" arguments a Source's Script is invoked with, one per
+// Account in the settings list that carries both halves. The descriptor's
+// argField says whether the value is a config directory or an API key.
+//
+// The widget's fetch and the settings editor's listing both build their
+// arguments here, because the Script keeps the first registration of a name or
+// of a value: different arguments could list an Account under a name the
+// selector does not show it under, which is the disagreement this whole path
+// exists to avoid.
+function accountArgs(descriptor, list) {
+    if (!descriptor || !descriptor.accounts || !Array.isArray(list))
+        return [];
+    var field = descriptor.accounts.argField;
+    var out = [];
+    for (var i = 0; i < list.length; i++) {
+        var a = list[i];
+        if (a && a.name && a[field])
+            out.push(a.name + "=" + a[field]);
+    }
+    return out;
+}
+
+// The Accounts a Source's Script reports from outside the settings list, in the
+// order the Script reported them, each with the place it was detected. These are
+// the Accounts the Popout's selector offers and the settings editor cannot edit.
+//
+// `names` is the Script's Account list (the descriptor's listKey) and `origins`
+// its "name:origin" pairs (its originsKey), both comma-separated as the wire has
+// them. An Account the settings list provided is reported with the
+// SETTINGS_ORIGIN tag and dropped: it is the editor's own row already, under
+// whichever name it won.
+//
+// An Account the Script lists without an origin is still reported, with an empty
+// origin. It is detected - the settings list did not provide it - and dropping
+// it would put the selector and the editor back where they started, which is
+// worse than admitting the Script did not say where it found it.
+function detectedAccounts(names, origins) {
+    var listed = splitList(names);
+    var pairs = splitList(origins);
+    var byName = {};
+    for (var i = 0; i < pairs.length; i++) {
+        var at = pairs[i].indexOf(":");
+        // The name never carries a colon (the Scripts strip them), so the first
+        // one ends it. An origin is a path or a variable name and may carry one.
+        if (at < 0)
+            continue;
+        byName[pairs[i].substring(0, at)] = pairs[i].substring(at + 1);
+    }
+
+    var out = [];
+    for (var j = 0; j < listed.length; j++) {
+        var name = listed[j];
+        var known = Object.prototype.hasOwnProperty.call(byName, name);
+        if (known && byName[name] === SETTINGS_ORIGIN)
+            continue;
+        out.push({ name: name, origin: known ? byName[name] : "" });
+    }
+    return out;
+}
+
+// One comma-separated wire list as an array. An absent or empty value is no
+// entries rather than one empty one.
+function splitList(value) {
+    if (typeof value !== "string" || value.length === 0)
+        return [];
+    return value.split(",");
+}
+
 var SOURCES = [
     {
         id: "claude",
@@ -87,6 +176,9 @@ var SOURCES = [
             // Claude lists its Accounts under PROFILES; every other Source uses
             // ACCOUNTS. The widget reads whichever the descriptor names.
             listKey: "PROFILES",
+            // Where each Profile was found, one "name:origin" pair per entry.
+            // The settings editor reads it to show what it does not own.
+            originsKey: "PROFILE_ORIGINS",
             // Claude's per-Account keys keep PROFILE_ because get-claude-usage
             // is upstream's file and those names are its existing output
             // contract. Every other Source declares ACCOUNT_, the general term
@@ -172,6 +264,7 @@ var SOURCES = [
         accounts: {
             settingKey: "customChatgptAccounts",
             listKey: "ACCOUNTS",
+            originsKey: "ACCOUNT_ORIGINS",
             keyPrefix: "ACCOUNT_",
             argField: "path",
             labelKey: "Account",
@@ -251,6 +344,7 @@ var SOURCES = [
             // are passed to the script as name=api-key, like Z.ai.
             settingKey: "customOpencodeAccounts",
             listKey: "ACCOUNTS",
+            originsKey: "ACCOUNT_ORIGINS",
             keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
@@ -312,6 +406,7 @@ var SOURCES = [
             // passed to the script as name=api-key rather than name=path.
             settingKey: "customZaiAccounts",
             listKey: "ACCOUNTS",
+            originsKey: "ACCOUNT_ORIGINS",
             keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",

@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, scriptPath, SETTINGS_ORIGIN, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -130,6 +130,16 @@ for (const d of reg.SOURCES) {
         check(widget.indexOf("pluginData[d.accounts.settingKey]") >= 0, `${tag} account settingKey is resolved generically by the widget`);
         check(["path", "key"].indexOf(d.accounts.argField) >= 0, `${tag} account argField is path or key`);
         check(typeof d.accounts.listKey === "string" && d.accounts.listKey.length > 0, `${tag} account declares the output key that lists its Accounts`);
+        // The settings editor asks the Script's own listing mode which Accounts
+        // it would report and where each came from, so it can show what it does
+        // not own without re-deriving detection. The key that list arrives under
+        // is descriptor data, like the Account list itself.
+        check(typeof d.accounts.originsKey === "string" && d.accounts.originsKey.length > 0,
+              `${tag} account declares the output key its Account origins arrive under`);
+        const script = fs.readFileSync(path.join(root, d.script), "utf8");
+        for (const key of [d.accounts.listKey, d.accounts.originsKey])
+            check(script.includes(`${key}=`), `${tag} script ${d.script} reports ${key}`);
+        check(script.includes(reg.LIST_ACCOUNTS_FLAG), `${tag} script ${d.script} answers the listing mode the settings editor asks for`);
         check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its output fields`);
         // The prefix a Source's per-Account keys wear is descriptor data, so
         // nothing here has to ask which Source it is. Claude declares PROFILE_
@@ -206,6 +216,72 @@ for (const name of ["AccountsSection", "LoginSection", "StatusSection", "Windows
     const sectionSource = fs.readFileSync(path.join(root, `ui/${name}.qml`), "utf8");
     check(/property bool shown:/.test(sectionSource), `${name} declares shown so the renderer can collapse it`);
 }
+
+// --- Detected Accounts ---
+// The settings editor shows the Accounts a Source's Script detects outside the
+// plugin settings: those are the ones the Popout's selector offers and the
+// editor cannot edit. The Script's own listing mode says which they are, so the
+// two surfaces cannot disagree about detection.
+const listed = (names, origins) => JSON.stringify(reg.detectedAccounts(names, origins));
+check(listed("work,default", "work:settings,default:~/.pi/agent/models.json") === JSON.stringify([{ name: "default", origin: "~/.pi/agent/models.json" }]),
+      "detectedAccounts drops the Accounts the settings list provided");
+check(listed("work,default", "work:settings,default:ZAI_API_KEY") === JSON.stringify([{ name: "default", origin: "ZAI_API_KEY" }]),
+      "detectedAccounts carries the origin the Script named");
+check(listed("a,b", "a:~/.claude,b:~/.ccs/instances") === JSON.stringify([{ name: "a", origin: "~/.claude" }, { name: "b", origin: "~/.ccs/instances" }]),
+      "detectedAccounts keeps the Script's own Account order");
+check(listed("default", "default:") === JSON.stringify([{ name: "default", origin: "" }]),
+      "detectedAccounts reports an Account with no origin rather than hiding it");
+check(listed("default", "") === JSON.stringify([{ name: "default", origin: "" }]),
+      "detectedAccounts reports an Account whose Script named no origin at all");
+check(listed("", "") === "[]", "detectedAccounts reports nothing for an empty Account list");
+check(listed("work", "work:settings") === "[]", "detectedAccounts reports nothing when every Account came from the settings list");
+// An origin is a path or a variable name and may itself carry a colon; the name
+// is what the pair is split on, and a name never carries one.
+check(listed("work", "work:~/.ccs/instances:one") === JSON.stringify([{ name: "work", origin: "~/.ccs/instances:one" }]),
+      "detectedAccounts splits a name:origin pair at the first colon");
+// A Script that reports an origin for a name it does not list adds nothing.
+check(listed("", "ghost:~/.claude") === "[]", "detectedAccounts only reports Accounts the Script listed");
+check(listed(null, null) === "[]", "detectedAccounts reports nothing for a missing listing");
+
+// The arguments decide which of two Accounts sharing a name survives the
+// Script's own de-duplication, so the widget's fetch and the settings editor's
+// listing are built by one function rather than two.
+const argsFor = (argField, list) => JSON.stringify(reg.accountArgs({ accounts: { argField: argField } }, list));
+check(argsFor("key", [{ name: "work", key: "k1" }, { name: "default", key: "k2" }]) === JSON.stringify(["work=k1", "default=k2"]),
+      "accountArgs builds one name=value argument per Account");
+check(argsFor("path", [{ name: "work", path: "/tmp/work" }]) === JSON.stringify(["work=/tmp/work"]),
+      "accountArgs reads the value from the field the descriptor names");
+check(argsFor("key", [{ name: "work" }, { key: "k2" }, { name: "", key: "k3" }, { name: "x", key: "" }]) === "[]",
+      "accountArgs skips an Account missing either half");
+check(argsFor("key", []) === "[]", "accountArgs builds no argument for an empty settings list");
+check(argsFor("key", null) === "[]", "accountArgs builds no argument for a missing settings list");
+check(JSON.stringify(reg.accountArgs(null, [{ name: "work", key: "k1" }])) === "[]",
+      "accountArgs builds no argument for a Source with no Accounts");
+
+// The Script path is the same expression for the widget's fetch and the
+// settings editor's listing, so neither can reach a different file.
+check(reg.scriptPath("/plugins", "aiUsage", reg.SOURCES[0]) === `/plugins/aiUsage/${reg.SOURCES[0].script}`,
+      "scriptPath joins the plugin directory, the plugin id and the descriptor's Script");
+check(reg.scriptPath("/plugins", "aiUsage", null) === "" && reg.scriptPath("", "aiUsage", reg.SOURCES[0]) === "",
+      "scriptPath returns nothing when it cannot name a file");
+// Both the widget's fetch and the settings editor's listing reach the Script
+// through one expression, so a change to where plugin files live cannot leave
+// them pointing at different files.
+for (const name of ["AiUsageWidget.qml", "ui/AccountsEditor.qml"]) {
+    const source = fs.readFileSync(path.join(root, name), "utf8");
+    check(source.includes("Sources.scriptPath("), `${name} reaches a Script through scriptPath`);
+    check(!/pluginDirectory\s*\+/.test(source), `${name} does not build a Script path by hand`);
+}
+
+// The settings editor is per-Source code like the widget is, so it reads the
+// Account wiring off the descriptor too: which keys the listing arrives under,
+// and how the Script's arguments are built.
+const editor = fs.readFileSync(path.join(root, "ui/AccountsEditor.qml"), "utf8");
+for (const key of ["listKey", "originsKey"])
+    check(editor.includes(`acct.${key}`), `the settings editor reads the Account ${key} off the descriptor`);
+check(editor.includes("Sources.accountArgs("), "the settings editor builds the Script's Account arguments with the widget's own builder");
+check(editor.includes("Sources.LIST_ACCOUNTS_FLAG"), "the settings editor asks for the listing mode by its declared flag");
+check(!/ACCOUNT_|PROFILE_/.test(editor), "the settings editor hardcodes no Account output key");
 
 // --- The widget holds no per-Source branches ---
 // ADR-0001: a Source is data. The Account setting key, the Account output keys

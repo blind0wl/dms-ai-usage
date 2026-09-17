@@ -783,6 +783,34 @@ CREDS28B=$(echo "$OUTPUT28B" | grep "^CREDS_STATUS=" | cut -d= -f2)
 assert_eq "$CREDS28B" "expired" "Ancient fallback reports CREDS_STATUS=expired, not ok"
 
 # ============================================================
+echo "=== Test 29: Listing mode reports every Profile and where it came from ==="
+# ============================================================
+# The settings page asks the same Script the Popout asks, so the Profiles it
+# lists can never disagree with the selector. --list-accounts returns the list
+# and its origins without fetching anything, so opening the settings page
+# costs no request.
+ENV29=$(setup_env "test29")
+LIST29=$(run_script "$ENV29" --list-accounts)
+assert_eq "$(echo "$LIST29" | grep "^PROFILES=" | cut -d= -f2)" "default" "listing mode lists the detected Profile"
+assert_eq "$(echo "$LIST29" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude" "listing mode names the Claude config directory as the origin"
+assert_eq "$(echo "$LIST29" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
+
+# Each detector names its own directory, so the settings page can say which one
+# found the Profile rather than repeating the descriptor's prose.
+ENV29B=$(setup_env "test29b")
+mkdir -p "$ENV29B/.ccs/instances/work/projects/proj1"
+mkdir -p "$ENV29B/.ccp/profiles"
+mkdir -p "$ENV29B/ccpdata/ranqia/projects/proj1"
+echo "CLAUDE_CONFIG_DIR=$ENV29B/ccpdata/ranqia" > "$ENV29B/.ccp/profiles/ranqia.env"
+LIST29B=$(run_script "$ENV29B" --list-accounts)
+assert_eq "$(echo "$LIST29B" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles" "listing mode names each detector's own directory"
+
+# A settings Profile is reported as coming from settings.
+mkdir -p "$ENV29B/manual/work/projects/proj1"
+LIST29C=$(run_script "$ENV29B" --list-accounts "manual=$ENV29B/manual/work")
+assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles,manual:settings" "a settings Profile reports settings as its origin"
+
+# ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

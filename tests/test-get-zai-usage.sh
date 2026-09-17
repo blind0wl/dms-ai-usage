@@ -296,6 +296,43 @@ assert_eq "$(val "$OUT9" ACCOUNT_CREDS_STATUS)" "work:missing,default:ok" "a rej
 assert_eq "$(val "$OUT9" ACCOUNT_PRIMARY_UTIL)" "work:0,default:34" "the Account whose key was rejected reports its own zero, not the healthy Account's reading"
 
 # ============================================================
+echo "=== Test 11: Listing mode reports every Account and where it came from ==="
+# ============================================================
+# The settings page asks the same Script the Popout asks, so the Accounts it
+# lists can never disagree with the selector. --list-accounts returns the list
+# and its origins without fetching anything, so opening the settings page
+# costs no request.
+H10=$(new_home home10)
+write_pi_key "$H10" k1
+LIST10=$(run_script "$H10" --list-accounts)
+assert_eq "$(val "$LIST10" ACCOUNTS)" "default" "listing mode lists the detected Account"
+assert_eq "$(val "$LIST10" ACCOUNT_ORIGINS)" "default:~/.pi/agent/models.json" "listing mode names the pi config key as the origin"
+assert_eq "$(echo "$LIST10" | wc -l)" "2" "listing mode returns the two list keys and nothing else"
+
+# A settings Account is reported as coming from settings. It keeps its name
+# even where that name shadows a detected Account, because the Script's own
+# name de-duplication decides which of the two the selector shows.
+H11=$(new_home home11)
+write_pi_key "$H11" k4
+LIST11=$(run_script "$H11" --list-accounts "default=k1")
+assert_eq "$(val "$LIST11" ACCOUNTS)" "default" "a settings name wins against a detected one"
+assert_eq "$(val "$LIST11" ACCOUNT_ORIGINS)" "default:settings" "an Account the settings list provided reports settings as its origin"
+
+H12=$(new_home home12)
+write_pi_key "$H12" k4
+LIST12=$(run_script "$H12" --list-accounts "work=k1")
+assert_eq "$(val "$LIST12" ACCOUNT_ORIGINS)" "work:settings,default:~/.pi/agent/models.json" "listing mode reports settings and detected origins side by side"
+
+H13=$(new_home home13)
+LIST13=$(ZAI_API_KEY_OVERRIDE=k1 run_script "$H13" --list-accounts)
+assert_eq "$(val "$LIST13" ACCOUNT_ORIGINS)" "default:ZAI_API_KEY" "the environment variable is named as the origin"
+
+H14=$(new_home home14)
+LIST14=$(run_script "$H14" --list-accounts)
+assert_eq "$(val "$LIST14" ACCOUNTS)" "" "listing mode lists nothing when no key is found anywhere"
+assert_eq "$(val "$LIST14" ACCOUNT_ORIGINS)" "" "listing mode reports no origin when no key is found anywhere"
+
+# ============================================================
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
