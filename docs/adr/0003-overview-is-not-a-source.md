@@ -36,4 +36,4 @@ in a Descriptor. It is a pure function over the resolved states in `sources.js`,
 which keeps it in the cheap JS test harness rather than the QML one.
 
 Two Sources visible is the floor. Below it the tab is absent, so the single-Source
-users inherited from upstream see no change to a Popout they already know.
+users inherited from upstream get no new tab in a Popout they already know.

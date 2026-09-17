@@ -2,15 +2,29 @@
 
 A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) plugin that monitors your Claude, ChatGPT/Codex, Z.ai and opencode Go subscription usage directly from the taskbar. All four are optional and independently toggled. Install this for one, or any combination, and whichever aren't set up stay out of the way.
 
+The Popout leads with an **[Overview](#the-overview)** whenever two or more Sources are visible, ranking them by their tightest rate window, so the budget that will stop you first is the top line. One tab per Source follows it. A single-Source monitor has nothing to rank, so upstream's Claude-only widget cannot have this.
+
 It is a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by Nicolas Bellamy, which tracks Claude Code alone. See [Credits](#credits).
 
-![Screenshot](screenshot.png)
+![The Popout's Overview tab beside a Source tab](screenshot.png)
+
+## The Overview
+
+The Overview is the Popout's first tab. It ranks the Sources you have visible by their **tightest window**, whichever of a Source's rate windows carries the highest utilisation. Which window that is varies by Source and over time.
+
+- **One row per visible Source**, most urgent first, showing the Source's name, its tightest window's utilisation against a bar, which window it is and when it resets
+- **A press on a row** opens that Source's tab
+- **A Source with no reading yet** follows the ranked rows rather than showing a zero it never reported
+- **A Missing Source** shows the same sign-in its own tab offers, button and **Setup guide** link included, so the fix is reachable from here
+- **An Unavailable Source** keeps its last known reading, dimmed and marked stale, because a stale reading is still a reading
+- **Two Sources is the floor.** With one visible there is nothing to compare, so the tab is absent and the Popout is that Source's tab alone. Settings can switch it off as well
+- **The Overview is not a Source.** It has no provider, no credentials and nothing of its own to fetch, so it adds no request to a refresh
 
 ## Features
 
 - **Taskbar pill** with a circular progress ring per enabled Source (Claude, ChatGPT, Z.ai, opencode Go), each showing its nearest-to-reset rate window
 - **Pacing indicator** on every Source, showing whether you're over or under a linear burn rate for each window (e.g. "6% over pace", "25% under pace")
-- **Detailed popout**, one tab per Source:
+- **Popout tabs**, the Overview first and then one tab per visible Source:
   - **Claude**: 5-hour and 7-day rate window utilization with countdown timers and pacing
   - **ChatGPT**: primary and secondary rate windows (lengths reported by the API) with countdown timers and pacing
   - **Z.ai**: 5-hour and weekly rate windows with countdown timers and pacing, plus weekly model-call count
@@ -29,7 +43,7 @@ It is a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by Ni
   - **ChatGPT accounts** — any account you add manually under **Custom ChatGPT Accounts** in the plugin settings
   - **opencode Go accounts** — any account you add manually under **Custom opencode Accounts** in the plugin settings
   - Profile/account overlay on each Source's daily activity chart: grey bars show total usage, colored bars show the selected profile/account's share
-- **Login action** when a Source's credentials are missing or expired — a card in that Source's popout starts `claude auth login --claudeai` (Claude) or a `codex` refresh (ChatGPT), then re-fetches on completion. API-key Sources (Z.ai, opencode Go) get a card pointing at the plugin settings instead, and every card carries a **Setup guide** link to that Source's section of this README
+- **Login action** when a Source's credentials are missing or expired — a card in that Source's popout starts `claude auth login --claudeai` (Claude) or `codex login` (ChatGPT), then re-fetches on completion. API-key Sources (Z.ai, opencode Go) get a card pointing at the plugin settings instead, and every card carries a **Setup guide** link to that Source's section of this README. The same sign-in is on that Source's Overview row, so you can fix it without opening the tab first
 - **Graceful degradation**: a Source with no binary installed hides entirely; one with a missing/expired token or a rejected API key stays visible with a login card instead of silently showing zeros. opencode Go's undocumented endpoint adds a third state. When the endpoint fails rather than rejecting the key, the tab says so without sending you to settings, drops the ring from the pill, and marks the last known values as stale instead of showing them as current
 - **Automatic subscription detection** via the Anthropic OAuth API (Claude) and the ChatGPT backend (Codex CLI's stored OAuth token)
 - **Dynamic model pricing** — new Anthropic model families are detected automatically, no code changes needed
@@ -42,9 +56,9 @@ It is a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by Ni
 - [DMS Shell](https://github.com/AvengeMedia/DankMaterialShell)
 - [jq](https://jqlang.github.io/jq/) (JSON processor)
 
-No Source is mandatory. Install and enable the ones you actually use. Each Source
-below is the setup guide its own **Setup guide** link opens in the popout, so head
-each section with the Source's name: the link's anchor is that heading's slug.
+No Source is mandatory. Install and enable the ones you actually use. Each section
+below is the setup guide that Source's own **Setup guide** link opens in the popout,
+and each heading is the slug that link builds from the Source's name.
 
 ### Claude
 
@@ -95,8 +109,10 @@ Then restart DMS.
 
 ## Configuration
 
-Open DMS Settings (`Mod + ,` > Plugins > AI Usage) to adjust the refresh interval, toggle
-pacing indicators, enable/disable each Source, and register custom profiles/accounts.
+Open DMS Settings (`Mod + ,` > Plugins > AI Usage) to adjust the refresh interval,
+toggle pacing indicators and turn the Overview on or off. The same page enables and
+disables each Source, sets the order of the pill rings and popout tabs, and registers
+custom profiles/accounts.
 
 ### Custom Claude Profiles
 
@@ -138,7 +154,7 @@ that key lives somewhere else, or when you want to track more than one key.
 ## How It Works
 
 The plugin runs four lightweight bash scripts on the configured refresh interval, one per
-Source:
+Source. The Overview runs no script of its own, ranking what those four already reported.
 
 **Claude** (`get-claude-usage`):
 1. Reads your OAuth token from `~/.claude/.credentials.json`
