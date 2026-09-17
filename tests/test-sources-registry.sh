@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, addOutcome, listing, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -373,6 +373,67 @@ check(refusal("default:~/.pi/agent/models.json") === JSON.stringify({ winner: ""
 check(refusal("nocolon") === "null" && refusal("") === "null",
       "refusedRegistration reports nothing for an entry that names no Account");
 
+// --- The Add guard ---
+// Adding a row is the one place a user can switch a Source off a detected
+// credential without meaning to, so the editor asks the Script what it would make
+// of the row before it saves it and reads that answer here. `before` is the listing
+// the editor is showing, `after` the one the Script answers with the row appended.
+const guard = (before, after, name) => JSON.stringify(reg.addOutcome(before, after, name));
+const shown = (origins, shadowed) => reg.listing("", origins, shadowed, true);
+const answered = (origins, shadowed) => reg.listing("", origins, shadowed, true);
+const unanswered = () => reg.listing("", "", "", false);
+
+// A row the Script registers and no detected Account contests.
+check(guard(shown("work:custom", ""), answered("work:custom", ""), "work") === "null",
+      "addOutcome lets a row through when it displaces nothing");
+// Z.ai: the plugin's own arguments are read first, so the row wins and the pi key
+// is dropped - the hijack the user hit.
+check(guard(shown("default:custom", ""), answered("default:custom", "default|default:~/.pi/agent/models.json"), "default")
+      === JSON.stringify({ reason: "taken", name: "default", origin: "~/.pi/agent/models.json", lost: true }),
+      "addOutcome refuses a row that would take a detected Account's name");
+check(guard(shown("work:custom", ""), answered("work:custom", "work|default:~/.pi/agent/models.json"), "work")
+      === JSON.stringify({ reason: "taken", name: "default", origin: "~/.pi/agent/models.json", lost: true }),
+      "addOutcome refuses a row that would take a detected Account's value, under any name");
+// ChatGPT/Claude/opencode: detection is read first, so the row is the one dropped:
+// it would do nothing, which is the inert duplicate to refuse.
+check(guard(shown("default:CODEX_HOME", ""), answered("default:CODEX_HOME", "default|mine:custom"), "mine")
+      === JSON.stringify({ reason: "taken", name: "default", origin: "CODEX_HOME", lost: false }),
+      "addOutcome refuses a row a detected Account keeps the name of");
+check(guard(shown("default:CODEX_HOME", ""), answered("default:CODEX_HOME", "default|mine:custom"), "mine")
+      === JSON.stringify({ reason: "taken", name: "default", origin: "CODEX_HOME", lost: false }),
+      "addOutcome refuses a row a detected Account keeps the value of");
+check(guard(shown("default:", ""), answered("default:", "default|mine:custom"), "mine")
+      === JSON.stringify({ reason: "taken", name: "default", origin: "", lost: false }),
+      "addOutcome still refuses a row a detected Account keeps when the Script gave no origin");
+
+// The listing the guard needs has to have answered. A row saved on no answer is the
+// accident the guard exists to stop, and it cannot tell a listing still in flight
+// from one that failed.
+check(guard(unanswered(), answered("default:CODEX_HOME", "default|mine:custom"), "mine") === JSON.stringify({ reason: "unreadable" }),
+      "addOutcome refuses when the listing the editor shows has not answered");
+check(guard(shown("default:CODEX_HOME", ""), unanswered(), "mine") === JSON.stringify({ reason: "unreadable" }),
+      "addOutcome refuses when the listing for the row has not answered");
+check(guard(null, answered("", ""), "mine") === JSON.stringify({ reason: "unreadable" }) && guard(shown("", ""), null, "mine") === JSON.stringify({ reason: "unreadable" }),
+      "addOutcome refuses when there is no listing at all");
+
+// A clash the list already had is not this row's doing, and a clash between two
+// Custom rows changes no detected credential: the first is left to the flags that
+// already explain it, and the second is the flagged inert row it always was.
+check(guard(shown("default:custom", "default|default:~/.pi/agent/models.json"),
+            answered("default:custom", "default|default:~/.pi/agent/models.json"), "work") === "null",
+      "addOutcome lets an unrelated row through beside a clash the list already had");
+check(guard(shown("work:custom", ""), answered("work:custom", "work|work:custom"), "work") === "null",
+      "addOutcome lets a second Custom row of the same name through, because it displaces no detected Account");
+check(guard(shown("", ""), answered("", "ghost:custom"), "ghost") === "null",
+      "addOutcome lets a row through when the entry that kept it names no winner to report");
+
+// One Script listing as a value, and the editor's own use of it.
+const sampleListing = JSON.parse(JSON.stringify(reg.listing("a", "b", "c", true)));
+check(sampleListing.names === "a" && sampleListing.origins === "b" && sampleListing.shadowed === "c" && sampleListing.answered === true,
+      "listing carries the four things a Script answered with");
+check(reg.listing(null, null, null, undefined).answered === false,
+      "listing treats a missing answer as no answer");
+
 // The wire-line split, shared by the widget's fetch parser and the settings
 // editor's listing parser so the two read one wire the same way.
 const pair = (line) => JSON.stringify(reg.wirePair(line));
@@ -478,6 +539,21 @@ check(/Sources\.STATUS_KEY/.test(editor) && /Sources\.NOT_INSTALLED/.test(editor
       "the settings editor tells a Source that is not installed from the user's rows being wrong, off the registry's own keys");
 check(/function commitListing/.test(editor) && /pendingAccounts/.test(editor),
       "the settings editor commits one whole Script answer at a time rather than field by field");
+
+// The Add guard: the editor asks the Script about the row it is about to save, and
+// saves it only from that answer. Pinned because the failure is silent and
+// destructive - the user's Source switches to a hand-typed key.
+check(editor.includes("Sources.addOutcome(") && /probeProcess\.command =/.test(editor),
+      "the settings editor asks the Script about a new row before saving it");
+check(/function finishAdd/.test(editor) && /reason: "unreadable"/.test(editor),
+      "the settings editor refuses to save a row when the Script has not answered for it");
+check(/function addAnyway/.test(editor) && /addWarning\.lost === true/.test(editor),
+      "the settings editor offers the deliberate override only for a row that would win");
+const finishAdd = editor.slice(editor.indexOf("function finishAdd"));
+check(finishAdd.indexOf("Sources.addOutcome(") < finishAdd.indexOf('nameInput.text = ""'),
+      "the settings editor saves a row only after the guard has let it through, so the typed values survive a refusal");
+check(/onTextChanged: root\.clearAddWarning\(\)/.test(editor),
+      "the settings editor clears the Add warning when the row it is about is edited");
 
 // One wire, one splitter: the widget's fetch parser and the settings editor's
 // listing parser take their key and value from wirePair, and read a

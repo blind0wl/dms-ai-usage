@@ -216,6 +216,23 @@ var strings = {
             fr: "non utilisé - cette source utilise",
             es: "sin usar - esta fuente está usando"
         },
+    "Not added: it would replace what this Source authenticates with.":
+        {
+            fr: "Non ajouté : cela remplacerait ce avec quoi cette source s'authentifie.",
+            es: "No se ha añadido: sustituiría lo que usa esta fuente para autenticarse."
+        },
+    "Add anyway":
+        { fr: "Ajouter quand même", es: "Añadir de todos modos" },
+    "Not added: this Source already uses this name or value.":
+        {
+            fr: "Non ajouté : cette source utilise déjà ce nom ou cette valeur.",
+            es: "No se ha añadido: esta fuente ya usa este nombre o este valor."
+        },
+    "Not added: the Source could not be read. Press Add again.":
+        {
+            fr: "Non ajouté : la source n'a pas pu être lue. Appuyez de nouveau sur Ajouter.",
+            es: "No se ha añadido: no se ha podido leer la fuente. Pulsa Añadir de nuevo."
+        },
     "This Source is not installed, so nothing here is in use.":
         {
             fr: "Cette source n'est pas installée, donc rien ici n'est utilisé.",

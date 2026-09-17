@@ -218,6 +218,68 @@ function shadowingAccount(origins, shadowed, name) {
     return null;
 }
 
+// One Script listing as a value: the four things the Script answered with, so a
+// caller can compare two listings or hand one on without the wire strings
+// travelling separately.
+function listing(names, origins, shadowed, answered) {
+    return {
+        names: names || "",
+        origins: origins || "",
+        shadowed: shadowed || "",
+        answered: answered === true
+    };
+}
+
+// What adding a Custom Account row would do to the credential the Source
+// authenticates with, judged from two of the Script's own listings: the one the
+// editor is showing, and the one the Script answers when the row is appended to
+// the Custom Account list. The Script keeps the first registration of a name or
+// of a value, so it, and not the editor, is what says whether the row takes a
+// detected Account's place or is dropped in favour of one. Comparing the two keeps
+// a clash the list already had from being blamed on the new row.
+//
+// Returns null when the row is safe to add, and otherwise why it is not:
+//   { reason: "unreadable" }
+//       no listing answered for this row, so there is nothing to decide on. The
+//       caller must not save: a row added without an answer is the accident this
+//       guard exists to stop.
+//   { reason: "taken", name, origin, lost }
+//       the row would take the place of the detected Account `name`, found at
+//       `origin`. `lost` is true when the row wins and the Script drops that
+//       detected Account, false when the Script keeps the detected Account and
+//       drops the row instead - either way this row is not what the user expects.
+//       A clash between two Custom rows resolves to null: it changes no detected
+//       credential, and the row it makes inert is already flagged as such.
+function addOutcome(before, after, candidateName) {
+    if (!before || !before.answered || !after || !after.answered)
+        return { reason: "unreadable" };
+
+    var had = splitList(before.shadowed);
+    var pairs = splitList(after.shadowed);
+    var byName = originsByName(after.origins);
+    for (var i = 0; i < pairs.length; i++) {
+        // A clash the list already had is not this row's doing.
+        if (had.indexOf(pairs[i]) >= 0)
+            continue;
+        var refused = refusedRegistration(pairs[i]);
+        if (!refused)
+            continue;
+        // The row won, and the Script dropped a detected registration for it.
+        if (refused.winner === candidateName && refused.origin !== CUSTOM_ORIGIN)
+            return { reason: "taken", name: refused.name, origin: refused.origin, lost: true };
+        // The row lost to a detected registration, which the Script names. An
+        // origin it did not give still leaves the Account to name, so the row is
+        // refused either way: it would do nothing.
+        if (refused.name === candidateName && refused.origin === CUSTOM_ORIGIN) {
+            var winnerOrigin = Object.prototype.hasOwnProperty.call(byName, refused.winner) ? byName[refused.winner] : "";
+            if (refused.winner === "" || winnerOrigin === CUSTOM_ORIGIN)
+                continue;
+            return { reason: "taken", name: refused.winner, origin: winnerOrigin, lost: false };
+        }
+    }
+    return null;
+}
+
 // The rows of a Custom Account list a Script did not register, by their index in
 // that list, so the editor marks a row rather than a name: two rows can carry the
 // same name, and only the first of them is one the Script kept. The Popout's

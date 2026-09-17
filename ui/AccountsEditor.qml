@@ -45,6 +45,12 @@ Column {
     property bool pendingAnswered: false
     property bool pendingAbsent: false
 
+    // The same, for the listing the Add guard asks for.
+    property string candidateAccounts: ""
+    property string candidateOrigins: ""
+    property string candidateShadowed: ""
+    property bool candidateAnswered: false
+
     // Set once the Script has answered with its Account list, so a Source whose
     // Script registered nothing still marks the rows it registered nothing for. A
     // listing that failed or has not arrived leaves the previous answer standing.
@@ -53,6 +59,21 @@ Column {
     // reports is in use because the Source itself is absent, which is a state of
     // the Source rather than a verdict on the user's rows.
     property bool sourceAbsent: false
+
+    // The row the Script was last asked about, and what that answer said about it.
+    // Add must not save before the Script has answered: a Custom Account that takes
+    // a detected one's place is exactly the accident this guard exists to stop. The
+    // row is what keeps an answer attached to the fields it belongs to, since the
+    // user can keep typing while the Script runs.
+    property string probedName: ""
+    property string probedValue: ""
+    // null, or the outcome of Sources.addOutcome() for the row in the fields.
+    property var addWarning: null
+
+    // What the Script last answered with, and what it answered when the candidate
+    // row was appended: two listings in the form Sources.addOutcome() compares.
+    readonly property var shownListing: Sources.listing(root.listedAccounts, root.listedOrigins, root.listedShadowed, root.listingAnswered)
+    readonly property var candidateListing: Sources.listing(root.candidateAccounts, root.candidateOrigins, root.candidateShadowed, root.candidateAnswered)
     // Set when the Script that answers the listing fails, so a listing that never
     // arrived is not shown as a Source with nothing detected.
     property bool listFailed: false
@@ -60,6 +81,9 @@ Column {
     // previous one, so the answer the editor keeps describes the list it was
     // asked about rather than the one the user just edited.
     property bool listPending: false
+    // Set when Add is pressed while the Script is still answering the previous
+    // one, so the question is asked again rather than dropped.
+    property bool addPending: false
 
     readonly property var detected: Sources.detectedAccounts(root.listedAccounts, root.listedOrigins, root.listedShadowed)
     // The Custom Account rows the Script did not register: another Account
@@ -148,10 +172,88 @@ Column {
             settingsRoot.saveValue(settingKey, newItems);
     }
 
+    // Asks the Script what it would make of this row before the row is saved, and
+    // saves it only when the Script reports no clash with a detected Account. The
+    // question carries the list as it stands plus the candidate, so the answer is
+    // the Script's own verdict rather than a guess from names.
     function addItem() {
         var name = nameInput.text.trim();
         var value = valueInput.text.trim();
         if (!name || !value)
+            return;
+        if (!probeProcess || !root.settingsRoot || !root.descriptor)
+            return;
+
+        root.probedName = name;
+        root.probedValue = value;
+        root.addWarning = null;
+        root.candidateAccounts = "";
+        root.candidateOrigins = "";
+        root.candidateShadowed = "";
+        root.candidateAnswered = false;
+
+        var entry = {
+            name: name
+        };
+        entry[root.argField] = value;
+        if (probeProcess.running) {
+            // The previous question is still out; ask again when it lands.
+            root.addPending = true;
+            return;
+        }
+        root.addPending = false;
+        probeProcess.command = Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
+                                                    [Sources.LIST_ACCOUNTS_FLAG].concat(Sources.accountArgs(root.descriptor, root.items.concat([entry]))));
+        probeProcess.running = true;
+    }
+
+    // What to do about the row the Script has just answered for: save it, or say
+    // why not. The row in the fields is compared with the row the question was
+    // about, because the user can keep typing while the Script runs, and a verdict
+    // for a row that is no longer there is no verdict at all.
+    function finishAdd(exitCode) {
+        var name = nameInput.text.trim();
+        var value = valueInput.text.trim();
+        // The answer is about the row the Script was asked for. A row the user has
+        // typed over since has no verdict yet, and the next Add asks again.
+        if (name !== root.probedName || value !== root.probedValue) {
+            root.addWarning = null;
+            return;
+        }
+        if (exitCode !== 0) {
+            root.addWarning = { reason: "unreadable" };
+            return;
+        }
+
+        var outcome = Sources.addOutcome(root.shownListing, root.candidateListing, root.probedName);
+        if (outcome !== null) {
+            root.addWarning = outcome;
+            return;
+        }
+
+        var entry = {
+            name: name
+        };
+        entry[root.argField] = value;
+        saveItems(items.concat([entry]));
+        nameInput.text = "";
+        valueInput.text = "";
+        root.addWarning = null;
+        root.probedName = "";
+        root.probedValue = "";
+        nameInput.forceActiveFocus();
+    }
+
+    // The deliberate override: the user has been told which detected Account this
+    // row would take the place of, and presses again. Only a row that would win is
+    // offered this. A row the Script would drop does nothing at all, so adding it
+    // anyway would only hide that from the user.
+    function addAnyway() {
+        if (root.addWarning === null || root.addWarning.lost !== true)
+            return;
+        var name = nameInput.text.trim();
+        var value = valueInput.text.trim();
+        if (name !== root.probedName || value !== root.probedValue)
             return;
 
         var entry = {
@@ -161,7 +263,17 @@ Column {
         saveItems(items.concat([entry]));
         nameInput.text = "";
         valueInput.text = "";
+        root.addWarning = null;
+        root.probedName = "";
+        root.probedValue = "";
         nameInput.forceActiveFocus();
+    }
+
+    // A warning is about the row in the fields, so typing a different one clears
+    // it rather than leaving stale copy beside a row it does not describe.
+    function clearAddWarning() {
+        if (root.addWarning !== null)
+            root.addWarning = null;
     }
 
     function removeItem(index) {
@@ -250,6 +362,36 @@ Column {
     }
 
     Process {
+        id: probeProcess
+        running: false
+
+        stdout: SplitParser {
+            onRead: data => root.readProbeLine(data.trim())
+        }
+
+        onExited: (exitCode, exitStatus) => {
+            root.finishAdd(exitCode);
+            if (root.addPending) {
+                root.addPending = false;
+                Qt.callLater(root.addItem);
+            }
+        }
+    }
+
+    function readProbeLine(line) {
+        var pair = Sources.wirePair(line);
+        if (!pair)
+            return;
+        if (pair.key === root.acct.listKey) {
+            root.candidateAccounts = pair.value;
+            root.candidateAnswered = true;
+        } else if (pair.key === root.acct.originsKey)
+            root.candidateOrigins = pair.value;
+        else if (pair.key === root.acct.shadowedKey)
+            root.candidateShadowed = pair.value;
+    }
+
+    Process {
         id: listProcess
         running: false
 
@@ -331,6 +473,7 @@ Column {
             width: root.nameColumnWidth
             placeholderText: "work"
             Keys.onReturnPressed: root.addItem()
+            onTextChanged: root.clearAddWarning()
         }
 
         DankTextField {
@@ -338,6 +481,7 @@ Column {
             width: root.valueColumnWidth
             placeholderText: root.acct.placeholder
             Keys.onReturnPressed: root.addItem()
+            onTextChanged: root.clearAddWarning()
         }
 
         DankButton {
@@ -345,6 +489,70 @@ Column {
             height: 40
             text: root.settingsRoot.tr("Add")
             onClicked: root.addItem()
+        }
+    }
+
+    // Why Add did not save the row in the fields. The values stay in the fields so
+    // nothing the user typed is lost, and the copy names the detected Account and
+    // where it was found, so the row can be corrected rather than guessed at.
+    Row {
+        width: parent.width
+        spacing: Theme.spacingXXS
+        visible: root.addWarning !== null
+
+        DankIcon {
+            anchors.verticalCenter: parent.verticalCenter
+            name: "warning"
+            size: 14
+            color: Theme.warning
+        }
+
+        Column {
+            width: parent.width - 14 - Theme.spacingXXS
+            spacing: Theme.spacingXXS
+
+            StyledText {
+                width: parent.width
+                text: {
+                    if (root.addWarning === null)
+                        return "";
+                    if (root.addWarning.reason === "unreadable")
+                        return root.settingsRoot.tr("Not added: the Source could not be read. Press Add again.");
+                    return root.addWarning.lost
+                        ? root.settingsRoot.tr("Not added: it would replace what this Source authenticates with.")
+                        : root.settingsRoot.tr("Not added: this Source already uses this name or value.");
+                }
+                color: Theme.warning
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+            }
+
+            StyledText {
+                width: parent.width
+                visible: root.addWarning !== null && root.addWarning.reason === "taken"
+                text: {
+                    if (root.addWarning === null || root.addWarning.reason !== "taken")
+                        return "";
+                    var found = root.addWarning.origin.length > 0
+                        ? root.addWarning.origin
+                        : root.settingsRoot.tr("Origin unknown");
+                    return "\"" + root.addWarning.name + "\" ("
+                        + root.settingsRoot.tr("Detected from") + " " + found + ")";
+                }
+                color: Theme.surfaceVariantText
+                font.pixelSize: Theme.fontSizeSmall
+                wrapMode: Text.WordWrap
+            }
+
+            // Not saved by default: this button is the second, informed press that
+            // makes the override deliberate rather than accidental.
+            DankButton {
+                width: root.actionWidth
+                height: 32
+                visible: root.addWarning !== null && root.addWarning.reason === "taken" && root.addWarning.lost === true
+                text: root.settingsRoot.tr("Add anyway")
+                onClicked: root.addAnyway()
+            }
         }
     }
 
