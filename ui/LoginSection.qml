@@ -10,9 +10,11 @@ import qs.Widgets
 // the fix is an API key in the plugin settings.
 //
 // Both kinds also offer a Setup guide link into the plugin's README, because
-// prose that explains a fix is not the same as being able to reach it. The link
-// goes to the README section for this Source rather than the README root, so a
-// missing Z.ai key lands on the Z.ai instructions.
+// prose that explains a fix is not the same as being able to reach it.
+//
+// The button and the link are shared components, not this card's own: a Missing
+// Source is met on its own tab and on the Overview, and both places draw the
+// same sign-in (ui/LoginButton.qml) and the same way out (ui/SetupGuideLink.qml).
 StyledRect {
     id: root
 
@@ -24,25 +26,9 @@ StyledRect {
     readonly property var login: ctx && ctx.descriptor ? ctx.descriptor.login : null
     readonly property bool inProgress: ctx ? ctx.loginInProgress === true : false
 
-    // The README section for this Source. A Source's section is headed by its
-    // name and the link's anchor is that heading's slug (pinned by
-    // tests/test-setup-links.sh), so no Source is named here.
-    //
-    // Qt.openUrlExternally is the plugin's first and only URL-opening path, so
-    // it was verified under the Quickshell runtime DMS loads this in before the
-    // link came to rely on it.
-    readonly property string readmeUrl: "https://github.com/blind0wl/dms-ai-usage"
-    readonly property string docsUrl: ctx && ctx.descriptor
-        ? readmeUrl + "#" + anchorFor(ctx.descriptor.labelKey)
-        : ""
-
-    // GitHub's heading slug: lowercase, keep word characters, hyphens and
-    // spaces, then spaces to hyphens. `labelKey` rather than the Source's
-    // translated label, because the README those headings live in is English,
-    // so the anchor is the same in every locale.
-    function anchorFor(name) {
-        return name.toLowerCase().replace(/[^\w\- ]+/g, "").replace(/ /g, "-");
-    }
+    // The README section this Source's Setup guide link opens is the slug of its
+    // name, which is the descriptor's labelKey.
+    readonly property string labelKey: ctx && ctx.descriptor ? ctx.descriptor.labelKey : ""
 
     readonly property bool missing: source && source.credsStatus === "missing"
     readonly property bool expired: source && source.credsStatus === "expired"
@@ -63,7 +49,7 @@ StyledRect {
 
     width: parent.width
     visible: shown
-    height: content.implicitHeight + Theme.spacingM * 2
+    height: content.implicitHeight + Theme.spacingS * 2
     color: Theme.surfaceContainerHigh
     border.width: 1
     border.color: Theme.error || Theme.primary
@@ -71,18 +57,18 @@ StyledRect {
     Row {
         id: content
         anchors.fill: parent
-        anchors.margins: Theme.spacingM
-        spacing: Theme.spacingM
+        anchors.margins: Theme.spacingS
+        spacing: Theme.spacingS
 
         Column {
             width: root.isCli ? parent.width - loginButton.width - parent.spacing : parent.width
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Theme.spacingXS
+            spacing: Theme.spacingXXS
 
             StyledText {
                 width: parent.width
                 text: root.title
-                font.pixelSize: Theme.fontSizeMedium
+                font.pixelSize: Theme.fontSizeSmall
                 font.weight: Font.Medium
                 color: Theme.surfaceText
                 wrapMode: Text.WordWrap
@@ -96,58 +82,23 @@ StyledRect {
                 wrapMode: Text.WordWrap
             }
 
-            // Shown whenever the Source has a README section, which is every
-            // Source: it supplements a cli login button rather than replacing
-            // it, and it is the only way out for an API-key Source.
-            Item {
-                id: setupLinkRow
-                // The label's own size, so the click area is the link and not
-                // the whole column width.
-                width: setupLink.implicitWidth
-                height: setupLink.implicitHeight
-                visible: root.docsUrl !== ""
-
-                StyledText {
-                    id: setupLink
-                    text: api.tr("Setup guide")
-                    font.pixelSize: Theme.fontSizeSmall
-                    font.weight: Font.Medium
-                    color: Theme.primary
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: Qt.openUrlExternally(root.docsUrl)
-                }
+            // Supplements a cli login button rather than replacing it, and is the
+            // only way out for an API-key Source. It shows wherever the card does,
+            // which is the two credential states that need setting up.
+            SetupGuideLink {
+                api: root.api
+                labelKey: root.labelKey
+                shown: root.shown
             }
         }
 
-        Rectangle {
+        LoginButton {
             id: loginButton
             visible: root.isCli
-            width: loginButtonLabel.implicitWidth + Theme.spacingM * 2
-            height: 32
-            radius: 16
             anchors.verticalCenter: parent.verticalCenter
-            color: Theme.primary
-            opacity: root.inProgress ? 0.6 : 1
-
-            StyledText {
-                id: loginButtonLabel
-                anchors.centerIn: parent
-                text: root.inProgress ? api.tr("Logging in…") : api.tr("Log in")
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.primaryText
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                enabled: !root.inProgress
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.api.startLogin(root.ctx.source.id)
-            }
+            api: root.api
+            inProgress: root.inProgress
+            onClicked: root.api.startLogin(root.ctx.source.id)
         }
     }
 }

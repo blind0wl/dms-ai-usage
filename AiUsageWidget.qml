@@ -870,10 +870,14 @@ PluginComponent {
             headerText: root.tr("AI Usage")
             showCloseButton: true
 
+            // The host already insets plugin popout content by Theme.spacingS
+            // (its own popoutColumn), so this body adds the same inset rather
+            // than a wider one on top of it: the tab strip and the Sections get
+            // the panel's width to use, and the two insets cannot disagree.
             Column {
-                width: parent.width - Theme.spacingM * 2
+                width: parent.width - Theme.spacingS * 2
                 anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Theme.spacingL
+                spacing: Theme.spacingS
 
                 // Only one tab's Sections render at a time, keeping the popout
                 // short on small screens. Hidden when there is nothing to switch

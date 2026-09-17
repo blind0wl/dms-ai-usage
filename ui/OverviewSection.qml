@@ -13,8 +13,10 @@ import qs.Widgets
 //
 // The degraded rows mirror the rules the Source tab already follows. A Missing
 // Source offers the sign-in its Login Section offers, in place of a bar it has
-// no reading for. An Unavailable Source keeps its last known reading with the
-// bar dimmed and marked stale, because a stale reading is still a reading.
+// no reading for, and the same Setup guide link, so a Source that needs an API
+// key has its way out here and not only on its own tab. An Unavailable Source
+// keeps its last known reading with the bar dimmed and marked stale, because a
+// stale reading is still a reading.
 Column {
     id: root
 
@@ -27,7 +29,7 @@ Column {
     readonly property var rows: ctx && ctx.rows ? ctx.rows : []
 
     width: parent.width
-    spacing: Theme.spacingS
+    spacing: Theme.spacingXS
 
     // Which Window is tightest and when it resets. Both come from the row, and
     // neither exists before a reading arrives: an unranked row has no Tightest
@@ -67,7 +69,7 @@ Column {
             readonly property real fraction: Math.max(0, Math.min(modelData.util / 100, 1))
 
             width: root.width
-            height: content.implicitHeight + Theme.spacingM * 2
+            height: content.implicitHeight + Theme.spacingS * 2
             color: Theme.surfaceContainerHigh
 
             MouseArea {
@@ -79,17 +81,17 @@ Column {
             Column {
                 id: content
                 anchors.fill: parent
-                anchors.margins: Theme.spacingM
-                spacing: Theme.spacingS
+                anchors.margins: Theme.spacingS
+                spacing: Theme.spacingXS
 
                 Row {
                     width: parent.width
-                    spacing: Theme.spacingS
+                    spacing: Theme.spacingXS
 
                     StyledText {
                         width: Math.max(0, parent.width - usage.width - parent.spacing)
                         text: root.api.tr(modelData.labelKey)
-                        font.pixelSize: Theme.fontSizeMedium
+                        font.pixelSize: Theme.fontSizeSmall
                         font.weight: Font.Medium
                         color: Theme.surfaceText
                         wrapMode: Text.NoWrap
@@ -98,13 +100,13 @@ Column {
 
                     Row {
                         id: usage
-                        spacing: Theme.spacingXS
+                        spacing: Theme.spacingXXS
 
                         // "--" is the Pill's own word for a Source with no
                         // reading, rather than a zero the Source never reported.
                         StyledText {
                             text: row.showsReading ? Math.round(modelData.util) + "%" : "--"
-                            font.pixelSize: Theme.fontSizeMedium
+                            font.pixelSize: Theme.fontSizeSmall
                             font.weight: Font.Medium
                             color: row.showsReading ? root.api.progressColor(modelData.util) : Theme.surfaceVariantText
                         }
@@ -124,8 +126,8 @@ Column {
                 Rectangle {
                     visible: !row.missing
                     width: parent.width
-                    height: 6
-                    radius: 3
+                    height: 4
+                    radius: 2
                     color: Theme.surfaceVariant
                     opacity: modelData.stale ? 0.5 : 1
 
@@ -137,32 +139,14 @@ Column {
                     }
                 }
 
-                Rectangle {
+                LoginButton {
                     visible: row.cliLogin
-                    width: loginButtonLabel.implicitWidth + Theme.spacingM * 2
-                    height: 32
-                    radius: 16
-                    color: Theme.primary
-                    opacity: row.loggingIn ? 0.6 : 1
-
-                    StyledText {
-                        id: loginButtonLabel
-                        anchors.centerIn: parent
-                        text: row.loggingIn ? root.api.tr("Logging in…") : root.api.tr("Log in")
-                        font.pixelSize: Theme.fontSizeSmall
-                        font.weight: Font.Medium
-                        color: Theme.primaryText
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-                        enabled: !row.loggingIn
-                        cursorShape: Qt.PointingHandCursor
-                        // Runs the same login the Source tab's card runs, without
-                        // sending the user to that tab first. The press is
-                        // consumed here rather than selecting the row.
-                        onClicked: root.api.startLogin(row.sourceId)
-                    }
+                    api: root.api
+                    inProgress: row.loggingIn
+                    // Runs the same login the Source tab's card runs, without
+                    // sending the user to that tab first. The press is consumed
+                    // here rather than selecting the row.
+                    onClicked: root.api.startLogin(row.sourceId)
                 }
 
                 // A key-based Source has no flow to run, so it gets the Login
@@ -174,6 +158,15 @@ Column {
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap
+                }
+
+                // The Login Section's way out, on the row that needs it. Only a
+                // Missing row is being asked to go and set something up, so only
+                // it asks the link to show.
+                SetupGuideLink {
+                    shown: row.missing
+                    api: root.api
+                    labelKey: modelData.labelKey
                 }
 
                 StyledText {

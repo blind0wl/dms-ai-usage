@@ -25,7 +25,7 @@ StyledRect {
     readonly property bool shown: models.length > 0
 
     width: parent.width
-    height: modelCardCol.implicitHeight + Theme.spacingM * 2
+    height: modelCardCol.implicitHeight + Theme.spacingS * 2
     color: Theme.surfaceContainerHigh
     visible: shown
 
@@ -36,12 +36,12 @@ StyledRect {
     Column {
         id: modelCardCol
         anchors.fill: parent
-        anchors.margins: Theme.spacingM
-        spacing: Theme.spacingS
+        anchors.margins: Theme.spacingS
+        spacing: Theme.spacingXS
 
         StyledText {
             text: api.tr("Models This Week")
-            font.pixelSize: Theme.fontSizeMedium
+            font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceText
         }
@@ -49,7 +49,7 @@ StyledRect {
         Column {
             id: modelCol
             width: parent.width
-            spacing: Theme.spacingS
+            spacing: Theme.spacingXS
 
             Repeater {
                 model: root.models
@@ -66,7 +66,7 @@ StyledRect {
 
                     Row {
                         width: parent.width
-                        spacing: Theme.spacingXS
+                        spacing: Theme.spacingXXS
 
                         StyledText {
                             text: root.displayName(modelRow.modelData ? modelRow.modelData.modelName : "")

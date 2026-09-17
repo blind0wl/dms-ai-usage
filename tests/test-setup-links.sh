@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Tests for the setup-guide link in the credentials card.
+# Tests for the setup-guide link, on the credentials card and on the Overview.
 #
-# A Source whose credentials are missing explains the fix in prose, so the card
-# carries a "Setup guide" link into the README section for that Source. The
-# anchor is the GitHub slug of the Source's own name, which makes the contract
-# this: every Source's name heads exactly one section in README.md. Both halves
-# are read from the files themselves, so renaming a Source or rewording its
-# README heading fails here instead of shipping a dead link.
+# A Source whose credentials are missing explains the fix in prose, so it carries
+# a "Setup guide" link into the README section for that Source. Both surfaces draw
+# the one link component (ui/SetupGuideLink.qml), whose anchor is the GitHub slug
+# of the Source's own name, which makes the contract this: every Source's name
+# heads exactly one section in README.md. The slug rule, the URL and its two call
+# sites are all read from the files themselves, so renaming a Source, rewording
+# its README heading or growing a second copy of the rule fails here instead of
+# shipping a dead or drifting link.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,7 +53,10 @@ const headings = [...readme.matchAll(/^#{1,6}\s+(.+?)\s*$/gm)].map((m) => slug(m
 const slugs = new Set(headings);
 
 // --- The card itself ---
+const link = fs.readFileSync(path.join(root, "ui/SetupGuideLink.qml"), "utf8");
 const login = fs.readFileSync(path.join(root, "ui/LoginSection.qml"), "utf8");
+const overview = fs.readFileSync(path.join(root, "ui/OverviewSection.qml"), "utf8");
+const loginButton = fs.readFileSync(path.join(root, "ui/LoginButton.qml"), "utf8");
 
 // A property's expression, read off the declaration rather than pattern-matched
 // against its formatting: the body is whatever follows the colon until the next
@@ -73,30 +78,34 @@ function propertyBody(source, name) {
 
 // The URL is evaluated rather than pattern-matched, so what the test checks is
 // what the card would open, its slug helper included.
-const helper = login.match(/function anchorFor\(name\) \{[\s\S]*?\n    \}/);
-const base = propertyBody(login, "readmeUrl");
-const docsUrl = propertyBody(login, "docsUrl");
-check(!!helper, "LoginSection has the heading-slug helper the anchor is built from");
-check(!!base, "LoginSection names the README the link opens");
-check(!!docsUrl, "LoginSection composes a setup-guide URL");
+const helper = link.match(/function anchorFor\(name\) \{[\s\S]*?\n    \}/);
+const base = propertyBody(link, "readmeUrl");
+const docsUrl = propertyBody(link, "docsUrl");
+check(!!helper, "SetupGuideLink has the heading-slug helper the anchor is built from");
+check(!!base, "SetupGuideLink names the README the link opens");
+check(!!docsUrl, "SetupGuideLink composes a setup-guide URL");
 if (helper && base && docsUrl) {
-    const resolve = new Function("ctx",
-        "var readmeUrl = " + base + ";\n" + helper[0] + "\nreturn (" + docsUrl + ");");
-    check(resolve(null) === "", "the URL is empty with no context");
-    check(resolve({}) === "", "the URL is empty with no descriptor");
-    check(resolve({ descriptor: { labelKey: "Claude" } }) === "https://github.com/blind0wl/dms-ai-usage#claude",
+    // `docsUrl` reads the Source's name and the README it appends the anchor to
+    // as properties of the component, so the harness hands it the README the
+    // component declares plus a stand-in for the Source's name.
+    const readme = new Function("return (" + base + ");")();
+    const resolve = new Function("root",
+        helper[0] + "\nreturn (" + docsUrl + ");");
+    const urlFor = (labelKey) => resolve({ labelKey, readmeUrl: readme });
+    check(urlFor("") === "", "the URL is empty with no Source name");
+    check(urlFor("Claude") === "https://github.com/blind0wl/dms-ai-usage#claude",
           "the URL is the plugin's README at the Source's own anchor");
-    check(resolve({ descriptor: { labelKey: "Z.ai" } }).endsWith("#zai"),
+    check(urlFor("Z.ai").endsWith("#zai"),
           "a missing Z.ai key lands on the Z.ai instructions, not the README root");
-    check(resolve({ descriptor: { labelKey: "opencode Go" } }).endsWith("#opencode-go"),
+    check(urlFor("opencode Go").endsWith("#opencode-go"),
           "a Source whose name has a space lands on its own section");
     check(!/isCli|credsStatus/.test(docsUrl),
           "the URL does not depend on whether the Source logs in through a CLI");
 
-    // The card's slug helper has to agree with the rule the README headings are
-    // measured by. Drift between the two is a link that goes nowhere.
+    // The component's slug helper has to agree with the rule the README headings
+    // are measured by. Drift between the two is a link that goes nowhere.
     for (const d of sources) {
-        const url = resolve({ descriptor: d });
+        const url = urlFor(d.labelKey);
         const anchor = url.split("#")[1] || "";
         check(anchor === slug(d.labelKey), `the "${d.id}" link's anchor is its Source name's slug`);
         check(slugs.has(anchor), `the "${d.id}" link lands on a README section that exists`);
@@ -105,17 +114,48 @@ if (helper && base && docsUrl) {
     }
 }
 
-check(/onClicked:\s*Qt\.openUrlExternally\(root\.docsUrl\)/.test(login),
+check(/onClicked:\s*Qt\.openUrlExternally\(root\.docsUrl\)/.test(link),
       "the link opens through Qt.openUrlExternally");
-check(/visible:\s*root\.docsUrl !== ""/.test(login),
-      "the link shows itself on the URL it opens");
-check(/cursorShape:\s*Qt\.PointingHandCursor/.test(login), "the link advertises itself as clickable");
+check(/visible:\s*root\.shown && root\.docsUrl !== ""/.test(link),
+      "the link shows itself only where it is asked for and has a URL to open");
+check(/cursorShape:\s*Qt\.PointingHandCursor/.test(link), "the link advertises itself as clickable");
 
+// The link reaches both places a Missing Source is met: its own tab's card and
+// its Overview row, each handing over its own Source's name. A second slug rule
+// or a second copy of the URL would be the drift this file exists to catch.
+check(/SetupGuideLink\s*\{/.test(login), "the credentials card draws the shared Setup guide link");
+check(/labelKey:\s*root\.labelKey/.test(login), "the card's link uses the Source's own name");
+check(/shown:\s*root\.shown/.test(login), "the card's link shows wherever the card does");
+check(/SetupGuideLink\s*\{/.test(overview), "an Overview row draws the shared Setup guide link");
+check(/labelKey:\s*modelData\.labelKey/.test(overview), "the Overview's link uses that row's Source name");
+check(/shown:\s*row\.missing/.test(overview), "the Overview's link shows on the row that needs setting up");
+for (const [name, source] of [["credentials card", login], ["Overview", overview]]) {
+    check(!/anchorFor|openUrlExternally|dms-ai-usage/.test(source),
+          `the ${name} keeps no second slug, URL or URL-opening path`);
+}
 // The ticket's other half: the link supplements the CLI login button, it does
-// not replace it.
+// not replace it. The button itself is one component, drawn by both surfaces.
+check(!!loginButton, "the login button is its own component");
+check(/enabled:\s*!root\.inProgress/.test(loginButton),
+      "the button disables itself while that Source's login is running");
+check(/signal clicked/.test(loginButton) && /MouseArea\s*\{/.test(loginButton),
+      "the button owns the click area once");
+check(/Logging in…/.test(loginButton) && /"Log in"/.test(loginButton),
+      "the button owns its progress copy once");
+check(/LoginButton\s*\{/.test(login), "the credentials card draws the shared login button");
 check(/visible:\s*root\.isCli/.test(login), "the cli login button is still there beside the link");
 check(/onClicked:\s*root\.api\.startLogin\(root\.ctx\.source\.id\)/.test(login),
       "the button still starts the cli login flow");
+check(/LoginButton\s*\{/.test(overview) && /onClicked:\s*root\.api\.startLogin\(row\.sourceId\)/.test(overview),
+      "an Overview row's button starts that row's login");
+// The duplicate #40 inherited is retired, not added to: neither surface may
+// carry its own copy of the button's geometry or its progress copy.
+for (const [name, source] of [["credentials card", login], ["Overview", overview]]) {
+    check(!/Logging in…/.test(source) && !/radius:\s*16/.test(source) && !/Theme\.primaryText/.test(source),
+          `the ${name} keeps no second copy of the button's geometry or progress copy`);
+}
+check(/radius:\s*16/.test(loginButton) && /Theme\.primaryText/.test(loginButton) && /Logging in…/.test(loginButton),
+      "the shared button still carries the one copy of them");
 
 console.log(results.join("\n"));
 NODE

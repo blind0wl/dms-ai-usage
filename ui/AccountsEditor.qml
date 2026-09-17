@@ -22,10 +22,10 @@ Column {
     readonly property string argField: acct ? acct.argField : "path"
     readonly property real nameColumnWidth: Math.min(130, Math.max(100, width * 0.27))
     readonly property real actionWidth: 92
-    readonly property real valueColumnWidth: parent.width - nameColumnWidth - actionWidth - Theme.spacingS * 2
+    readonly property real valueColumnWidth: parent.width - nameColumnWidth - actionWidth - Theme.spacingXS * 2
 
     width: parent.width
-    spacing: Theme.spacingM
+    spacing: Theme.spacingS
 
     Component.onCompleted: loadValue()
     onSettingKeyChanged: loadValue()
@@ -68,7 +68,7 @@ Column {
 
     StyledText {
         text: root.settingsRoot.tr(root.acct.titleKey)
-        font.pixelSize: Theme.fontSizeMedium
+        font.pixelSize: Theme.fontSizeSmall
         font.weight: Font.Medium
         color: Theme.surfaceText
     }
@@ -83,7 +83,7 @@ Column {
 
     Row {
         width: parent.width
-        spacing: Theme.spacingS
+        spacing: Theme.spacingXS
 
         StyledText {
             width: root.nameColumnWidth
@@ -109,7 +109,7 @@ Column {
 
     Row {
         width: parent.width
-        spacing: Theme.spacingS
+        spacing: Theme.spacingXS
 
         DankTextField {
             id: nameInput
@@ -135,7 +135,7 @@ Column {
 
     Column {
         width: parent.width
-        spacing: Theme.spacingS
+        spacing: Theme.spacingXS
 
         Repeater {
             model: root.items
@@ -152,8 +152,8 @@ Column {
 
                 Row {
                     anchors.fill: parent
-                    anchors.margins: Theme.spacingS
-                    spacing: Theme.spacingS
+                    anchors.margins: Theme.spacingXS
+                    spacing: Theme.spacingXS
 
                     StyledText {
                         width: root.nameColumnWidth
