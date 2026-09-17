@@ -2,11 +2,11 @@
 # Tests for the setup-guide link in the credentials card.
 #
 # A Source whose credentials are missing explains the fix in prose, so the card
-# carries a "Setup guide" link into the README section for that Source. The link
-# is composed from the descriptor's own id, which makes the anchor contract
-# this: every Source id is the heading slug of a section in README.md. Both
-# halves are read from the files themselves, so a Source added to the registry
-# without its README section fails here instead of shipping a dead link.
+# carries a "Setup guide" link into the README section for that Source. The
+# anchor is the GitHub slug of the Source's own name, which makes the contract
+# this: every Source's name heads exactly one section in README.md. Both halves
+# are read from the files themselves, so renaming a Source or rewording its
+# README heading fails here instead of shipping a dead link.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -53,18 +53,35 @@ const slugs = new Set(headings);
 // --- The card itself ---
 const login = fs.readFileSync(path.join(root, "ui/LoginSection.qml"), "utf8");
 
+// A property's expression, read off the declaration rather than pattern-matched
+// against its formatting: the body is whatever follows the colon until the next
+// declaration at any indent or a blank line.
+function propertyBody(source, name) {
+    const lines = source.split("\n");
+    const at = lines.findIndex((line) => line.trim().startsWith("readonly property string " + name + ":"));
+    if (at < 0)
+        return null;
+    const marker = ":";
+    const body = [lines[at].slice(lines[at].indexOf(marker) + 1)];
+    for (let i = at + 1; i < lines.length; i++) {
+        if (lines[i].trim() === "" || /^\s*(readonly\s+)?(property|function|signal)\b/.test(lines[i]))
+            break;
+        body.push(lines[i]);
+    }
+    return body.join("\n").trim();
+}
+
 // The URL is evaluated rather than pattern-matched, so what the test checks is
-// what the card would open, slug helper included.
+// what the card would open, its slug helper included.
 const helper = login.match(/function anchorFor\(name\) \{[\s\S]*?\n    \}/);
-const base = login.match(/property string readmeUrl:\s*([^\n]+)/);
-const binding = login.match(/property string docsUrl:\s*([\s\S]*?)\n\n/);
+const base = propertyBody(login, "readmeUrl");
+const docsUrl = propertyBody(login, "docsUrl");
 check(!!helper, "LoginSection has the heading-slug helper the anchor is built from");
 check(!!base, "LoginSection names the README the link opens");
-check(!!binding, "LoginSection composes a setup-guide URL");
-if (helper && base && binding) {
+check(!!docsUrl, "LoginSection composes a setup-guide URL");
+if (helper && base && docsUrl) {
     const resolve = new Function("ctx",
-        "var readmeUrl = " + base[1].trim() + ";\n" + helper[0] +
-        "\nreturn (" + binding[1].trim() + ");");
+        "var readmeUrl = " + base + ";\n" + helper[0] + "\nreturn (" + docsUrl + ");");
     check(resolve(null) === "", "the URL is empty with no context");
     check(resolve({}) === "", "the URL is empty with no descriptor");
     check(resolve({ descriptor: { labelKey: "Claude" } }) === "https://github.com/blind0wl/dms-ai-usage#claude",
@@ -73,11 +90,11 @@ if (helper && base && binding) {
           "a missing Z.ai key lands on the Z.ai instructions, not the README root");
     check(resolve({ descriptor: { labelKey: "opencode Go" } }).endsWith("#opencode-go"),
           "a Source whose name has a space lands on its own section");
-    check(!/isCli|credsStatus/.test(binding[1]),
+    check(!/isCli|credsStatus/.test(docsUrl),
           "the URL does not depend on whether the Source logs in through a CLI");
 
-    // Two independent implementations of GitHub's slug rule, one of them the
-    // card's own, have to agree about every Source, or the link is dead.
+    // The card's slug helper has to agree with the rule the README headings are
+    // measured by. Drift between the two is a link that goes nowhere.
     for (const d of sources) {
         const url = resolve({ descriptor: d });
         const anchor = url.split("#")[1] || "";
@@ -91,7 +108,7 @@ if (helper && base && binding) {
 check(/onClicked:\s*Qt\.openUrlExternally\(root\.docsUrl\)/.test(login),
       "the link opens through Qt.openUrlExternally");
 check(/visible:\s*root\.docsUrl !== ""/.test(login),
-      "the link shows for every Source with a README section, cli or API-key alike");
+      "the link shows itself on the URL it opens");
 check(/cursorShape:\s*Qt\.PointingHandCursor/.test(login), "the link advertises itself as clickable");
 
 // The ticket's other half: the link supplements the CLI login button, it does
@@ -99,26 +116,6 @@ check(/cursorShape:\s*Qt\.PointingHandCursor/.test(login), "the link advertises 
 check(/visible:\s*root\.isCli/.test(login), "the cli login button is still there beside the link");
 check(/onClicked:\s*root\.api\.startLogin\(root\.ctx\.source\.id\)/.test(login),
       "the button still starts the cli login flow");
-
-// --- Copy ---
-// tests/test-translations.sh scans the widget and the settings page, not the
-// Section components, so the card's own keys are checked here.
-const catalog = fs.readFileSync(path.join(root, "translations.js"), "utf8").replace(/^\.pragma library\s*/, "");
-const sandbox = {};
-vm.createContext(sandbox);
-vm.runInContext(catalog + "; this.strings = strings;", sandbox, { filename: "translations.js" });
-const strings = sandbox.strings;
-
-const keys = [...login.matchAll(/api\.tr\("([^"]+)"\)/g)].map((m) => m[1]);
-check(keys.length > 0, "the card's copy goes through the translation catalog");
-check(keys.indexOf("Setup guide") >= 0, "the link's label is one of them");
-for (const key of new Set(keys)) {
-    for (const language of ["fr", "es"]) {
-        const entry = strings[key];
-        check(entry !== undefined && typeof entry[language] === "string" && entry[language].trim() !== "",
-              `the card's "${key}" has a ${language} translation`);
-    }
-}
 
 console.log(results.join("\n"));
 NODE

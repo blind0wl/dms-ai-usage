@@ -36,10 +36,10 @@ StyledRect {
         ? readmeUrl + "#" + anchorFor(ctx.descriptor.labelKey)
         : ""
 
-    // GitHub's heading slug: lowercase, drop everything that is not a word
-    // character or a hyphen, then spaces to hyphens. `labelKey` rather than the
-    // Source's translated label, because the README those headings live in is
-    // English, so the anchor is the same in every locale.
+    // GitHub's heading slug: lowercase, keep word characters, hyphens and
+    // spaces, then spaces to hyphens. `labelKey` rather than the Source's
+    // translated label, because the README those headings live in is English,
+    // so the anchor is the same in every locale.
     function anchorFor(name) {
         return name.toLowerCase().replace(/[^\w\- ]+/g, "").replace(/ /g, "-");
     }
@@ -101,7 +101,9 @@ StyledRect {
             // it, and it is the only way out for an API-key Source.
             Item {
                 id: setupLinkRow
-                width: parent.width
+                // The label's own size, so the click area is the link and not
+                // the whole column width.
+                width: setupLink.implicitWidth
                 height: setupLink.implicitHeight
                 visible: root.docsUrl !== ""
 
@@ -114,7 +116,7 @@ StyledRect {
                 }
 
                 MouseArea {
-                    anchors.fill: setupLink
+                    anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
                     onClicked: Qt.openUrlExternally(root.docsUrl)
                 }
