@@ -69,9 +69,7 @@ function formatTier(tier) {
     if (tier.indexOf("free") >= 0) return tr("Free")
     if (tier.indexOf("team") >= 0) return tr("Team")
     if (tier.indexOf("enterprise") >= 0) return tr("Enterprise")
-    return tier.replace(/_/g, " ").replace(/\b\w/g, function (c) {
-        return c.toUpperCase()
-    })
+    return ""
 }
 
 function formatCost(usd, lang, usdEurRate) {
@@ -352,7 +350,8 @@ test_format_tier "free_tier" "fr" "Gratuit" "formatTier free in French"
 test_format_tier "team_tier" "es" "Equipo" "formatTier team in Spanish"
 test_format_tier "enterprise_tier" "fr" "Entreprise" "formatTier enterprise in French"
 test_format_tier "unknown" "en" "" "formatTier hides unknown"
-test_format_tier "custom_plan" "en" "Custom Plan" "formatTier formats unrecognised tiers"
+test_format_tier "custom_plan" "en" "" "formatTier hides unrecognised tiers"
+test_format_tier "default_claude_ai" "en" "" "formatTier hides Claude Pro's default tier"
 
 # ============================================================
 echo "=== Test 5: formatCost ==="
