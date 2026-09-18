@@ -111,6 +111,24 @@ PluginSettings {
         return d.accounts !== undefined;
     })
 
+    // Which Source's Accounts the page is showing. Not persisted: the page opens
+    // on the first Source that has Accounts, and picking another one is a view of
+    // this page rather than a setting of its own.
+    property string selectedSourceId: ""
+
+    // The descriptor the dropdown names, or the first one when nothing has been
+    // picked. Kept as a function so the fallback is read from one place.
+    function resolveAccountDescriptor(id) {
+        var list = root.accountDescriptors;
+        for (var i = 0; i < list.length; i++) {
+            if (list[i].id === id)
+                return list[i];
+        }
+        return list.length > 0 ? list[0] : null;
+    }
+
+    readonly property var selectedAccountDescriptor: resolveAccountDescriptor(selectedSourceId)
+
     StyledText {
         width: parent.width
         text: root.tr("AI Usage")
@@ -312,34 +330,158 @@ PluginSettings {
         }
     }
 
+    // One Source's Accounts at a time, chosen from a dropdown. Stacking one
+    // editor per Source was four Custom blocks and four Detected blocks on one
+    // page; this keeps the page short however many Sources are enabled. The
+    // editor itself is unchanged: only which descriptor it is handed changes.
     // Wrapped in a Column so PluginSettings re-parents it into the settings
     // column; a bare Repeater is not an Item and would not be laid out.
     Column {
+        id: accountsSetting
+
         width: parent.width
         spacing: Theme.spacingM
 
-        Repeater {
-            model: root.accountDescriptors
+        Rectangle {
+            width: parent.width
+            height: 1
+            color: Theme.outline
+            opacity: 0.3
+        }
 
-            Column {
-                required property int index
+        StyledText {
+            text: root.tr("Accounts")
+            font.pixelSize: Theme.fontSizeMedium
+            font.weight: Font.Medium
+            color: Theme.surfaceText
+        }
+
+        Rectangle {
+            id: sourceDropdown
+
+            width: parent.width
+            height: 36
+            radius: 8
+            color: Theme.surfaceVariant
+            // The menu opens downward over the editor, which is the next sibling
+            // in the Column and would otherwise paint on top of it.
+            z: 1
+
+            Row {
+                anchors.fill: parent
+                anchors.leftMargin: Theme.spacingS
+                // Stops short of the chevron so a long Source name cannot run
+                // underneath it.
+                anchors.rightMargin: Theme.spacingS + 18 + Theme.spacingXS
+                spacing: Theme.spacingXS
+
+                StyledText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.tr("Source")
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                }
+
+                StyledText {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.selectedAccountDescriptor
+                        ? root.tr(root.selectedAccountDescriptor.labelKey)
+                        : ""
+                    font.pixelSize: Theme.fontSizeSmall
+                    font.weight: Font.Medium
+                    color: Theme.surfaceText
+                }
+            }
+
+            // The chevron is how the control reads as something that opens.
+            DankIcon {
+                anchors.right: parent.right
+                anchors.rightMargin: Theme.spacingS
+                anchors.verticalCenter: parent.verticalCenter
+                name: "keyboard_arrow_down"
+                size: 18
+                color: Theme.surfaceVariantText
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: sourceDropdownPopup.visible = !sourceDropdownPopup.visible
+            }
+
+            MouseArea {
+                visible: sourceDropdownPopup.visible
+                anchors.fill: root
+                z: 99
+                onClicked: sourceDropdownPopup.visible = false
+            }
+
+            Rectangle {
+                id: sourceDropdownPopup
+
+                visible: false
+                z: 100
+                anchors.top: parent.bottom
+                anchors.topMargin: 4
+                anchors.left: parent.left
+                width: parent.width
+                height: dropdownCol.implicitHeight + Theme.spacingXS * 2
+                radius: 8
+                color: Theme.surfaceContainer
+
+                Column {
+                    id: dropdownCol
+                    anchors.fill: parent
+                    anchors.margins: Theme.spacingXS
+                    spacing: 2
+
+                    Repeater {
+                        model: root.accountDescriptors
+
+                        Rectangle {
+                            required property var modelData
+
+                            readonly property bool selected: root.selectedAccountDescriptor
+                                && root.selectedAccountDescriptor.id === modelData.id
+
+                            width: parent.width
+                            height: 28
+                            radius: 4
+                            color: selected ? Theme.primary : "transparent"
+
+                            StyledText {
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.left: parent.left
+                                anchors.leftMargin: Theme.spacingXXS
+                                text: root.tr(modelData.labelKey)
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: parent.selected ? Theme.primaryText : Theme.surfaceText
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    root.selectedSourceId = modelData.id;
+                                    sourceDropdownPopup.visible = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // One delegate, rebuilt when the chosen Source changes, so no row, warning
+        // or listing from the previous Source can linger in the next one.
+        Repeater {
+            model: root.selectedAccountDescriptor ? [root.selectedAccountDescriptor] : []
+
+            AccountsEditor {
                 required property var modelData
 
-                width: parent.width
-                spacing: Theme.spacingM
-
-                Rectangle {
-                    width: parent.width
-                    height: 1
-                    color: Theme.outline
-                    opacity: 0.3
-                    visible: index > 0
-                }
-
-                AccountsEditor {
-                    settingsRoot: root
-                    descriptor: modelData
-                }
+                settingsRoot: root
+                descriptor: modelData
             }
         }
     }
