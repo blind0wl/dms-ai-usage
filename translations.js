@@ -7,6 +7,10 @@ var strings = {
         { fr: "Sources", es: "Fuentes" },
     "Account":
         { fr: "Compte", es: "Cuenta" },
+    "Accounts":
+        { fr: "Comptes", es: "Cuentas" },
+    "Source":
+        { fr: "Source", es: "Fuente" },
     "Choose which Sources appear, and in what order. This sets both the taskbar ring order and the popout tab order.":
         {
             fr: "Choisissez les fournisseurs à afficher et leur ordre. Cela détermine l'ordre des anneaux dans la barre des tâches et celui des onglets.",
