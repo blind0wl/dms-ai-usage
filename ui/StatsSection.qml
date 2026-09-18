@@ -19,7 +19,7 @@ StyledRect {
     readonly property var columns: section && section.columns ? section.columns : []
 
     width: parent.width
-    height: consumptionCol.implicitHeight + Theme.spacingM * 2
+    height: consumptionCol.implicitHeight + Theme.spacingS * 2
     color: Theme.surfaceContainerHigh
 
     function valueText(spec) {
@@ -48,12 +48,12 @@ StyledRect {
     Column {
         id: consumptionCol
         anchors.fill: parent
-        anchors.margins: Theme.spacingM
-        spacing: Theme.spacingM
+        anchors.margins: Theme.spacingS
+        spacing: Theme.spacingXS
 
         StyledText {
             text: api.tr("Token Consumption")
-            font.pixelSize: Theme.fontSizeMedium
+            font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceText
         }
@@ -66,7 +66,7 @@ StyledRect {
                 delegate: Column {
                     required property var modelData
                     width: parent.width / 3
-                    spacing: 4
+                    spacing: Theme.spacingXXS
 
                     StyledText {
                         text: root.api.tr(modelData.labelKey)
@@ -77,7 +77,7 @@ StyledRect {
 
                     StyledText {
                         text: root.valueText(modelData.value)
-                        font.pixelSize: modelData.text ? Theme.fontSizeSmall : Theme.fontSizeLarge
+                        font.pixelSize: modelData.text ? Theme.fontSizeSmall : Theme.fontSizeMedium
                         font.weight: Font.DemiBold
                         color: modelData.accent ? Theme.primary : Theme.surfaceText
                         anchors.horizontalCenter: parent.horizontalCenter

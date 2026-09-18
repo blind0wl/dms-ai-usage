@@ -5,9 +5,16 @@ import qs.Widgets
 // Credentials card, shown in place of silently sitting at 0% whenever a Source's
 // credentials are missing or expired.
 //
-// "cli" Sources offer a button that runs the CLI's own login flow.
-// "text" Sources only explain the fix, because there is no CLI to shell out to
-// and the fix is an API key in the plugin settings.
+// "cli" Sources offer a button that runs the CLI's own login flow. "text"
+// Sources can only explain the fix, because there is no CLI to shell out to and
+// the fix is an API key in the plugin settings.
+//
+// Both kinds also offer a Setup guide link into the plugin's README, because
+// prose that explains a fix is not the same as being able to reach it.
+//
+// The button and the link are shared components, not this card's own: a Missing
+// Source is met on its own tab and on the Overview, and both places draw the
+// same sign-in (ui/LoginButton.qml) and the same way out (ui/SetupGuideLink.qml).
 StyledRect {
     id: root
 
@@ -18,6 +25,10 @@ StyledRect {
     readonly property var api: ctx ? ctx.api : null
     readonly property var login: ctx && ctx.descriptor ? ctx.descriptor.login : null
     readonly property bool inProgress: ctx ? ctx.loginInProgress === true : false
+
+    // The README section this Source's Setup guide link opens is the slug of its
+    // name, which is the descriptor's labelKey.
+    readonly property string labelKey: ctx && ctx.descriptor ? ctx.descriptor.labelKey : ""
 
     readonly property bool missing: source && source.credsStatus === "missing"
     readonly property bool expired: source && source.credsStatus === "expired"
@@ -38,7 +49,7 @@ StyledRect {
 
     width: parent.width
     visible: shown
-    height: content.implicitHeight + Theme.spacingM * 2
+    height: content.implicitHeight + Theme.spacingS * 2
     color: Theme.surfaceContainerHigh
     border.width: 1
     border.color: Theme.error || Theme.primary
@@ -46,18 +57,18 @@ StyledRect {
     Row {
         id: content
         anchors.fill: parent
-        anchors.margins: Theme.spacingM
-        spacing: Theme.spacingM
+        anchors.margins: Theme.spacingS
+        spacing: Theme.spacingS
 
         Column {
             width: root.isCli ? parent.width - loginButton.width - parent.spacing : parent.width
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Theme.spacingXS
+            spacing: Theme.spacingXXS
 
             StyledText {
                 width: parent.width
                 text: root.title
-                font.pixelSize: Theme.fontSizeMedium
+                font.pixelSize: Theme.fontSizeSmall
                 font.weight: Font.Medium
                 color: Theme.surfaceText
                 wrapMode: Text.WordWrap
@@ -70,33 +81,24 @@ StyledRect {
                 color: Theme.surfaceVariantText
                 wrapMode: Text.WordWrap
             }
+
+            // Supplements a cli login button rather than replacing it, and is the
+            // only way out for an API-key Source. It shows wherever the card does,
+            // which is the two credential states that need setting up.
+            SetupGuideLink {
+                api: root.api
+                labelKey: root.labelKey
+                shown: root.shown
+            }
         }
 
-        Rectangle {
+        LoginButton {
             id: loginButton
             visible: root.isCli
-            width: loginButtonLabel.implicitWidth + Theme.spacingM * 2
-            height: 32
-            radius: 16
             anchors.verticalCenter: parent.verticalCenter
-            color: Theme.primary
-            opacity: root.inProgress ? 0.6 : 1
-
-            StyledText {
-                id: loginButtonLabel
-                anchors.centerIn: parent
-                text: root.inProgress ? api.tr("Logging in…") : api.tr("Log in")
-                font.pixelSize: Theme.fontSizeSmall
-                font.weight: Font.Medium
-                color: Theme.primaryText
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                enabled: !root.inProgress
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.api.startLogin(root.ctx.source.id)
-            }
+            api: root.api
+            inProgress: root.inProgress
+            onClicked: root.api.startLogin(root.ctx.source.id)
         }
     }
 }

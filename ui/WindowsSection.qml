@@ -3,8 +3,11 @@ import qs.Common
 import qs.Widgets
 
 // One rate Window card: ring, utilisation, pacing line and countdown.
-// `compact` is the smaller secondary-Window card: a 72px ring, a title carrying
+// `compact` is the smaller secondary-Window card: a 56px ring, a title carrying
 // the percentage, and small type throughout.
+//
+// The ring is what the card's height is made of, so the compaction carries a
+// smaller one rather than only a smaller inset around it.
 StyledRect {
     id: root
 
@@ -38,30 +41,30 @@ StyledRect {
 
     width: parent.width
     visible: shown
-    height: content.implicitHeight + (compact ? Theme.spacingM * 2 : Theme.spacingS * 2)
+    height: content.implicitHeight + Theme.spacingS * 2
     color: Theme.surfaceContainerHigh
 
     Row {
         id: content
         anchors.fill: parent
-        anchors.margins: compact ? Theme.spacingM : Theme.spacingS
-        spacing: Theme.spacingM
+        anchors.margins: Theme.spacingS
+        spacing: Theme.spacingS
 
         Ring {
             id: winRing
-            width: root.compact ? 72 : 100
+            width: root.compact ? 56 : 84
             height: width
             anchors.verticalCenter: parent.verticalCenter
             percent: root.util
             pace: root.pace
             showPaceTick: root.showPacing
-            ringRadius: root.compact ? 28 : 38
-            ringWidth: root.compact ? 6 : 8
+            ringRadius: root.compact ? 21 : 32
+            ringWidth: root.compact ? 5 : 7
 
             StyledText {
                 anchors.centerIn: parent
                 text: Math.round(root.util) + "%"
-                font.pixelSize: root.compact ? 14 : Theme.fontSizeXLarge
+                font.pixelSize: root.compact ? Theme.fontSizeSmall : Theme.fontSizeLarge
                 font.weight: Font.DemiBold
                 color: Theme.surfaceText
             }
@@ -70,12 +73,12 @@ StyledRect {
         Column {
             width: Math.max(0, parent.width - winRing.width - parent.spacing)
             anchors.verticalCenter: parent.verticalCenter
-            spacing: root.compact ? Theme.spacingXS : Theme.spacingS
+            spacing: root.compact ? Theme.spacingXXS : Theme.spacingXS
 
             StyledText {
                 width: parent.width
                 text: root.title
-                font.pixelSize: Theme.fontSizeMedium
+                font.pixelSize: Theme.fontSizeSmall
                 font.weight: Font.Medium
                 color: Theme.surfaceText
                 wrapMode: Text.WordWrap
@@ -86,7 +89,7 @@ StyledRect {
                 width: parent.width
                 visible: !root.compact
                 text: Math.round(root.util) + "% " + api.tr("used")
-                font.pixelSize: Theme.fontSizeMedium
+                font.pixelSize: Theme.fontSizeSmall
                 color: api.progressColor(root.util)
                 wrapMode: Text.WordWrap
             }
@@ -95,7 +98,7 @@ StyledRect {
                 width: parent.width
                 text: api.paceLabel(root.pace)
                 visible: root.showPacing && text !== ""
-                font.pixelSize: root.compact ? Theme.fontSizeSmall : Theme.fontSizeMedium
+                font.pixelSize: Theme.fontSizeSmall
                 color: api.paceColor(root.pace ? root.pace.status : "")
                 wrapMode: Text.WordWrap
             }
@@ -119,7 +122,7 @@ StyledRect {
             StyledText {
                 width: parent.width
                 text: root.countdown ? api.tr("Resets in") + " " + root.countdown : ""
-                font.pixelSize: root.compact ? Theme.fontSizeSmall : Theme.fontSizeMedium
+                font.pixelSize: Theme.fontSizeSmall
                 color: Theme.surfaceVariantText
                 visible: root.countdown !== ""
                 wrapMode: Text.WordWrap

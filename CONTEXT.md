@@ -21,17 +21,55 @@ The Claude UI's word for an Account, because Claude's Accounts are config
 directories rather than credentials. Use it only in Claude-facing copy.
 _Avoid_: using it as the general term; that is Account.
 
+**Script**:
+One Source's own program: the file the plugin runs to find that Source's Accounts,
+report them under their Origins and fetch their usage. The widget and the settings
+page ask the same Script the same questions, so the two cannot disagree about what
+exists.
+_Avoid_: helper, executable, plugin binary
+
+**Detected Account**:
+An Account a Source's Script finds for itself rather than being handed one: a
+credential or config directory the machine already had, in the Source's own
+config, another tool's config, or the environment. The plugin cannot add or
+remove one, so the settings page lists Detected Accounts read-only, each under
+the Origin it was found at. Describing the detection as automatic is fine; it is
+the Account that is Detected, not automatic.
+_Avoid_: auto, built-in, hidden, automatic account
+
+**Custom Account**:
+An Account the user added to a Source's setting list. The plugin owns it: the
+settings page can edit it, and the Script is handed it as an argument instead of
+finding it itself. A Script resolves a clash between two Accounts - a Custom one
+and a Detected one, or two Custom ones - by keeping the first registration of a
+name or of a value, and reports the Origin it kept. The Account that lost stays
+listed: a Custom one as not in use, a Detected one as overridden, because either
+way the Source is authenticating with something the user did not expect.
+_Avoid_: manual account, user account, settings account
+
+**Origin**:
+Where a Detected Account's credential was found, as the user would look for it:
+a file's path, a directory a profile manager keeps, or an environment variable's
+name. A Script reports one per Account it lists, and _custom_ for an Account that
+came from the Custom Account list rather than detection.
+_Avoid_: source, discovery, provider
+
 **Window**:
 A rate-limited period a Source allows usage in, with a length, a Utilisation and
 a reset time. A Source has up to two, called primary and secondary. A length
-follows the provider: 5 hours and 7 days for Claude, whatever the API reports for
-ChatGPT.
+follows the provider: 5 hours and 7 days for Claude, Z.ai and opencode Go,
+whatever the API reports for ChatGPT.
 _Avoid_: period, limit, quota, bucket
 
 **Utilisation**:
 How much of a Window has been consumed, as a percentage of the Window's
 allowance.
 _Avoid_: usage, consumption, burn
+
+**Tightest Window**:
+The one of a Source's Windows with the highest Utilisation: the limit that will
+stop the user first. Which of the two it is varies by Source and over time.
+_Avoid_: worst, nearest, critical, primary
 
 **Pacing**:
 Whether a Window's Utilisation is ahead of or behind the linear burn rate for the
@@ -49,8 +87,16 @@ Source.
 _Avoid_: badge, chip, widget
 
 **Popout**:
-The panel opened from the Pill, holding one tab per visible Source.
+The panel opened from the Pill, holding the Overview followed by one tab per
+visible Source.
 _Avoid_: dropdown, panel, flyout
+
+**Overview**:
+The Popout's first tab, ranking every visible Source by its Tightest Window so
+the scarcest budget is the top line. It is not a Source: it has no provider, no
+credentials and nothing of its own to fetch. It is absent when fewer than two
+Sources are visible, because a comparison of one is noise.
+_Avoid_: summary, dashboard, all-tab, home
 
 **Section**:
 One typed card in a popout tab. A Source's tab is an ordered list of Sections.
@@ -72,8 +118,9 @@ _Avoid_: unavailable, disabled, missing
 
 **Missing**:
 Credentials a Source needs are absent or expired, but the Source is installed. A
-missing Source stays visible and offers a login action, so it does not silently
-sit at zero.
+missing Source stays visible and offers a way to fix it: a login action, a pointer
+at the settings, or a link into its own setup guide. It does not silently sit at
+zero.
 _Avoid_: not installed, logged out, unauthenticated
 
 **Unavailable**:

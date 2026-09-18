@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for QML widget JavaScript functions
-# Extracts pure JS functions from ClaudeCodeUsageWidget.qml and tests them via Node.js
+# Extracts pure JS functions from AiUsageWidget.qml and tests them via Node.js
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,7 +27,7 @@ run_js() {
 
 # Build JS test harness with functions extracted from the QML widget
 JS_HARNESS='
-// --- Functions extracted from ClaudeCodeUsageWidget.qml ---
+// --- Functions extracted from AiUsageWidget.qml ---
 
 function formatTokens(n) {
     if (n >= 1000000000) return (n / 1000000000).toFixed(1) + "B"
@@ -697,7 +697,7 @@ echo "=== Test 10: endpoint failures keep the last good reading ==="
 # is pulled out of the widget itself rather than copied into this harness, and
 # exercised for real.
 CREDS_REPORT=/tmp/creds-status-report.txt
-node - "$SCRIPT_DIR/ClaudeCodeUsageWidget.qml" > "$CREDS_REPORT" 2>&1 <<'NODE'
+node - "$SCRIPT_DIR/AiUsageWidget.qml" > "$CREDS_REPORT" 2>&1 <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
@@ -758,7 +758,7 @@ echo "=== Test 11: the Pill's no-reading rule ==="
 # pillHasReading decides whether a Pill slot draws a reading or a hollow
 # no-reading ring. Extracted from the widget so the rule cannot drift.
 PILL_REPORT=/tmp/pill-reading-report.txt
-node - "$SCRIPT_DIR/ClaudeCodeUsageWidget.qml" > "$PILL_REPORT" 2>&1 <<'NODE'
+node - "$SCRIPT_DIR/AiUsageWidget.qml" > "$PILL_REPORT" 2>&1 <<'NODE'
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
@@ -810,7 +810,7 @@ const path = require("path");
 const vm = require("vm");
 const repo = process.argv[2];
 
-const source = fs.readFileSync(path.join(repo, "ClaudeCodeUsageWidget.qml"), "utf8");
+const source = fs.readFileSync(path.join(repo, "AiUsageWidget.qml"), "utf8");
 
 function extract(name) {
     const m = source.match(new RegExp("function " + name + "\\([\\s\\S]*?\\n    \\}"));
@@ -821,7 +821,7 @@ function extract(name) {
 const registrySource = fs.readFileSync(path.join(repo, "sources.js"), "utf8").replace(/^\.pragma library\s*/, "");
 const registry = {};
 vm.createContext(registry);
-vm.runInContext(registrySource + "; this.api = { SOURCES, byId, ids };", registry, { filename: "sources.js" });
+vm.runInContext(registrySource + "; this.api = { SOURCES, byId, ids, wirePair, splitList, nameValueMap, scriptCommand, scriptPath };", registry, { filename: "sources.js" });
 const Sources = registry.api;
 
 const names = [
@@ -999,6 +999,57 @@ done < "$ACCOUNT_REPORT"
 
 if ! grep -q "^PASS\|^FAIL" "$ACCOUNT_REPORT"; then
     fail "account overlay report produced no results (node failed?) see $ACCOUNT_REPORT"
+fi
+
+# ============================================================
+echo "=== Test 13: the Overview toggle is its own setting ==="
+# ============================================================
+
+# The Overview is not a Source (ADR 0003): it is a standalone boolean, default
+# on, that never enters the enabled-Sources array. Both halves are read from the
+# files themselves, so the setting cannot drift.
+OVERVIEW_REPORT=/tmp/overview-setting-report.txt
+node - "$SCRIPT_DIR" > "$OVERVIEW_REPORT" 2>&1 <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[2];
+const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
+const settings = fs.readFileSync(path.join(root, "AiUsageSettings.qml"), "utf8");
+const results = [];
+const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
+
+// A consumer reads the resolved boolean off the widget. The absence of the key
+// must mean "on", matching every other boolean setting.
+const binding = widget.match(/property bool overviewEnabled:\s*([^\n]+)/);
+check(!!binding, "the widget declares overviewEnabled");
+if (binding) {
+    const resolve = new Function("pluginData", "return (" + binding[1].trim() + ");");
+    check(resolve({}) === true, "overviewEnabled defaults to true when unset");
+    check(resolve({ overviewEnabled: true }) === true, "overviewEnabled honours an explicit true");
+    check(resolve({ overviewEnabled: false }) === false, "overviewEnabled honours an explicit false");
+}
+
+// The settings page persists it through the standard ToggleSetting, pinned
+// above the draggable Source list and carrying no move buttons.
+const toggle = settings.match(/ToggleSetting\s*\{[^}]*settingKey:\s*"overviewEnabled"[^}]*\}/);
+check(!!toggle, "the settings page has an overviewEnabled toggle");
+if (toggle) {
+    check(/defaultValue:\s*true/.test(toggle[0]), "the settings toggle defaults to true");
+    check(settings.indexOf(toggle[0]) < settings.indexOf("model: root.displayDescriptors"),
+          "the toggle sits above the draggable Source list");
+    check(!/move\(|keyboard_arrow/.test(toggle[0]), "the toggle has no move buttons");
+}
+
+console.log(results.join("\n"));
+NODE
+
+while IFS=$'\t' read -r status label; do
+    [ -z "${status:-}" ] && continue
+    if [ "$status" = "PASS" ]; then pass "$label"; else fail "$label"; fi
+done < "$OVERVIEW_REPORT"
+
+if ! grep -q "^PASS\|^FAIL" "$OVERVIEW_REPORT"; then
+    fail "overview-setting report produced no results (node failed?) see $OVERVIEW_REPORT"
 fi
 
 echo ""

@@ -26,15 +26,15 @@ StyledRect {
     readonly property bool shown: alltime.sessions > 0 || alltime.messages > 0
 
     width: parent.width
-    height: allTimeRow.implicitHeight + Theme.spacingM * 2
+    height: allTimeRow.implicitHeight + Theme.spacingS * 2
     color: Theme.surfaceContainerHigh
     visible: shown
 
     Row {
         id: allTimeRow
         anchors.fill: parent
-        anchors.margins: Theme.spacingM
-        spacing: Theme.spacingS
+        anchors.margins: Theme.spacingS
+        spacing: Theme.spacingXS
 
         DankIcon {
             id: allTimeIcon

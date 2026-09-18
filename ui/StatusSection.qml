@@ -42,21 +42,21 @@ StyledRect {
 
     width: parent.width
     visible: shown
-    height: content.implicitHeight + Theme.spacingM * 2
+    height: content.implicitHeight + Theme.spacingS * 2
     color: Theme.surfaceContainerHigh
     border.width: 1
     border.color: Theme.error || Theme.primary
 
     Column {
         id: content
-        width: parent.width - Theme.spacingM * 2
+        width: parent.width - Theme.spacingS * 2
         anchors.centerIn: parent
-        spacing: Theme.spacingXS
+        spacing: Theme.spacingXXS
 
         StyledText {
             width: parent.width
             text: root.title
-            font.pixelSize: Theme.fontSizeMedium
+            font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceText
             wrapMode: Text.WordWrap

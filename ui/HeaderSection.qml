@@ -31,11 +31,11 @@ Column {
     }
 
     width: parent.width
-    spacing: 2
+    spacing: Theme.spacingXXS
 
     StyledText {
         text: root.label
-        font.pixelSize: Theme.fontSizeLarge
+        font.pixelSize: Theme.fontSizeMedium
         font.weight: Font.Bold
         color: Theme.surfaceText
     }

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# The Account origins this script reports are display text: the path, directory
+# or environment variable a credential was found at, in the form the plugin's
+# own descriptions already use. A tilde in one is meant literally, not as a
+# shell expansion to perform.
+# shellcheck disable=SC2088
 set -eu
 
 # Cheapest possible check, before any temp dirs, network calls, or profile
@@ -60,6 +65,8 @@ PROFILE_FIVE_HOUR_RESET=
 PROFILE_SEVEN_DAY_RESET=
 PROFILE_EXTRA_USAGE=
 PROFILE_CREDS_STATUS=
+PROFILE_ORIGINS=
+PROFILE_SHADOWED=
 NOTINSTALLED
     exit 0
 fi
@@ -113,6 +120,8 @@ FIRST_SESSION="unknown"
 
 # --- Pricing cache (refresh once per day from LiteLLM) ---
 PRICING_JSON=""
+PRICING_AWK=""
+USD_EUR_RATE="0"
 refresh_pricing() {
     local raw
     raw=$(curl -s --max-time 10 "$LITELLM_URL" 2>/dev/null) || return 1
@@ -155,26 +164,32 @@ refresh_pricing() {
     return 1
 }
 
-if [ -f "$PRICING_CACHE" ]; then
-    cached_date=$(jq -r '.updated // ""' "$PRICING_CACHE" 2>/dev/null || echo "")
-    if [ "$cached_date" != "$TODAY" ]; then
+# The refresh is a network call, so it is deferred to the fetch path: the listing
+# mode below answers the settings page with Accounts and origins, and asking for
+# those must not wait on LiteLLM or Frankfurter.
+load_pricing() {
+    if [ -f "$PRICING_CACHE" ]; then
+        local cached_date
+        cached_date=$(jq -r '.updated // ""' "$PRICING_CACHE" 2>/dev/null || echo "")
+        if [ "$cached_date" != "$TODAY" ]; then
+            refresh_pricing || true
+        fi
+        PRICING_JSON=$(cat "$PRICING_CACHE")
+    else
         refresh_pricing || true
+        [ -f "$PRICING_CACHE" ] && PRICING_JSON=$(cat "$PRICING_CACHE")
     fi
-    PRICING_JSON=$(cat "$PRICING_CACHE")
-else
-    refresh_pricing || true
-    [ -f "$PRICING_CACHE" ] && PRICING_JSON=$(cat "$PRICING_CACHE")
-fi
 
-# Build awk-friendly pricing string: "opus:input:output:cache_read:cache_write,sonnet:...,haiku:..."
-PRICING_AWK=""
-USD_EUR_RATE="0"
-if [ -n "$PRICING_JSON" ]; then
-    PRICING_AWK=$(echo "$PRICING_JSON" | jq -r '
-        [.models | to_entries[] | "\(.key):\(.value.input):\(.value.output):\(.value.cache_read):\(.value.cache_write)"]
-        | join(",")' 2>/dev/null || echo "")
-    USD_EUR_RATE=$(echo "$PRICING_JSON" | jq -r '.usd_eur_rate // 0' 2>/dev/null || echo "0")
-fi
+    # Build awk-friendly pricing string: "opus:input:output:cache_read:cache_write,sonnet:...,haiku:..."
+    PRICING_AWK=""
+    USD_EUR_RATE="0"
+    if [ -n "$PRICING_JSON" ]; then
+        PRICING_AWK=$(echo "$PRICING_JSON" | jq -r '
+            [.models | to_entries[] | "\(.key):\(.value.input):\(.value.output):\(.value.cache_read):\(.value.cache_write)"]
+            | join(",")' 2>/dev/null || echo "")
+        USD_EUR_RATE=$(echo "$PRICING_JSON" | jq -r '.usd_eur_rate // 0' 2>/dev/null || echo "0")
+    fi
+}
 
 # Local vs UTC date bucketing. strflocaltime (jq >= 1.6) maps each UTC timestamp
 # to the LOCAL calendar date so daily boundaries line up with TODAY/WEEK_START/...
@@ -463,14 +478,24 @@ fetch_profile_usage() {
 PROFILE_DIRS=()
 PROFILE_NAMES=()
 PROFILE_CREDS=()  # credentials file per profile
+PROFILE_ORIGINS=()
+PROFILE_SHADOWED=()
 
-# add_profile <name> <claude_config_dir>
-# First registration of a name wins.
+# add_profile <name> <claude_config_dir> <origin>
+# First registration of a name wins. The origin is where the directory came
+# from, as the user would look for it: a file path, or "custom" for an entry
+# from the plugin's Custom Account list. It is display text, so the two list
+# delimiters are stripped from it just as they are from a name.
 add_profile() {
-    local name="$1" dir="$2"
+    local name="$1" dir="$2" origin="${3:-}"
 
-    # , | : are output delimiters, they cannot survive in a profile name
+    # , | : are output delimiters, they cannot survive in a profile name. An
+    # origin is display text: the list it rides is comma-separated and the other
+    # Profile lists separate entries with |, so neither can survive in it either.
+    # The ":" that separates an origin from its name is left alone, because a
+    # pair is split on its first colon and a path may carry one.
     name="${name//[,|:]/}"
+    origin="${origin//[,|]/}"
     [ -n "$name" ] || return 0
     [ -n "$dir" ] || return 0
 
@@ -482,27 +507,69 @@ add_profile() {
 
     [ -d "${dir}/projects" ] || return 0
 
-    local existing existing_dir
-    for existing in "${PROFILE_NAMES[@]}"; do
-        [ "$existing" = "$name" ] && return 0
-    done
-    for existing_dir in "${PROFILE_DIRS[@]}"; do
-        [ "$existing_dir" -ef "${dir}/projects" ] && return 0
-    done
+    local idx
+    # Nothing to clash with while the list is empty, and the guard keeps that
+    # true on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#PROFILE_NAMES[@]}" -gt 0 ]; then
+        for idx in "${!PROFILE_NAMES[@]}"; do
+            if [ "${PROFILE_NAMES[$idx]}" = "$name" ] || [ "${PROFILE_DIRS[$idx]}" -ef "${dir}/projects" ]; then
+                # Only a clash a user can act on is reported: one side of it has
+                # to be a Custom Account. Two detected registrations clashing is
+                # the Script's own precedence, which its description explains.
+                if [ "$origin" = "custom" ] || [ "${PROFILE_ORIGINS[$idx]}" = "custom" ]; then
+                    PROFILE_SHADOWED+=("${PROFILE_NAMES[$idx]}|${name}:${origin}")
+                fi
+                return 0
+            fi
+        done
+    fi
 
     PROFILE_DIRS+=("${dir}/projects")
     PROFILE_NAMES+=("$name")
     PROFILE_CREDS+=("${dir}/.credentials.json")
+    PROFILE_ORIGINS+=("$origin")
 }
 
-add_profile "default" "$CLAUDE_DIR"
+# profile_origins -> "name:origin,name:origin". The form the per-Profile lists
+# already use, so the settings page parses one shape.
+profile_origins() {
+    local out="" idx
+    # An empty list has nothing to join, and the guard keeps the expansion valid
+    # on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#PROFILE_NAMES[@]}" -gt 0 ]; then
+        for idx in "${!PROFILE_NAMES[@]}"; do
+            out="${out:+${out},}${PROFILE_NAMES[$idx]}:${PROFILE_ORIGINS[$idx]}"
+        done
+    fi
+    printf '%s' "$out"
+}
+
+# profile_shadowed -> "<winner>|<name>:<origin>" for the registrations the list
+# refused because something already held their name or their directory: what kept
+# it, then what lost and where it came from. The settings page is how the user
+# learns that a Custom Account took a detected one's place, which is otherwise
+# only visible as an API rejection. The winner makes that link explicit even when
+# the two names differ, as they do when the directory is what clashed.
+profile_shadowed() {
+    local out="" idx
+    # An empty list has nothing to join, and the guard keeps the expansion valid
+    # on a bash that cannot expand an empty indexed list under set -u.
+    if [ "${#PROFILE_SHADOWED[@]}" -gt 0 ]; then
+        for idx in "${!PROFILE_SHADOWED[@]}"; do
+            out="${out:+${out},}${PROFILE_SHADOWED[$idx]}"
+        done
+    fi
+    printf '%s' "$out"
+}
+
+add_profile "default" "$CLAUDE_DIR" "~/.claude"
 
 CCS_INSTANCES_DIR="${HOME}/.ccs/instances"
 if [ -d "$CCS_INSTANCES_DIR" ]; then
     for inst in "$CCS_INSTANCES_DIR"/*/; do
         [ -d "$inst" ] || continue
         inst="${inst%/}"
-        add_profile "${inst##*/}" "$inst"
+        add_profile "${inst##*/}" "$inst" "~/.ccs/instances"
     done
 fi
 
@@ -520,16 +587,42 @@ if [ -d "$CCP_PROFILES_DIR" ]; then
         done < "$env_file"
         [ -n "$ccp_dir" ] || continue
         name="${env_file##*/}"
-        add_profile "${name%.env}" "$ccp_dir"
+        add_profile "${name%.env}" "$ccp_dir" "~/.ccp/profiles"
     done
 fi
+
+LIST_ACCOUNTS=0
 
 # Manual entries from plugin settings: "name=/path/to/config/dir"
 for arg in "$@"; do
     case "$arg" in
-        *=*) add_profile "${arg%%=*}" "${arg#*=}" ;;
+        "--list-accounts") LIST_ACCOUNTS=1 ;;
+        *=*) add_profile "${arg%%=*}" "${arg#*=}" "custom" ;;
     esac
 done
+
+# The settings page's Profile editor asks for the list on its own, with the same
+# name=value arguments the widget fetches with so that the two agree about which
+# Profile a name refers to. This returns before the first request: opening the
+# settings page must not spend an API call, and before the token counting, which
+# reads and prices every transcript since the first of the month.
+if [ "$LIST_ACCOUNTS" -eq 1 ]; then
+    # The listing answer says why it is empty when it is: an empty Account list
+    # is this Script's own Not installed state, and the settings page needs to
+    # know that as a state of the Source rather than as a verdict on the user's
+    # rows.
+    printf 'PROFILES=%s\n' "$(IFS=,; echo "${PROFILE_NAMES[*]:-}")"
+    printf 'PROFILE_ORIGINS=%s\n' "$(profile_origins)"
+    printf 'PROFILE_SHADOWED=%s\n' "$(profile_shadowed)"
+    if [ "${#PROFILE_NAMES[@]}" -eq 0 ]; then
+        printf 'CREDS_STATUS=not_installed\n'
+    fi
+    exit 0
+fi
+
+# The listing mode has answered by now, so the fetch path can spend the network
+# call the prices need.
+load_pricing
 
 # --- Run token counting + usage fetch in parallel for each profile ---
 TMPFILES=()      # token stats tmpfile per profile
