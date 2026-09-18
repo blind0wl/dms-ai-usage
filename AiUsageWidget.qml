@@ -1105,9 +1105,9 @@ PluginComponent {
             return tr("Team");
         if (tier.indexOf("enterprise") >= 0)
             return tr("Enterprise");
-        return tier.replace(/_/g, " ").replace(/\b\w/g, function (c) {
-            return c.toUpperCase();
-        });
+        // A tier outside that list names no plan the user bought: Claude Pro
+        // reports "default_claude_ai", which read as "Pro · Default Claude Ai".
+        return "";
     }
 
     function formatSubscription(subType, tier) {
