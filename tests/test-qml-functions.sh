@@ -47,6 +47,28 @@ function progressColor(pct) {
     return "primary"
 }
 
+var widgetSources = (function () {
+    var fs = require("fs");
+    var vm = require("vm");
+    var sandbox = { console: console };
+    vm.createContext(sandbox);
+    vm.runInContext(fs.readFileSync("__ROOT__/sources.js", "utf8").replace(/^\.pragma library\s*/, "") + "; this.SOURCES = SOURCES;", sandbox);
+    return sandbox.SOURCES;
+})();
+
+function brandColor(id) {
+    for (var i = 0; i < widgetSources.length; i++)
+        if (widgetSources[i].id === id)
+            return widgetSources[i].brandColor
+    return "primary"
+}
+
+function utilisationColor(id, pct) {
+    if (pct > 80) return "error"
+    if (pct > 50) return "warning"
+    return brandColor(id)
+}
+
 var testLang = "en"
 var tierTranslations = {
     Free: { fr: "Gratuit", es: "Gratis" },
@@ -253,6 +275,8 @@ function formatCountdown(resetMs) {
 }
 '
 
+JS_HARNESS="${JS_HARNESS//__ROOT__/$SCRIPT_DIR}"
+
 # ============================================================
 echo "=== Test 1: formatTokens ==="
 # ============================================================
@@ -327,6 +351,45 @@ test_progress_color 51 "warning" "progressColor(51) = warning"
 test_progress_color 80 "warning" "progressColor(80) = warning"
 test_progress_color 81 "error" "progressColor(81) = error"
 test_progress_color 100 "error" "progressColor(100) = error"
+
+# ============================================================
+echo "=== Test 3b: Brand Colour ==="
+# ============================================================
+
+test_brand_color() {
+    local input="$1" expected="$2" label="$3"
+    local result
+    result=$(run_js "${JS_HARNESS} console.log(brandColor('$input'))")
+    if [ "$result" = "$expected" ]; then
+        pass "$label"
+    else
+        fail "$label (expected '$expected', got '$result')"
+    fi
+}
+
+test_brand_color claude "#D97757" "brandColor(claude) = the clay"
+test_brand_color chatgpt "#10A37F" "brandColor(chatgpt) = the green"
+test_brand_color zai "#4F7CFF" "brandColor(zai) = the blue"
+test_brand_color opencode "#A78BFA" "brandColor(opencode) = the violet"
+test_brand_color overview "primary" "brandColor falls back to the theme primary for a non-Source tab"
+
+test_utilisation_color() {
+    local input="$1" id="$2" expected="$3" label="$4"
+    local result
+    result=$(run_js "${JS_HARNESS} console.log(utilisationColor('$id', $input))")
+    if [ "$result" = "$expected" ]; then
+        pass "$label"
+    else
+        fail "$label (expected '$expected', got '$result')"
+    fi
+}
+
+test_utilisation_color 0 "claude" "#D97757" "utilisationColor keeps the Brand Colour at 0%"
+test_utilisation_color 50 "chatgpt" "#10A37F" "utilisationColor keeps the Brand Colour at 50%"
+test_utilisation_color 51 "zai" "warning" "utilisationColor takes the warning colour past 50%"
+test_utilisation_color 80 "zai" "warning" "utilisationColor holds the warning colour at 80%"
+test_utilisation_color 81 "opencode" "error" "utilisationColor takes the error colour past 80%"
+test_utilisation_color 100 "opencode" "error" "utilisationColor holds the error colour at 100%"
 
 # ============================================================
 echo "=== Test 4: formatTier ==="

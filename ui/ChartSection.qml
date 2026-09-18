@@ -15,6 +15,7 @@ StyledRect {
 
     readonly property var source: ctx ? ctx.source : null
     readonly property var api: ctx ? ctx.api : null
+    readonly property color brandColor: ctx && ctx.brandColor ? ctx.brandColor : Theme.primary
     readonly property var dayLabels: ctx ? ctx.dayLabels : []
     readonly property int todayIndex: ctx ? ctx.todayIndex : 0
     readonly property bool overlay: section ? section.overlay === true : false
@@ -48,7 +49,7 @@ StyledRect {
             text: api.tr("Daily Activity")
             font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
-            color: Theme.surfaceText
+            color: Theme.surfaceVariantText
         }
 
         Item {
@@ -72,15 +73,18 @@ StyledRect {
                             width: parent.width
                             height: parent.height - dayLabel.height - 2
 
-                            // Total bar.
+                            // Total bar. Every day is the Brand Colour; today
+                            // is at full strength and the rest sit back, except
+                            // while a hover picks one out. With an Account
+                            // selected the total goes grey so the share stands.
                             Rectangle {
                                 anchors.bottom: parent.bottom
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 width: Math.max(parent.width - 4, 4)
                                 height: root.barHeight(root.dailyTokens[index], barArea.height)
                                 radius: 2
-                                color: root.overlay && root.accountSelected ? Theme.surfaceVariant : (index === root.todayIndex ? Theme.primary : Theme.surfaceVariant)
-                                opacity: root.hoveredDay >= 0 && index !== root.hoveredDay ? 0.4 : 1.0
+                                color: root.overlay && root.accountSelected ? Theme.surfaceVariant : root.brandColor
+                                opacity: root.hoveredDay >= 0 ? (index === root.hoveredDay ? 1.0 : 0.4) : (index === root.todayIndex ? 1.0 : 0.55)
 
                                 Behavior on opacity {
                                     NumberAnimation {
@@ -97,7 +101,7 @@ StyledRect {
                                 width: Math.max(parent.width - 4, 4)
                                 height: root.accountDaily.length > index ? root.barHeight(root.accountDaily[index], barArea.height) : 0
                                 radius: 2
-                                color: Theme.primary
+                                color: root.brandColor
                                 opacity: root.hoveredDay >= 0 && index !== root.hoveredDay ? 0.4 : 1.0
 
                                 Behavior on opacity {
@@ -120,7 +124,7 @@ StyledRect {
                             id: dayLabel
                             text: root.dayLabels[index]
                             font.pixelSize: Theme.fontSizeSmall - 1
-                            color: index === root.hoveredDay ? Theme.primary : index === root.todayIndex ? Theme.primary : Theme.surfaceVariantText
+                            color: index === root.hoveredDay ? root.brandColor : index === root.todayIndex ? root.brandColor : Theme.surfaceVariantText
                             anchors.horizontalCenter: parent.horizontalCenter
                         }
                     }
@@ -179,7 +183,7 @@ StyledRect {
                     return root.api.formatTokens(root.accountDaily[root.hoveredDay]) + " " + root.accountName;
                 }
                 font.pixelSize: Theme.fontSizeSmall - 1
-                color: Theme.primary
+                color: root.brandColor
                 anchors.horizontalCenter: parent.horizontalCenter
             }
 

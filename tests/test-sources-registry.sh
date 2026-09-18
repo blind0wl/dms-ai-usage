@@ -101,9 +101,8 @@ for (const d of reg.SOURCES) {
         check(implemented.has(s.type), `${tag} section type "${s.type}" is implemented by SourceTab`);
         if (s.type === "accounts")
             sawAccountsSection = true;
-        if (s.type === "windows") {
-            check(s.which === "primary" || s.which === "secondary", `${tag} windows section names a real window`);
-        }
+        if (s.type === "windows")
+            check(s.counts === undefined || typeof s.counts === "boolean", `${tag} windows section counts flag is boolean`);
         if (s.type === "stats") {
             check(Array.isArray(s.columns) && s.columns.length > 0, `${tag} stats declares columns`);
             for (const c of s.columns || []) {
@@ -184,8 +183,9 @@ for (const d of reg.SOURCES) {
             check(["text", "number", "boolean", "series", "models"].indexOf(spec.type) >= 0, `${tag} account field "${key}" has a known reader`);
             declaredFields.add(spec.field);
         }
-        // Selecting an Account moves both Window cards, so the overlay slots the
-        // cards read have to be covered by the fields the descriptor lists.
+        // Selecting an Account moves the Window card's readings, so the overlay
+        // slots the card reads have to be covered by the fields the descriptor
+        // lists.
         for (const slot of ["primaryUtil", "primaryReset", "secondaryUtil", "secondaryReset"])
             check(declaredFields.has(slot), `${tag} account fields cover the ${slot} overlay slot`);
         check(tr[d.accounts.titleKey] !== undefined, `${tag} account title is translated`);
@@ -233,7 +233,7 @@ check(reg.byId(ids[0]) === reg.SOURCES[0], "byId returns the matching descriptor
 // `visible` as false on every item while an ancestor is hidden and the popout
 // primes its content hidden.
 check(/visible:\s*item\s*\?\s*item\.shown\s*!==\s*false\s*:\s*true/.test(tab), "SourceTab's section Loader mirrors the Section's shown so hidden cards collapse");
-for (const name of ["AccountsSection", "LoginSection", "StatusSection", "WindowsSection", "ModelsSection", "AlltimeSection"]) {
+for (const name of ["AccountsSection", "LoginSection", "StatusSection", "WindowsSection", "ModelsSection"]) {
     const sectionSource = fs.readFileSync(path.join(root, `ui/${name}.qml`), "utf8");
     check(/property bool shown:/.test(sectionSource), `${name} declares shown so the renderer can collapse it`);
 }
