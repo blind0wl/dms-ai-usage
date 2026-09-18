@@ -108,7 +108,7 @@ Column {
                             text: row.showsReading ? Math.round(modelData.util) + "%" : "--"
                             font.pixelSize: Theme.fontSizeSmall
                             font.weight: Font.Medium
-                            color: row.showsReading ? root.api.progressColor(modelData.util) : Theme.surfaceVariantText
+                            color: row.showsReading ? root.api.utilisationColor(modelData.id, modelData.util) : Theme.surfaceVariantText
                         }
 
                         StyledText {
@@ -135,7 +135,7 @@ Column {
                         width: parent.width * row.fraction
                         height: parent.height
                         radius: parent.radius
-                        color: root.api.progressColor(modelData.util)
+                        color: root.api.utilisationColor(modelData.id, modelData.util)
                     }
                 }
 

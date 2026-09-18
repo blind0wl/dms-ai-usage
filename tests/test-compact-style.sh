@@ -5,8 +5,8 @@
 # from tightening every Section rather than from growing the panel. The scale is
 # three steps and nothing wider: Theme.spacingS for an inset or the gap between
 # two Sections, Theme.spacingXS for the rhythm inside one, Theme.spacingXXS where
-# a label sits on its value. Type stops below the Window card's own hero number:
-# a card's headline is Theme.fontSizeSmall at Font.Medium, and the tab's Source
+# a label sits on its value. Type stops below the Token Consumption figure: a
+# card's headline is Theme.fontSizeSmall at Font.Medium, and the tab's Source
 # name is one step above it at Theme.fontSizeMedium Bold. DMS's file-browser
 # sidebar is the precedent: spacingS insets, spacingXS between its rows, a
 # fontSizeSmall header at Font.Medium.
@@ -66,10 +66,10 @@ for (const name of names) {
     check(!sources[name].includes("Theme.fontSizeXLarge"), `ui/${name} keeps no type above fontSizeLarge`);
 }
 const large = names.filter((name) => sources[name].includes("Theme.fontSizeLarge"));
-check(large.length === 1 && large[0] === "WindowsSection.qml",
-      "fontSizeLarge is the Window card's Utilisation number and nothing else");
+check(large.length === 1 && large[0] === "StatsSection.qml",
+      "fontSizeLarge is the Token Consumption figure and nothing else");
 
-// A card is inset by S, or by XS around a ring that brings its own room.
+// A card frames its body by S, or by XS where it brings its own room.
 for (const name of names) {
     const margins = sources[name].match(/anchors\.margins:\s*Theme\.spacing\w+/g) || [];
     const off = margins.filter((line) => !/Theme\.spacing(S|XS)$/.test(line));
@@ -107,8 +107,9 @@ for (const name of names) {
 // --- The two things that make a card tall carry a compact size ---
 const windows = sources["WindowsSection.qml"];
 const chart = sources["ChartSection.qml"];
-check(/width:\s*root\.compact \? 56 : 84/.test(windows),
-      "the Window card's Ring is the compact 56/84 rather than 72/100");
+check(!/\bRing\s*\{/.test(windows),
+      "the Window card draws bars, not a Ring: the Ring is the Pill's");
+check(/height:\s*6/.test(windows), "the Window bar is the compact 6 rather than a ring");
 check(/height:\s*56/.test(chart), "the activity chart's plot area is the compact 56 rather than 70");
 
 // --- The rhythm of a tab ---

@@ -66,6 +66,15 @@ How much of a Window has been consumed, as a percentage of the Window's
 allowance.
 _Avoid_: usage, consumption, burn
 
+**Brand Colour**:
+The fixed colour that identifies a Source, independent of the shell theme:
+Claude's clay, ChatGPT's green, Z.ai's blue, opencode Go's violet. It is the
+colour a Utilisation reads at or under 50%; above that the theme's warning colour
+takes over, and above 80% its error colour. It marks a Source in the Popout: its
+tab chip, its header, its Overview bar, and its own tab's Window bars, chart and
+model bars. The Pill keeps the theme's colours instead.
+_Avoid_: accent, tint, source colour, theme colour
+
 **Tightest Window**:
 The one of a Source's Windows with the highest Utilisation: the limit that will
 stop the user first. Which of the two it is varies by Source and over time.

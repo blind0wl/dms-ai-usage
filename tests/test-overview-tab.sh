@@ -125,7 +125,8 @@ check(/overviewRows: Sources\.overviewRows\(root\.overviewStates\)/.test(widget)
 check(widget.indexOf('"overview"') < 0,
       "the widget hardcodes no Overview id; it comes from the registry");
 check(/model: root\.popoutTabs/.test(widget), "the tab strip is generated from the popout's tab list");
-check(/color: root\.activeTabId === modelData\.id/.test(widget), "the strip marks the selected tab");
+check(/readonly property bool active: root\.activeTabId === modelData\.id/.test(widget) && /color: active \?/.test(widget),
+      "the strip marks the selected tab");
 check(/onClicked: root\.popoutTabId = modelData\.id/.test(widget), "a press on a strip entry selects it");
 check(/tab: root\.activeTab/.test(widget), "the body renders the selected tab entry, Overview included");
 check(/ctx: root\.activeTab \? root\.contextFor\(root\.activeTab\.id\) : null/.test(widget),
@@ -182,8 +183,8 @@ check(/modelData\.stale \? 0\.5 : 1/.test(section), "an Unavailable row's bar is
 check(/api\.selectTab\(row\.sourceId\)/.test(section), "a press on a row switches to that Source's tab");
 check(/api\.tr\("Resets in"\)/.test(section) && /windowLabelForLength/.test(section),
       "a row names its Tightest Window and when it resets");
-check(/api\.progressColor\(modelData\.util\)/.test(section),
-      "the row's bar and percentage use the Ring's colour rule");
+check(/api\.utilisationColor\(modelData\.id, modelData\.util\)/.test(section),
+      "the row's bar and percentage use the Source's Brand Colour, with severity past the thresholds");
 check(/Math\.round\(modelData\.util\) \+ "%"/.test(section), "a row shows its Utilisation as a percentage");
 check(/showsReading: modelData\.ranked/.test(section) && /visible: row\.showsReading/.test(section),
       "an unranked row shows no percentage, no reset line and no bar value");

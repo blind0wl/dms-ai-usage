@@ -1,9 +1,9 @@
 import QtQuick
 import qs.Common
 
-// The circular utilisation indicator, shared by the taskbar Pill and the popout
-// Window cards. Geometry is passed in rather than derived, because the Pill and
-// the two popout card sizes each use their own radius and stroke width.
+// The circular utilisation indicator, drawn in the taskbar Pill. Geometry is
+// passed in rather than derived, because the Pill's rings can differ in size.
+// The Popout draws Windows as bars, not rings.
 Canvas {
     id: ring
 

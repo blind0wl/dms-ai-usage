@@ -16,6 +16,7 @@ StyledRect {
 
     readonly property var source: ctx ? ctx.source : null
     readonly property var api: ctx ? ctx.api : null
+    readonly property color brandColor: ctx && ctx.brandColor ? ctx.brandColor : Theme.primary
     readonly property string nameStyle: section && section.nameStyle ? section.nameStyle : "raw"
 
     readonly property var models: source && source.models ? source.models : []
@@ -43,7 +44,7 @@ StyledRect {
             text: api.tr("Models This Week")
             font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
-            color: Theme.surfaceText
+            color: Theme.surfaceVariantText
         }
 
         Column {
@@ -91,7 +92,7 @@ StyledRect {
                             width: root.weekTokens > 0 ? trackBar.width * Math.min(modelRow.tokens / root.weekTokens, 1) : 0
                             height: trackBar.height
                             radius: 2
-                            color: Theme.primary
+                            color: root.brandColor
                         }
                     }
                 }

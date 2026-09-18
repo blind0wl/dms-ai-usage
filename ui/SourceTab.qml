@@ -16,7 +16,7 @@ import qs.Common
 // stays a step above it at `Theme.fontSizeMedium` Bold.
 //
 // Two kinds of value are deliberately not on that scale. A drawn size is pixels,
-// because it is geometry rather than spacing: a Window card's Ring, the activity
+// because it is geometry rather than spacing: a Window card's bar, the activity
 // chart's plot, a progress bar's height and radius. And a type size a step under
 // the scale's floor is written `Theme.fontSizeSmall - 1`, DMS's own idiom for it,
 // rather than as a bare number.
@@ -52,8 +52,6 @@ Column {
             return chartComponent;
         case "models":
             return modelsComponent;
-        case "alltime":
-            return alltimeComponent;
         case "overview":
             return overviewComponent;
         }
@@ -140,11 +138,6 @@ Column {
     Component {
         id: modelsComponent
         ModelsSection {}
-    }
-
-    Component {
-        id: alltimeComponent
-        AlltimeSection {}
     }
 
     Component {

@@ -658,6 +658,10 @@ PluginComponent {
             return root.progressColor(pct);
         }
 
+        function utilisationColor(id, pct) {
+            return root.utilisationColor(id, pct);
+        }
+
         function formatSubscription(subType, tier) {
             return root.formatSubscription(subType, tier);
         }
@@ -723,6 +727,8 @@ PluginComponent {
         var sel = root.selectedAccount[id] || "all";
         return {
             source: root.stateFor(id),
+            sourceId: id,
+            brandColor: root.brandColor(id),
             api: root.api,
             descriptor: d,
             label: d ? root.tr(d.labelKey) : "",
@@ -884,10 +890,17 @@ PluginComponent {
                         delegate: Rectangle {
                             required property var modelData
 
+                            // The active chip wears the Source's Brand Colour.
+                            // The Overview is not a Source, so it keeps the
+                            // theme's primary; white reads on every brand colour
+                            // while primaryText reads on the theme's primary.
+                            readonly property bool branded: root.hasBrandColor(modelData.id)
+                            readonly property bool active: root.activeTabId === modelData.id
+
                             width: (parent.width - Theme.spacingXS * (root.popoutTabs.length - 1)) / root.popoutTabs.length
                             height: 32
                             radius: 16
-                            color: root.activeTabId === modelData.id ? Theme.primary : Theme.surfaceVariant
+                            color: active ? root.brandColor(modelData.id) : Theme.surfaceVariant
 
                             Behavior on color {
                                 ColorAnimation {
@@ -907,8 +920,8 @@ PluginComponent {
                                 horizontalAlignment: Text.AlignHCenter
                                 wrapMode: Text.NoWrap
                                 font.pixelSize: Theme.fontSizeSmall
-                                font.weight: root.activeTabId === modelData.id ? Font.Medium : Font.Normal
-                                color: root.activeTabId === modelData.id ? Theme.primaryText : Theme.surfaceVariantText
+                                font.weight: active ? Font.Medium : Font.Normal
+                                color: active ? (branded ? "#ffffff" : Theme.primaryText) : Theme.surfaceVariantText
                             }
 
                             MouseArea {
@@ -958,6 +971,30 @@ PluginComponent {
         if (pct > 50)
             return Theme.warning;
         return Theme.primary;
+    }
+
+    // A Source's Brand Colour: its own fixed colour, carried on its descriptor
+    // rather than the shell theme (ADR 0001). The Overview is not a Source, so
+    // it has none and falls back to the theme's primary.
+    function brandColor(id) {
+        var d = Sources.byId(id);
+        return d && d.brandColor ? d.brandColor : Theme.primary;
+    }
+
+    function hasBrandColor(id) {
+        var d = Sources.byId(id);
+        return !!(d && d.brandColor);
+    }
+
+    // The colour a Utilisation reads: the Brand Colour at or under 50%, then the
+    // theme's warning and error past the thresholds. The Pill's Ring keeps
+    // `progressColor` instead, and does not use the Brand Colour.
+    function utilisationColor(id, pct) {
+        if (pct > 80)
+            return Theme.error;
+        if (pct > 50)
+            return Theme.warning;
+        return root.brandColor(id);
     }
 
     // Returns { timeFrac, delta, status } for a usage window.

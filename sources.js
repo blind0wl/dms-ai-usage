@@ -386,6 +386,7 @@ var SOURCES = [
     {
         id: "claude",
         labelKey: "Claude",
+        brandColor: "#D97757",
         script: "get-claude-usage",
         // Claude's script reports its Windows under different names and emits
         // ISO-8601 reset strings. The parser normalises both to epoch ms.
@@ -462,8 +463,7 @@ var SOURCES = [
             { type: "header" },
             { type: "accounts" },
             { type: "login" },
-            { type: "windows", which: "primary" },
-            { type: "windows", which: "secondary", counts: true },
+            { type: "windows", counts: true },
             {
                 type: "stats",
                 columns: [
@@ -486,13 +486,13 @@ var SOURCES = [
                 ]
             },
             { type: "chart", overlay: true },
-            { type: "models", nameStyle: "short" },
-            { type: "alltime" }
+            { type: "models", nameStyle: "short" }
         ]
     },
     {
         id: "chatgpt",
         labelKey: "ChatGPT",
+        brandColor: "#10A37F",
         script: "get-chatgpt-usage",
         windows: {
             primary: {
@@ -538,8 +538,7 @@ var SOURCES = [
             { type: "header" },
             { type: "accounts" },
             { type: "login" },
-            { type: "windows", which: "primary" },
-            { type: "windows", which: "secondary" },
+            { type: "windows" },
             {
                 type: "stats",
                 columns: [
@@ -561,13 +560,13 @@ var SOURCES = [
                 ]
             },
             { type: "chart" },
-            { type: "models", nameStyle: "short" },
-            { type: "alltime" }
+            { type: "models", nameStyle: "short" }
         ]
     },
     {
         id: "opencode",
         labelKey: "opencode Go",
+        brandColor: "#A78BFA",
         script: "get-opencode-go-usage",
         // The endpoint reports ISO-8601 reset times and no window length, so
         // the fixed 5h and 7d lengths are declared here for Pacing. Its two
@@ -632,13 +631,13 @@ var SOURCES = [
             { type: "accounts" },
             { type: "login" },
             { type: "status" },
-            { type: "windows", which: "primary" },
-            { type: "windows", which: "secondary" }
+            { type: "windows" }
         ]
     },
     {
         id: "zai",
         labelKey: "Z.ai",
+        brandColor: "#4F7CFF",
         script: "get-zai-usage",
         windows: {
             primary: {
@@ -686,8 +685,7 @@ var SOURCES = [
             { type: "header" },
             { type: "accounts" },
             { type: "login" },
-            { type: "windows", which: "primary" },
-            { type: "windows", which: "secondary" },
+            { type: "windows" },
             {
                 type: "stats",
                 columns: [
