@@ -354,10 +354,62 @@ count_profile_tokens() {
         }' > "$out_file" 2>/dev/null || true
 }
 
+# One field of a Profile result file, defaulted when the file does not carry it.
+# The file is the Script's own, so a missing line means an interrupted write from
+# an earlier run, and that line's documented default stands in rather than an
+# empty value reaching the aggregate fields. The form this replaces,
+# `value=$(grep ... | cut ... || echo default)`, cannot default at all: `||`
+# binds to the whole pipeline and takes cut's exit status, which is 0 even when
+# grep matched nothing, so the fallback never fired.
+result_value() {
+    local file="$1" key="$2" default="$3" value
+    value=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+    printf '%s' "${value:-$default}"
+}
+
+# Writes one Profile's result all-or-nothing, from complete `key=value` lines.
+# The parent reads only the finished file, so a fetch that dies part-way leaves
+# no readable half-file to be mistaken for an empty reading: the temporary file
+# it was writing is removed and the destination is either absent or whole.
+#
+# A failure report carries only the lines the fetch actually has: the status, and
+# the Requirements for a Blocked one. The reading lines are left out rather than
+# written as zero, so the read-back's defaults stand in and no fabricated reading
+# is recorded.
+write_usage_result() {
+    local out_file="$1"
+    shift
+    local tmp="${out_file}.tmp.$$"
+    if printf '%s\n' "$@" 2>/dev/null > "$tmp"; then
+        mv -f "$tmp" "$out_file" 2>/dev/null || rm -f "$tmp"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+# The full reading a Profile reports when one was obtained: every field present.
+# Usage: write_full_usage_result <out_file> <sub> <tier> <5u> <5r> <7u> <7r> <extra> <creds>
+write_full_usage_result() {
+    local out_file="$1"
+    write_usage_result "$out_file" \
+        "SUBSCRIPTION_TYPE=$2" \
+        "RATE_LIMIT_TIER=$3" \
+        "FIVE_HOUR_UTIL=$4" \
+        "FIVE_HOUR_RESET=$5" \
+        "SEVEN_DAY_UTIL=$6" \
+        "SEVEN_DAY_RESET=$7" \
+        "EXTRA_USAGE_ENABLED=$8" \
+        "CREDS_STATUS=$9" \
+        "BLOCKING_REQUIREMENT="
+}
+
 # --- Per-profile credentials + API usage fetcher ---
 # Usage: fetch_profile_usage <credentials_file> <cache_file> <out_tmpfile>
 # Writes SUBSCRIPTION_TYPE, RATE_LIMIT_TIER, FIVE_HOUR_UTIL, FIVE_HOUR_RESET,
-#        SEVEN_DAY_UTIL, SEVEN_DAY_RESET, EXTRA_USAGE_ENABLED to out_tmpfile
+#        SEVEN_DAY_UTIL, SEVEN_DAY_RESET, EXTRA_USAGE_ENABLED, CREDS_STATUS and
+#        BLOCKING_REQUIREMENT to out_tmpfile, all-or-nothing. A jq that fails
+#        reports Blocked (a body that is not valid JSON reports Unavailable)
+#        rather than aborting the subshell before the write (ADR 0005).
 fetch_profile_usage() {
     local creds_file="$1"
     local cache_file="$2"
@@ -374,8 +426,8 @@ fetch_profile_usage() {
 
     if [ ! -f "$creds_file" ]; then
         creds_status="missing"
-        printf 'SUBSCRIPTION_TYPE=%s\nRATE_LIMIT_TIER=%s\nFIVE_HOUR_UTIL=%s\nFIVE_HOUR_RESET=%s\nSEVEN_DAY_UTIL=%s\nSEVEN_DAY_RESET=%s\nEXTRA_USAGE_ENABLED=%s\nCREDS_STATUS=%s\n' \
-            "$sub_type" "$tier" "$five_util" "$five_reset" "$seven_util" "$seven_reset" "$extra" "$creds_status" > "$out_file"
+        write_full_usage_result "$out_file" "$sub_type" "$tier" "$five_util" "$five_reset" \
+            "$seven_util" "$seven_reset" "$extra" "$creds_status"
         return
     fi
 
@@ -500,24 +552,51 @@ fetch_profile_usage() {
         fi
     fi
 
-    five_util=$(echo "$api_resp" | jq -r '.five_hour.utilization // 0')
-    five_reset=$(echo "$api_resp" | jq -r '.five_hour.resets_at // ""')
-    seven_util=$(echo "$api_resp" | jq -r '.seven_day.utilization // 0')
-    seven_reset=$(echo "$api_resp" | jq -r '.seven_day.resets_at // ""')
-    extra=$(echo "$api_resp" | jq -r '.extra_usage.is_enabled // false')
+    # The response body separates the two jq failure modes (ADR 0005). A body
+    # that is not valid JSON is the endpoint answering with something unexpected,
+    # which is Unavailable. A jq that fails while reading a valid body is the
+    # tool's own failure, which is Blocked with jq named.
+    #
+    # Each extraction reports its own failure rather than swallowing it into a
+    # zero: `|| echo 0` would fabricate a reading, and under `set -e` an
+    # unguarded failure would abort this subshell before the result write. The
+    # exit status is what routes the failure instead.
+    local blocking=""
+    if ! printf '%s' "$api_resp" | jq -e . >/dev/null 2>&1; then
+        creds_status="unavailable"
+    else
+        local extraction_failed=false
+        five_util=$(printf '%s' "$api_resp" | jq -r '.five_hour.utilization // 0' 2>/dev/null) || extraction_failed=true
+        five_reset=$(printf '%s' "$api_resp" | jq -r '.five_hour.resets_at // ""' 2>/dev/null) || extraction_failed=true
+        seven_util=$(printf '%s' "$api_resp" | jq -r '.seven_day.utilization // 0' 2>/dev/null) || extraction_failed=true
+        seven_reset=$(printf '%s' "$api_resp" | jq -r '.seven_day.resets_at // ""' 2>/dev/null) || extraction_failed=true
+        extra=$(printf '%s' "$api_resp" | jq -r '.extra_usage.is_enabled // false' 2>/dev/null) || extraction_failed=true
 
-    if echo "$api_resp" | jq -e '.five_hour' >/dev/null 2>&1; then
-        creds_status="ok"
-    elif [ "$creds_status" != "missing" ]; then
-        # A credentials file exists and had a token, but no usage data could be
-        # obtained for it (live fetch failed and no matching cache to fall back
-        # on) — the token is present but no longer good, distinct from no
-        # token at all ("missing", set above).
-        creds_status="expired"
+        if [ "$extraction_failed" = true ]; then
+            creds_status="blocked"
+            blocking="jq"
+        elif printf '%s' "$api_resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+            creds_status="ok"
+        elif [ "$creds_status" != "missing" ]; then
+            # A credentials file exists and had a token, but no usage data
+            # could be obtained for it (live fetch failed and no matching cache
+            # to fall back on) — the token is present but no longer good,
+            # distinct from no token at all ("missing", set above).
+            creds_status="expired"
+        fi
     fi
 
-    printf 'SUBSCRIPTION_TYPE=%s\nRATE_LIMIT_TIER=%s\nFIVE_HOUR_UTIL=%s\nFIVE_HOUR_RESET=%s\nSEVEN_DAY_UTIL=%s\nSEVEN_DAY_RESET=%s\nEXTRA_USAGE_ENABLED=%s\nCREDS_STATUS=%s\n' \
-        "$sub_type" "$tier" "$five_util" "$five_reset" "$seven_util" "$seven_reset" "$extra" "$creds_status" > "$out_file"
+    if [ -n "$blocking" ]; then
+        # No reading was obtained, so none is written: the result file carries
+        # the failure report and the read-back's defaults stand in for the
+        # reading lines. A full report here would record zeros as if read.
+        write_usage_result "$out_file" "CREDS_STATUS=$creds_status" "BLOCKING_REQUIREMENT=$blocking"
+    elif [ "$creds_status" = "unavailable" ]; then
+        write_usage_result "$out_file" "CREDS_STATUS=$creds_status"
+    else
+        write_full_usage_result "$out_file" "$sub_type" "$tier" "$five_util" "$five_reset" \
+            "$seven_util" "$seven_reset" "$extra" "$creds_status"
+    fi
 }
 
 # --- Collect profile list ---
@@ -676,8 +755,11 @@ USAGE_TMPFILES=() # usage/subscription tmpfile per profile
 PIDS=()
 
 for idx in "${!PROFILE_DIRS[@]}"; do
+    # The token file is created up front; the usage result is not. The fetch
+    # writes that one all-or-nothing into place, so an aborted fetch leaves it
+    # absent rather than empty and the read-back's defaults stand in for it.
     tmpf=$(mktemp "$TMPDIR_ROOT/profile_XXXXXX")
-    usage_tmpf=$(mktemp "$TMPDIR_ROOT/usage_XXXXXX")
+    usage_tmpf="${TMPDIR_ROOT}/usage_${idx}"
     TMPFILES+=("$tmpf")
     USAGE_TMPFILES+=("$usage_tmpf")
 
@@ -724,38 +806,41 @@ PROF_FIVE_HOUR_RESET_LIST=""
 PROF_SEVEN_DAY_RESET_LIST=""
 PROF_EXTRA_USAGE_LIST=""
 PROF_CREDS_STATUS_LIST=""
+BLOCKING_REQUIREMENTS=""
 
 for idx in "${!TMPFILES[@]}"; do
     tmpf="${TMPFILES[$idx]}"
     usage_tmpf="${USAGE_TMPFILES[$idx]}"
     pname="${PROFILE_NAMES[$idx]}"
-    [ -f "$tmpf" ] || continue
 
-    # Read per-profile token stats
-    p_wt=$(grep "^WEEK_TOKENS=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    p_wm=$(grep "^WEEK_MESSAGES=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    p_ws=$(grep "^WEEK_SESSIONS=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    p_mt=$(grep "^MONTH_TOKENS=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    p_daily=$(grep "^DAILY=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo "0,0,0,0,0,0,0")
-    p_models=$(grep "^WEEK_MODELS=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-    p_dc=$(grep "^DAILY_COSTS=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo "0.00,0.00,0.00,0.00,0.00,0.00,0.00")
-    p_tc=$(grep "^TODAY_COST=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo "0.00")
-    p_wc=$(grep "^WEEK_COST=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo "0.00")
-    p_mc=$(grep "^MONTH_COST=" "$tmpf" 2>/dev/null | cut -d= -f2- || echo "0.00")
+    # Read per-profile token stats. result_value defaults every line the file
+    # does not carry, so an empty or partial file contributes its documented
+    # defaults rather than an empty value to the arithmetic below.
+    p_wt=$(result_value "$tmpf" WEEK_TOKENS 0)
+    p_wm=$(result_value "$tmpf" WEEK_MESSAGES 0)
+    p_ws=$(result_value "$tmpf" WEEK_SESSIONS 0)
+    p_mt=$(result_value "$tmpf" MONTH_TOKENS 0)
+    p_daily=$(result_value "$tmpf" DAILY "0,0,0,0,0,0,0")
+    p_models=$(result_value "$tmpf" WEEK_MODELS "")
+    p_dc=$(result_value "$tmpf" DAILY_COSTS "0.00,0.00,0.00,0.00,0.00,0.00,0.00")
+    p_tc=$(result_value "$tmpf" TODAY_COST "0.00")
+    p_wc=$(result_value "$tmpf" WEEK_COST "0.00")
+    p_mc=$(result_value "$tmpf" MONTH_COST "0.00")
 
-    # Read per-profile usage/subscription
-    p_sub="unknown"; p_tier="unknown"
-    p_5u=0; p_5r=""; p_7u=0; p_7r=""; p_extra="false"; p_creds="missing"
-    if [ -f "$usage_tmpf" ]; then
-        p_sub=$(grep "^SUBSCRIPTION_TYPE=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
-        p_tier=$(grep "^RATE_LIMIT_TIER=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
-        p_5u=$(grep "^FIVE_HOUR_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-        p_5r=$(grep "^FIVE_HOUR_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-        p_7u=$(grep "^SEVEN_DAY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-        p_7r=$(grep "^SEVEN_DAY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-        p_extra=$(grep "^EXTRA_USAGE_ENABLED=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "false")
-        p_creds=$(grep "^CREDS_STATUS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "missing")
-    fi
+    # Read per-profile usage/subscription. An absent file — a fetch that aborted
+    # before its result write — is a failed fetch, not an empty reading: every
+    # field falls back to its documented default, so CREDS_STATUS is never empty.
+    # The defaults are reachable because each is applied after the read, outside
+    # the pipeline that produced the value.
+    p_sub=$(result_value "$usage_tmpf" SUBSCRIPTION_TYPE unknown)
+    p_tier=$(result_value "$usage_tmpf" RATE_LIMIT_TIER unknown)
+    p_5u=$(result_value "$usage_tmpf" FIVE_HOUR_UTIL 0)
+    p_5r=$(result_value "$usage_tmpf" FIVE_HOUR_RESET "")
+    p_7u=$(result_value "$usage_tmpf" SEVEN_DAY_UTIL 0)
+    p_7r=$(result_value "$usage_tmpf" SEVEN_DAY_RESET "")
+    p_extra=$(result_value "$usage_tmpf" EXTRA_USAGE_ENABLED false)
+    p_creds=$(result_value "$usage_tmpf" CREDS_STATUS missing)
+    p_blocking=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
 
     # Default profile drives the top-level aggregate fields
     if [ "$pname" = "default" ]; then
@@ -767,6 +852,9 @@ for idx in "${!TMPFILES[@]}"; do
         SEVEN_DAY_RESET="$p_7r"
         EXTRA_USAGE_ENABLED="$p_extra"
         CREDS_STATUS="$p_creds"
+        # The command list beside the status is the default Profile's, because
+        # the status is: the two always describe the same report.
+        BLOCKING_REQUIREMENTS="$p_blocking"
     fi
 
     # Aggregate token totals
@@ -843,6 +931,12 @@ echo "SEVEN_DAY_UTIL=${SEVEN_DAY_UTIL}"
 echo "SEVEN_DAY_RESET=${SEVEN_DAY_RESET}"
 echo "EXTRA_USAGE_ENABLED=${EXTRA_USAGE_ENABLED}"
 echo "CREDS_STATUS=${CREDS_STATUS}"
+# Emitted only for a Blocked report, so the ok, missing and expired outputs are
+# unchanged and the widget's own clearing of the key on any other status is what
+# removes one left by an earlier Blocked fetch.
+if [ "$CREDS_STATUS" = "blocked" ]; then
+    echo "BLOCKING_REQUIREMENT=${BLOCKING_REQUIREMENTS}"
+fi
 echo "WEEK_MESSAGES=${WEEK_MESSAGES}"
 echo "WEEK_SESSIONS=${WEEK_SESSIONS}"
 echo "WEEK_TOKENS=${WEEK_TOKENS}"
