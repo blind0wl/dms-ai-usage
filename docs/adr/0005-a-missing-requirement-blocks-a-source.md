@@ -12,7 +12,7 @@ Every Script now checks the Requirements the manifest declares before it does
 anything else. It reads them from `plugin.json` with `sed`, `grep` and `tr`,
 because the program doing the checking is the one that may be missing. When a
 Requirement is absent the Script reports `CREDS_STATUS=blocked` with
-`MISSING_REQUIREMENT` naming every command that is missing, and exits without
+`BLOCKING_REQUIREMENT` naming every command that is missing, and exits without
 reading a credential or making a request.
 
 **Blocked** is a fourth Source state, beside Not installed, Missing and
@@ -47,6 +47,11 @@ The Script separates the two causes by the response it was reading. A body that
 is not valid JSON is the endpoint answering with an unexpected body, which is
 **Unavailable** (ADR 0002). A `jq` that fails on a valid response is the tool's
 own failure, which is **Blocked** with `jq` named.
+
+The key carrying the command names is `BLOCKING_REQUIREMENT` rather than
+`MISSING_REQUIREMENT`, because it names a command that is present and failing as
+well as one that is absent, and the earlier name would read as false in the
+first case.
 
 The guard stays presence-only. Capability cannot be judged before a call is made,
 so a `jq` that is present and broken reaches the call and reports Blocked from
