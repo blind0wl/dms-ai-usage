@@ -43,14 +43,15 @@ var ACCOUNT_FIELDS = {
     SECONDARY_RESET: { field: "secondaryReset", type: "text" }
 };
 
-// Builds a descriptor's wire-key map from its prefix and the bare suffixes its
-// script emits. An unknown suffix would otherwise be copied through as
-// undefined and dropped from the wire with nothing to show for it, so the full
-// wire key is named here instead.
-function pickFields(id, prefix, suffixes) {
+// Builds a descriptor's wire-key map from the bare suffixes its script emits.
+// Every Source's per-Account keys wear the shared ACCOUNT_ prefix (#80), so the
+// prefix is applied here rather than declared per Source. An unknown suffix
+// would otherwise be copied through as undefined and dropped from the wire with
+// nothing to show for it, so the full wire key is named here instead.
+function pickFields(id, suffixes) {
     var out = {};
     for (var i = 0; i < suffixes.length; i++) {
-        var key = prefix + suffixes[i];
+        var key = "ACCOUNT_" + suffixes[i];
         var spec = ACCOUNT_FIELDS[suffixes[i]];
         if (!spec)
             console.warn("sources.js: descriptor \"" + id + "\" declares Account key " + key + " with no ACCOUNT_FIELDS row for suffix \"" + suffixes[i] + "\"");
@@ -64,6 +65,14 @@ function pickFields(id, prefix, suffixes) {
 // keys rather than a descriptor's, so both readers share them from here.
 var STATUS_KEY = "CREDS_STATUS";
 var NOT_INSTALLED = "not_installed";
+
+// The Account wire's three keys, shared by every Source (#80). A Script lists
+// its Accounts under LIST_KEY, their Origins under ORIGINS_KEY and the
+// registrations it refused under SHADOWED_KEY. One vocabulary, so the
+// Descriptor carries no wire keys and the readers take the keys from here.
+var LIST_KEY = "ACCOUNTS";
+var ORIGINS_KEY = "ACCOUNT_ORIGINS";
+var SHADOWED_KEY = "ACCOUNT_SHADOWED";
 
 // The output key a Script reports the Requirements it could not read past under,
 // beside STATUS_KEY: the names of the commands that are absent or failing, comma
@@ -148,9 +157,9 @@ function accountArgs(descriptor, list) {
 // cannot edit - plus, marked `overridden`, the detected registrations the Script
 // refused because a Custom Account had already taken their name or their value.
 //
-// `names` is the Script's Account list (the descriptor's listKey), `origins` its
-// "name:origin" pairs (its originsKey) and `shadowed` the registrations it
-// refused (its shadowedKey), all comma-separated as the wire has them. A refused
+// `names` is the Script's Account list (LIST_KEY), `origins` its
+// "name:origin" pairs (ORIGINS_KEY) and `shadowed` the registrations it
+// refused (SHADOWED_KEY), all comma-separated as the wire has them. A refused
 // registration is "<winner>|<name>:<origin>": what kept the name or the value,
 // then what lost and where it came from. An Account the Custom Account list
 // provided is reported with the CUSTOM_ORIGIN tag and dropped from the first
@@ -442,16 +451,6 @@ var SOURCES = [
         },
         accounts: {
             settingKey: "customProfiles",
-            // Claude lists its Accounts under PROFILES; every other Source uses
-            // ACCOUNTS. The widget reads whichever the descriptor names.
-            listKey: "PROFILES",
-            // Where each Profile was found, one "name:origin" pair per entry.
-            // The settings editor reads it to show what it does not own.
-            originsKey: "PROFILE_ORIGINS",
-            // The registrations the Script refused, one "name:origin" pair per
-            // entry. A Custom Profile that took a detected one's place is here,
-            // and the editor shows the detected one as overridden by it.
-            shadowedKey: "PROFILE_SHADOWED",
             // What the editor calls that state on Claude's page, where an
             // Account is a Profile throughout the copy.
             overriddenKey: "overridden by your Custom Profile",
@@ -459,11 +458,6 @@ var SOURCES = [
             // the Script found. It follows the Source's own word for an
             // Account, so Claude's page says Profiles throughout.
             detectedTitleKey: "Detected Profiles",
-            // Claude's per-Account keys keep PROFILE_ because get-claude-usage
-            // is upstream's file and those names are its existing output
-            // contract. Every other Source declares ACCOUNT_, the general term
-            // CONTEXT.md reserves over Profile.
-            keyPrefix: "PROFILE_",
             argField: "path",
             labelKey: "Profile",
             overlay: true,
@@ -471,7 +465,7 @@ var SOURCES = [
             descriptionKey: "Track extra Claude config directories. Point at a CLAUDE_CONFIG_DIR (the folder containing projects/). ~/.claude, Claude Code Switcher and claude-code-profiles are detected automatically.",
             fieldLabelKey: "Config directory",
             placeholder: "~/.ccp/data/work",
-            fields: pickFields("claude", "PROFILE_", [
+            fields: pickFields("claude", [
                 "SUBSCRIPTION", "TIER", "CREDS_STATUS",
                 "WEEK_TOKENS", "MONTH_TOKENS", "WEEK_MESSAGES",
                 "WEEK_SESSIONS", "TODAY_COST", "WEEK_COST",
@@ -549,19 +543,15 @@ var SOURCES = [
         },
         accounts: {
             settingKey: "customChatgptAccounts",
-            listKey: "ACCOUNTS",
-            originsKey: "ACCOUNT_ORIGINS",
-            shadowedKey: "ACCOUNT_SHADOWED",
             overriddenKey: "overridden by your Custom Account",
             detectedTitleKey: "Detected Accounts",
-            keyPrefix: "ACCOUNT_",
             argField: "path",
             labelKey: "Account",
             titleKey: "Custom ChatGPT Accounts",
             descriptionKey: "Track extra Codex accounts. Point at a CODEX_HOME (the folder containing auth.json). ~/.codex is detected automatically as \"default\".",
             fieldLabelKey: "Config directory",
             placeholder: "~/.codex-work",
-            fields: pickFields("chatgpt", "ACCOUNT_", [
+            fields: pickFields("chatgpt", [
                 "SUBSCRIPTION", "CREDS_STATUS", "WEEK_TOKENS",
                 "MONTH_TOKENS", "WEEK_MESSAGES", "WEEK_SESSIONS",
                 "TODAY_COST", "WEEK_COST", "MONTH_COST", "DAILY_COSTS",
@@ -646,19 +636,15 @@ var SOURCES = [
             // opencode Go is keyed rather than directory-backed, so Accounts
             // are passed to the script as name=api-key, like Z.ai.
             settingKey: "customOpencodeAccounts",
-            listKey: "ACCOUNTS",
-            originsKey: "ACCOUNT_ORIGINS",
-            shadowedKey: "ACCOUNT_SHADOWED",
             overriddenKey: "overridden by your Custom Account",
             detectedTitleKey: "Detected Accounts",
-            keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
             titleKey: "Custom opencode Accounts",
             descriptionKey: "Track extra opencode Go Accounts by API key. An API key from the pi coding agent auth store (~/.pi/agent/auth.json) is detected automatically as \"default\".",
             fieldLabelKey: "API key",
             placeholder: "",
-            fields: pickFields("opencode", "ACCOUNT_", [
+            fields: pickFields("opencode", [
                 "CREDS_STATUS",
                 "PRIMARY_UTIL", "PRIMARY_RESET",
                 "SECONDARY_UTIL", "SECONDARY_RESET"
@@ -711,19 +697,15 @@ var SOURCES = [
             // Z.ai has no local config directory to point at, so Accounts are
             // passed to the script as name=api-key rather than name=path.
             settingKey: "customZaiAccounts",
-            listKey: "ACCOUNTS",
-            originsKey: "ACCOUNT_ORIGINS",
-            shadowedKey: "ACCOUNT_SHADOWED",
             overriddenKey: "overridden by your Custom Account",
             detectedTitleKey: "Detected Accounts",
-            keyPrefix: "ACCOUNT_",
             argField: "key",
             labelKey: "Account",
             titleKey: "Custom Z.ai Accounts",
             descriptionKey: "Track extra Z.ai accounts by API key. A key from the pi coding agent config (~/.pi/agent/models.json) is detected automatically as \"default\".",
             fieldLabelKey: "API key",
             placeholder: "",
-            fields: pickFields("zai", "ACCOUNT_", [
+            fields: pickFields("zai", [
                 "CREDS_STATUS",
                 "TODAY_COST", "WEEK_COST", "MONTH_COST",
                 "PRIMARY_UTIL", "PRIMARY_RESET",

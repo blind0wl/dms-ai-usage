@@ -28,10 +28,10 @@
 # expansion to perform.
 # shellcheck disable=SC2088
 
-# The keys the Account list is reported under. Claude's Accounts are Profiles on
-# the wire, so it sets both before sourcing; every other Source takes these.
-ACCOUNT_LIST_KEY="${ACCOUNT_LIST_KEY:-ACCOUNTS}"
-ACCOUNT_KEY_PREFIX="${ACCOUNT_KEY_PREFIX:-ACCOUNT_}"
+# The keys the Account list is reported under. One vocabulary for every Source
+# (#80): the keys are fixed here, and no Script overrides them.
+ACCOUNT_LIST_KEY=ACCOUNTS
+ACCOUNT_KEY_PREFIX=ACCOUNT_
 
 # The registry: one entry per Account, parallel by index. The value is whatever
 # identifies the Account to its Source, an API key or a resolved directory, and

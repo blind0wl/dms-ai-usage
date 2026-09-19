@@ -91,11 +91,11 @@ function readLine(state, accounts, id, line) {
     if (!d)
         return result;
 
-    // Every key that belongs to an Account is named by the descriptor: the
-    // list of Accounts, the two Window slots' Account keys, and the rest of
+    // Every key that belongs to an Account is shared wire, not descriptor data:
+    // the list of Accounts, the two Window slots' Account keys, and the rest of
     // the Account overlay fields. They write the overlay rather than the
     // Source's own figures, so they are dispatched before the switch below.
-    if (d.accounts && pair.key === d.accounts.listKey)
+    if (d.accounts && pair.key === Sources.LIST_KEY)
         return { state: withState(result.state, id, function (st) {
             st.accounts = Sources.splitList(pair.value);
         }), accounts: result.accounts };

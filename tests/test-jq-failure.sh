@@ -109,7 +109,7 @@ assert_eq "$RC" "0" "the Script exits 0 rather than aborting the subshell"
 assert_eq "$(val "$OUT" CREDS_STATUS)" "blocked" "CREDS_STATUS=blocked, a defined state rather than an empty one"
 assert_eq "$(val "$OUT" BLOCKING_REQUIREMENT)" "jq" "BLOCKING_REQUIREMENT names the failing command"
 assert_eq "$(echo "$OUT" | grep -c '^CREDS_STATUS=')" "1" "exactly one CREDS_STATUS line is emitted"
-assert_eq "$(val "$OUT" PROFILE_CREDS_STATUS)" "default:blocked" "the Profile's own report is blocked too"
+assert_eq "$(val "$OUT" ACCOUNT_CREDS_STATUS)" "default:blocked" "the Profile's own report is blocked too"
 # Lines the failure report deliberately omits must fall back to their defaults,
 # which is only possible because the read-back defaults are reachable.
 assert_eq "$(val "$OUT" FIVE_HOUR_UTIL)" "0" "an omitted reading line falls back to its default"

@@ -43,7 +43,7 @@ const load = (file, suffix, extra) => {
     return sandbox;
 };
 
-const Sources = load("sources.js", "; this.api = { SOURCES, byId, wirePair, splitList, nameValueMap, nextNotInstalledCount, isHidden, hasReading, STATUS_KEY, NOT_INSTALLED, BLOCKING_REQUIREMENT, BLOCKED };").api;
+const Sources = load("sources.js", "; this.api = { SOURCES, byId, wirePair, splitList, nameValueMap, nextNotInstalledCount, isHidden, hasReading, STATUS_KEY, NOT_INSTALLED, BLOCKING_REQUIREMENT, BLOCKED, LIST_KEY };").api;
 const State = load("state.js", "; this.api = { empty, readLine, render, hasCurrentReading };", { Sources }).api;
 
 const results = [];
@@ -76,7 +76,7 @@ check(before.weekTokens === 0 && after.state.weekTokens === 42,
       "readLine returns a new State and leaves the one it was given alone");
 check(after.state !== before,
       "readLine returns a new State object, so a QML property reassignment re-evaluates bindings");
-const overlayRead = State.readLine(before, beforeAccounts, "claude", "PROFILE_WEEK_TOKENS=work:1");
+const overlayRead = State.readLine(before, beforeAccounts, "claude", "ACCOUNT_WEEK_TOKENS=work:1");
 check(after.accounts === beforeAccounts && overlayRead.accounts !== beforeAccounts,
       "the Account overlay is only replaced by a line that writes it");
 check(State.readLine(before, beforeAccounts, "claude", "no-equals-sign").state === before,
@@ -188,13 +188,13 @@ check(report("claude", ["CREDS_STATUS=missing"]).state.credsStatus === "missing"
 
 // --- The Account overlay ---
 const acct = report("claude", [
-    "PROFILES=work,home",
-    "PROFILE_WEEK_TOKENS=work:900,home:100",
-    "PROFILE_EXTRA_USAGE=work:true,home:false",
-    "PROFILE_DAILY=work:1,2,3,4,5,6,7|home:0,0,0,0,0,0,1",
-    "PROFILE_WEEK_MODELS=work:opus=80|home:sonnet=20",
-    "PROFILE_SUBSCRIPTION=work:max,home:pro",
-    "PROFILE_FIVE_HOUR_UTIL=work:60,home:5"
+    "ACCOUNTS=work,home",
+    "ACCOUNT_WEEK_TOKENS=work:900,home:100",
+    "ACCOUNT_EXTRA_USAGE=work:true,home:false",
+    "ACCOUNT_DAILY=work:1,2,3,4,5,6,7|home:0,0,0,0,0,0,1",
+    "ACCOUNT_WEEK_MODELS=work:opus=80|home:sonnet=20",
+    "ACCOUNT_SUBSCRIPTION=work:max,home:pro",
+    "ACCOUNT_FIVE_HOUR_UTIL=work:60,home:5"
 ]);
 check(acct.state.accounts.join(",") === "work,home",
       "the Account list lands under the key the Descriptor names");
@@ -233,13 +233,13 @@ check(sel.alltime.sessions === 0,
 // omits an Account from the Window lists entirely. Neither is a reading of
 // zero: what the Account has not reported stays the Source's own figure, and
 // what it reported before stays its own.
-const sparse = report("claude", ["PROFILE_CREDS_STATUS=spare:missing"], acct);
+const sparse = report("claude", ["ACCOUNT_CREDS_STATUS=spare:missing"], acct);
 const spare = State.render(
-    report("claude", ["PROFILES=work,home,spare"], sparse).state,
+    report("claude", ["ACCOUNTS=work,home,spare"], sparse).state,
     sparse.accounts, { selected: "spare", todayIndex: 0 });
 check(spare.primary.util === acct.state.primary.util,
       "an Account with no Window reading of its own shows the Source's");
-const omitted = report("claude", ["PROFILE_FIVE_HOUR_UTIL=home:9"], acct);
+const omitted = report("claude", ["ACCOUNT_FIVE_HOUR_UTIL=home:9"], acct);
 check(omitted.accounts.work.primaryUtil === 60,
       "an Account omitted from a run keeps its last good reading rather than reading the silence as zero");
 

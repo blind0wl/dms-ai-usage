@@ -240,22 +240,22 @@ TODAY_COST7=$(echo "$OUTPUT7" | grep "^TODAY_COST=" | cut -d= -f2)
 assert_eq "$TODAY_COST7" "0.00" "Cost=0 when model family not in pricing cache"
 
 # ============================================================
-echo "=== Test 8: PROFILES field — default profile always present ==="
+echo "=== Test 8: ACCOUNTS field — default profile always present ==="
 # ============================================================
 ENV8=$(setup_env "test8")
 OUTPUT8=$(run_script "$ENV8")
 
-if echo "$OUTPUT8" | grep -q "^PROFILES="; then
-    pass "PROFILES key present"
+if echo "$OUTPUT8" | grep -q "^ACCOUNTS="; then
+    pass "ACCOUNTS key present"
 else
-    fail "PROFILES key missing"
+    fail "ACCOUNTS key missing"
 fi
 
-PROFILES8=$(echo "$OUTPUT8" | grep "^PROFILES=" | cut -d= -f2)
-assert_match "$PROFILES8" "default" "PROFILES contains default"
+ACCOUNTS8=$(echo "$OUTPUT8" | grep "^ACCOUNTS=" | cut -d= -f2)
+assert_match "$ACCOUNTS8" "default" "ACCOUNTS contains default"
 
 # ============================================================
-echo "=== Test 9: PROFILES discovers CCS instances ==="
+echo "=== Test 9: ACCOUNTS discovers CCS instances ==="
 # ============================================================
 ENV9=$(setup_env "test9")
 mkdir -p "$ENV9/.ccs/instances/work/projects/proj1"
@@ -266,13 +266,13 @@ make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 500 300 0 0 "sess-r" \
 
 OUTPUT9=$(run_script "$ENV9")
 
-PROFILES9=$(echo "$OUTPUT9" | grep "^PROFILES=" | cut -d= -f2)
-assert_match "$PROFILES9" "default" "PROFILES contains default (test9)"
-assert_match "$PROFILES9" "work" "PROFILES contains work"
-assert_match "$PROFILES9" "home" "PROFILES contains home"
+ACCOUNTS9=$(echo "$OUTPUT9" | grep "^ACCOUNTS=" | cut -d= -f2)
+assert_match "$ACCOUNTS9" "default" "ACCOUNTS contains default (test9)"
+assert_match "$ACCOUNTS9" "work" "ACCOUNTS contains work"
+assert_match "$ACCOUNTS9" "home" "ACCOUNTS contains home"
 
 # ============================================================
-echo "=== Test 10: PROFILE_WEEK_TOKENS format and values ==="
+echo "=== Test 10: ACCOUNT_WEEK_TOKENS format and values ==="
 # ============================================================
 ENV10=$(setup_env "test10")
 mkdir -p "$ENV10/.ccs/instances/work/projects/proj1"
@@ -289,21 +289,21 @@ make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 500 300 0 0 "sess-r" \
 
 OUTPUT10=$(run_script "$ENV10")
 
-PWT=$(echo "$OUTPUT10" | grep "^PROFILE_WEEK_TOKENS=" | cut -d= -f2)
+PWT=$(echo "$OUTPUT10" | grep "^ACCOUNT_WEEK_TOKENS=" | cut -d= -f2)
 if [ -n "$PWT" ]; then
-    pass "PROFILE_WEEK_TOKENS present"
+    pass "ACCOUNT_WEEK_TOKENS present"
 else
-    fail "PROFILE_WEEK_TOKENS missing"
+    fail "ACCOUNT_WEEK_TOKENS missing"
 fi
-assert_match "$PWT" "default:[0-9]+" "PROFILE_WEEK_TOKENS has default:N"
-assert_match "$PWT" "work:800" "PROFILE_WEEK_TOKENS work:800"
+assert_match "$PWT" "default:[0-9]+" "ACCOUNT_WEEK_TOKENS has default:N"
+assert_match "$PWT" "work:800" "ACCOUNT_WEEK_TOKENS work:800"
 
 # Aggregate WEEK_TOKENS must equal sum: 630+800=1430
 AGG10=$(echo "$OUTPUT10" | grep "^WEEK_TOKENS=" | cut -d= -f2)
 assert_eq "$AGG10" "1430" "WEEK_TOKENS aggregate = 1430"
 
 # ============================================================
-echo "=== Test 11: PROFILE_DAILY pipe-separated, 7 values per profile ==="
+echo "=== Test 11: ACCOUNT_DAILY pipe-separated, 7 values per profile ==="
 # ============================================================
 ENV11=$(setup_env "test11")
 mkdir -p "$ENV11/.ccs/instances/work/projects/proj1"
@@ -313,25 +313,25 @@ make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 100 50 0 0 "s1" \
 
 OUTPUT11=$(run_script "$ENV11")
 
-PD=$(echo "$OUTPUT11" | grep "^PROFILE_DAILY=" | cut -d= -f2)
+PD=$(echo "$OUTPUT11" | grep "^ACCOUNT_DAILY=" | cut -d= -f2)
 if [ -n "$PD" ]; then
-    pass "PROFILE_DAILY present"
+    pass "ACCOUNT_DAILY present"
 else
-    fail "PROFILE_DAILY missing"
+    fail "ACCOUNT_DAILY missing"
 fi
 
 # Verify pipe separator exists (at least 2 profiles = 1 pipe)
-assert_match "$PD" "[|]" "PROFILE_DAILY has pipe separator"
+assert_match "$PD" "[|]" "ACCOUNT_DAILY has pipe separator"
 
 # Each block should have 7 comma-separated values
 # Check work block: split on | then check count of commas in work part
 WORK_BLOCK=$(echo "$PD" | tr '|' '\n' | grep "^work:")
 WORK_VALS=$(echo "$WORK_BLOCK" | cut -d: -f2)
 COMMA_COUNT=$(echo "$WORK_VALS" | tr -cd ',' | wc -c)
-assert_eq "$COMMA_COUNT" "6" "PROFILE_DAILY work block has 7 values (6 commas)"
+assert_eq "$COMMA_COUNT" "6" "ACCOUNT_DAILY work block has 7 values (6 commas)"
 
 # ============================================================
-echo "=== Test 12: PROFILE_WEEK_MODELS uses = not : for model/count ==="
+echo "=== Test 12: ACCOUNT_WEEK_MODELS uses = not : for model/count ==="
 # ============================================================
 ENV12=$(setup_env "test12")
 mkdir -p "$ENV12/.ccs/instances/work/projects/proj1"
@@ -341,13 +341,13 @@ make_jsonl_line "$TODAY" "claude-opus-4-20250514" 100 50 0 0 "s1" \
 
 OUTPUT12=$(run_script "$ENV12")
 
-PWM=$(echo "$OUTPUT12" | grep "^PROFILE_WEEK_MODELS=" | cut -d= -f2-)
+PWM=$(echo "$OUTPUT12" | grep "^ACCOUNT_WEEK_MODELS=" | cut -d= -f2-)
 if [ -n "$PWM" ]; then
-    pass "PROFILE_WEEK_MODELS present"
+    pass "ACCOUNT_WEEK_MODELS present"
 else
-    fail "PROFILE_WEEK_MODELS missing"
+    fail "ACCOUNT_WEEK_MODELS missing"
 fi
-assert_match "$PWM" "opus=[0-9]+" "PROFILE_WEEK_MODELS uses = separator for model/count"
+assert_match "$PWM" "opus=[0-9]+" "ACCOUNT_WEEK_MODELS uses = separator for model/count"
 
 # Also verify the aggregate WEEK_MODELS field uses = (not :)
 AGG_WM12=$(echo "$OUTPUT12" | sed -n 's/^WEEK_MODELS=//p')
@@ -636,7 +636,7 @@ for i in $(seq 0 6); do
 done
 
 # ============================================================
-echo "=== Test 24: PROFILES discovers claude-code-profiles (ccp) ==="
+echo "=== Test 24: ACCOUNTS discovers claude-code-profiles (ccp) ==="
 # ============================================================
 ENV24=$(setup_env "test24")
 mkdir -p "$ENV24/.ccp/profiles"
@@ -647,22 +647,22 @@ make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 400 200 0 0 "sess-ccp" \
     > "$ENV24/ccpdata/ranqia/projects/proj1/t.jsonl"
 
 OUTPUT24=$(run_script "$ENV24")
-PROFILES24=$(echo "$OUTPUT24" | grep "^PROFILES=" | cut -d= -f2)
-assert_match "$PROFILES24" "default" "PROFILES contains default (test24)"
-assert_match "$PROFILES24" "ranqia" "PROFILES contains ccp profile"
+ACCOUNTS24=$(echo "$OUTPUT24" | grep "^ACCOUNTS=" | cut -d= -f2)
+assert_match "$ACCOUNTS24" "default" "ACCOUNTS contains default (test24)"
+assert_match "$ACCOUNTS24" "ranqia" "ACCOUNTS contains ccp profile"
 
 # Tokens from the ccp profile are counted (400+200)
-PWT24=$(echo "$OUTPUT24" | grep "^PROFILE_WEEK_TOKENS=" | cut -d= -f2)
+PWT24=$(echo "$OUTPUT24" | grep "^ACCOUNT_WEEK_TOKENS=" | cut -d= -f2)
 RANQIA_TOK=$(echo "$PWT24" | tr ',' '\n' | grep "^ranqia:" | cut -d: -f2)
 assert_eq "$RANQIA_TOK" "600" "ccp profile token count"
 
 # Per-profile session/message counts are emitted
-PWM24=$(echo "$OUTPUT24" | grep "^PROFILE_WEEK_MESSAGES=" | cut -d= -f2)
-PWS24=$(echo "$OUTPUT24" | grep "^PROFILE_WEEK_SESSIONS=" | cut -d= -f2)
+PWM24=$(echo "$OUTPUT24" | grep "^ACCOUNT_WEEK_MESSAGES=" | cut -d= -f2)
+PWS24=$(echo "$OUTPUT24" | grep "^ACCOUNT_WEEK_SESSIONS=" | cut -d= -f2)
 assert_eq "$(echo "$PWM24" | tr ',' '\n' | grep '^ranqia:' | cut -d: -f2)" "1" \
-    "PROFILE_WEEK_MESSAGES per profile"
+    "ACCOUNT_WEEK_MESSAGES per profile"
 assert_eq "$(echo "$PWS24" | tr ',' '\n' | grep '^ranqia:' | cut -d: -f2)" "1" \
-    "PROFILE_WEEK_SESSIONS per profile"
+    "ACCOUNT_WEEK_SESSIONS per profile"
 
 # ============================================================
 echo "=== Test 25: ccp profile without CLAUDE_CONFIG_DIR is ignored ==="
@@ -673,8 +673,8 @@ printf '# Profile: broken\nANTHROPIC_BASE_URL=https://example.com\n' \
     > "$ENV25/.ccp/profiles/broken.env"
 
 OUTPUT25=$(run_script "$ENV25")
-PROFILES25=$(echo "$OUTPUT25" | grep "^PROFILES=" | cut -d= -f2)
-assert_eq "$PROFILES25" "default" "ccp profile without CLAUDE_CONFIG_DIR is skipped"
+ACCOUNTS25=$(echo "$OUTPUT25" | grep "^ACCOUNTS=" | cut -d= -f2)
+assert_eq "$ACCOUNTS25" "default" "ccp profile without CLAUDE_CONFIG_DIR is skipped"
 
 # ============================================================
 echo "=== Test 26: manual profiles passed as name=path arguments ==="
@@ -685,18 +685,18 @@ make_jsonl_line "$TODAY" "claude-sonnet-4-20250514" 100 100 0 0 "sess-m" \
     > "$ENV26/manual/work/projects/proj1/t.jsonl"
 
 OUTPUT26=$(run_script "$ENV26" "work=$ENV26/manual/work")
-PROFILES26=$(echo "$OUTPUT26" | grep "^PROFILES=" | cut -d= -f2)
-assert_match "$PROFILES26" "work" "manual profile appears in PROFILES"
+ACCOUNTS26=$(echo "$OUTPUT26" | grep "^ACCOUNTS=" | cut -d= -f2)
+assert_match "$ACCOUNTS26" "work" "manual profile appears in ACCOUNTS"
 
 # A manual path that has no projects/ dir is ignored
 OUTPUT26B=$(run_script "$ENV26" "ghost=$ENV26/does-not-exist")
-PROFILES26B=$(echo "$OUTPUT26B" | grep "^PROFILES=" | cut -d= -f2)
-assert_eq "$PROFILES26B" "default" "manual profile with missing projects/ is skipped"
+ACCOUNTS26B=$(echo "$OUTPUT26B" | grep "^ACCOUNTS=" | cut -d= -f2)
+assert_eq "$ACCOUNTS26B" "default" "manual profile with missing projects/ is skipped"
 
 # Tilde in a manual path is expanded against HOME
 OUTPUT26C=$(run_script "$ENV26" "tilde=~/manual/work")
-PROFILES26C=$(echo "$OUTPUT26C" | grep "^PROFILES=" | cut -d= -f2)
-assert_match "$PROFILES26C" "tilde" "manual profile path expands leading ~"
+ACCOUNTS26C=$(echo "$OUTPUT26C" | grep "^ACCOUNTS=" | cut -d= -f2)
+assert_match "$ACCOUNTS26C" "tilde" "manual profile path expands leading ~"
 
 # ============================================================
 echo "=== Test 27: duplicate profile names are registered once ==="
@@ -707,19 +707,19 @@ mkdir -p "$ENV27/other/projects/proj1"
 
 # "work" is already discovered from CCS; the manual entry must not duplicate it
 OUTPUT27=$(run_script "$ENV27" "work=$ENV27/other")
-PROFILES27=$(echo "$OUTPUT27" | grep "^PROFILES=" | cut -d= -f2)
-WORK_COUNT=$(echo "$PROFILES27" | tr ',' '\n' | grep -c '^work$')
+ACCOUNTS27=$(echo "$OUTPUT27" | grep "^ACCOUNTS=" | cut -d= -f2)
+WORK_COUNT=$(echo "$ACCOUNTS27" | tr ',' '\n' | grep -c '^work$')
 assert_eq "$WORK_COUNT" "1" "duplicate profile name registered only once"
 
 # Delimiter characters are stripped from profile names
 OUTPUT27B=$(run_script "$ENV27" "a:b,c|d=$ENV27/other")
-PROFILES27B=$(echo "$OUTPUT27B" | grep "^PROFILES=" | cut -d= -f2)
-assert_match "$PROFILES27B" "abcd" "delimiters stripped from manual profile name"
+ACCOUNTS27B=$(echo "$OUTPUT27B" | grep "^ACCOUNTS=" | cut -d= -f2)
+assert_match "$ACCOUNTS27B" "abcd" "delimiters stripped from manual profile name"
 
 # The same config directory under another name must not be counted twice
 OUTPUT27C=$(run_script "$ENV27" "alias=$ENV27/.ccs/instances/work")
-PROFILES27C=$(echo "$OUTPUT27C" | grep "^PROFILES=" | cut -d= -f2)
-if echo "$PROFILES27C" | tr ',' '\n' | grep -q '^alias$'; then
+ACCOUNTS27C=$(echo "$OUTPUT27C" | grep "^ACCOUNTS=" | cut -d= -f2)
+if echo "$ACCOUNTS27C" | tr ',' '\n' | grep -q '^alias$'; then
     fail "duplicate config directory registered under another name"
 else
     pass "duplicate config directory registered only once"
@@ -791,8 +791,8 @@ echo "=== Test 29: Listing mode reports every Profile and where it came from ===
 # costs no request.
 ENV29=$(setup_env "test29")
 LIST29=$(run_script "$ENV29" --list-accounts)
-assert_eq "$(echo "$LIST29" | grep "^PROFILES=" | cut -d= -f2)" "default" "listing mode lists the detected Profile"
-assert_eq "$(echo "$LIST29" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude" "listing mode names the Claude config directory as the origin"
+assert_eq "$(echo "$LIST29" | grep "^ACCOUNTS=" | cut -d= -f2)" "default" "listing mode lists the detected Profile"
+assert_eq "$(echo "$LIST29" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:~/.claude" "listing mode names the Claude config directory as the origin"
 assert_eq "$(echo "$LIST29" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
 
 # Each detector names its own directory, so the settings page can say which one
@@ -803,27 +803,27 @@ mkdir -p "$ENV29B/.ccp/profiles"
 mkdir -p "$ENV29B/ccpdata/ranqia/projects/proj1"
 echo "CLAUDE_CONFIG_DIR=$ENV29B/ccpdata/ranqia" > "$ENV29B/.ccp/profiles/ranqia.env"
 LIST29B=$(run_script "$ENV29B" --list-accounts)
-assert_eq "$(echo "$LIST29B" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles" "listing mode names each detector's own directory"
+assert_eq "$(echo "$LIST29B" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles" "listing mode names each detector's own directory"
 
 # A Custom Profile is reported as coming from the Custom Account list.
 mkdir -p "$ENV29B/manual/work/projects/proj1"
 LIST29C=$(run_script "$ENV29B" --list-accounts "manual=$ENV29B/manual/work")
-assert_eq "$(echo "$LIST29C" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles,manual:custom" "a Custom Profile reports the Custom Account list as its origin"
+assert_eq "$(echo "$LIST29C" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "default:~/.claude,work:~/.ccs/instances,ranqia:~/.ccp/profiles,manual:custom" "a Custom Profile reports the Custom Account list as its origin"
 
 mkdir -p "$ENV29B/elsewhere/work/projects"
 LIST29E=$(run_script "$ENV29B" --list-accounts "default=$ENV29B/elsewhere/work")
-assert_eq "$(echo "$LIST29E" | grep "^PROFILES=" | cut -d= -f2)" "default,work,ranqia" "the detected Profile keeps the name"
-assert_eq "$(echo "$LIST29E" | grep "^PROFILE_SHADOWED=" | cut -d= -f2)" "default|default:custom" "the refused Custom registration is reported with its origin"
+assert_eq "$(echo "$LIST29E" | grep "^ACCOUNTS=" | cut -d= -f2)" "default,work,ranqia" "the detected Profile keeps the name"
+assert_eq "$(echo "$LIST29E" | grep "^ACCOUNT_SHADOWED=" | cut -d= -f2)" "default|default:custom" "the refused Custom registration is reported with its origin"
 
 # Without the claude CLI, the not-installed answer is what the listing mode
 # returns, so it carries the origins key too: a Source the Script cannot read
 # Profiles for must not look like one it read and found empty.
 ENV29D=$(setup_env "test29d")
 LIST29D=$(HOME="$ENV29D" PATH="/usr/bin:/bin" bash "$SCRIPT" --list-accounts 2>/dev/null)
-assert_eq "$(echo "$LIST29D" | grep "^PROFILES=" | cut -d= -f2)" "" "an uninstalled Source lists no Profile"
-assert_eq "$(echo "$LIST29D" | grep -c "^PROFILES=")" "1" "an uninstalled Source still answers with the Profile key"
-assert_eq "$(echo "$LIST29D" | grep "^PROFILE_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
-assert_eq "$(echo "$LIST29D" | grep -c "^PROFILE_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
+assert_eq "$(echo "$LIST29D" | grep "^ACCOUNTS=" | cut -d= -f2)" "" "an uninstalled Source lists no Profile"
+assert_eq "$(echo "$LIST29D" | grep -c "^ACCOUNTS=")" "1" "an uninstalled Source still answers with the Profile key"
+assert_eq "$(echo "$LIST29D" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
+assert_eq "$(echo "$LIST29D" | grep -c "^ACCOUNT_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
 assert_eq "$(echo "$LIST29D" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an uninstalled Source says so in its listing answer"
 
 # ============================================================
