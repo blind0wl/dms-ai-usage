@@ -35,7 +35,8 @@ What a Source's Script reports leave behind: its Window Utilisations, its
 figures, its status and the counting behind Hidden. One State per Source, built
 from the report lines and read back with the selected Account's values laid over
 it. Which Account is selected is not part of it, because that is the user's
-choice rather than the Source's answer.
+choice rather than the Source's answer. The widget renders a State's figures,
+and the pure formatters are format.js's.
 _Avoid_: data, model, store, cache
 
 **Requirement**:
