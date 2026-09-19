@@ -65,6 +65,28 @@ function pickFields(id, prefix, suffixes) {
 var STATUS_KEY = "CREDS_STATUS";
 var NOT_INSTALLED = "not_installed";
 
+// The number of consecutive Not installed reports that hides a Source. Fixed,
+// not a setting: one report cannot tell a genuine absence from a transient one,
+// and a Source hidden by a transient report has no way back (ADR 0004).
+var HIDDEN_AFTER = 2;
+
+// The consecutive Not installed count after one report. Every completed fetch
+// emits exactly one Source-level report, so this counts fetches. Any status
+// other than Not installed resets it, which is what keeps an alternating
+// sequence from ever hiding a Source. Pure, so the JS harness pins it.
+function nextNotInstalledCount(previous, status) {
+    if (status !== NOT_INSTALLED)
+        return 0;
+    return (previous || 0) + 1;
+}
+
+// Whether a consecutive Not installed count hides a Source. This is the one
+// visibility decision, consumed by the Pill, the Popout's tab strip and the
+// Overview alike so the three cannot disagree.
+function isHidden(count) {
+    return (count || 0) >= HIDDEN_AFTER;
+}
+
 // The origin tag a Source's Script puts on an Account it took from the Custom
 // Account list rather than detecting. Every other origin names where the
 // credential was found: a file's path, or an environment variable's name. Both
@@ -820,10 +842,11 @@ function tightestWindow(state) {
 // Source with no reading yet carries no Tightest Window, so the row cannot
 // draw a fabricated zero.
 //
-// Returns null for a Not installed Source: it stays hidden everywhere else, so
-// it produces no row here either.
+// Returns null for a hidden Source: hiding is a display decision the widget
+// makes once (Sources.isHidden), so this reads the shared value rather than
+// re-deriving the rule from a single status.
 function overviewRow(state) {
-    if (!state || !state.id || state.credsStatus === "not_installed")
+    if (!state || !state.id || state.hidden === true)
         return null;
 
     var d = byId(state.id);
