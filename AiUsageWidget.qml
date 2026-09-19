@@ -8,6 +8,7 @@ import qs.Modules.Plugins
 import "translations.js" as Tr
 import "sources.js" as Sources
 import "state.js" as State
+import "format.js" as Format
 import "ui"
 
 PluginComponent {
@@ -85,8 +86,7 @@ PluginComponent {
     property real countdownNow: Date.now()
     property int todayIndex: {
         void (countdownNow);
-        var dow = new Date().getDay();
-        return dow === 0 ? 6 : dow - 1;
+        return Format.todayIndex(Date.now());
     }
 
     // --- Registry views ---
@@ -903,20 +903,15 @@ PluginComponent {
 
     // --- Helpers ---
 
+    // The pure formatters are format.js's (tests/test-format.sh runs it
+    // directly). These stay so the template and the api object keep their
+    // shapes while the widget supplies the language and the clock.
     function formatTokens(n) {
-        if (n >= 1000000000)
-            return (n / 1000000000).toFixed(1) + "B";
-        if (n >= 1000000)
-            return (n / 1000000).toFixed(1) + "M";
-        if (n >= 1000)
-            return (n / 1000).toFixed(1) + "K";
-        return Math.round(n).toString();
+        return Format.formatTokens(n);
     }
 
     function shortModelName(name) {
-        if (!name || name.length === 0)
-            return name;
-        return name.charAt(0).toUpperCase() + name.slice(1);
+        return Format.shortModelName(name);
     }
 
     function progressColor(pct) {
@@ -951,55 +946,12 @@ PluginComponent {
         return root.brandColor(id);
     }
 
-    // Returns { timeFrac, delta, status } for a usage window.
-    // status: over_quota | over | under | on | unknown
     function paceInfo(util, resetMs, windowMs) {
-        util = util || 0;
-        if (!resetMs || !windowMs)
-            return util >= 100 ? {
-                timeFrac: 1,
-                delta: util,
-                status: "over_quota"
-            } : {
-                timeFrac: 0,
-                delta: 0,
-                status: "unknown"
-            };
-        var remaining = resetMs - countdownNow;
-        var timeFrac = (windowMs - remaining) / windowMs;
-        if (timeFrac < 0)
-            timeFrac = 0;
-        else if (timeFrac > 1)
-            timeFrac = 1;
-        var delta = util - timeFrac * 100;
-        var status;
-        if (util >= 100)
-            status = "over_quota";
-        else if (delta >= 5)
-            status = "over";
-        else if (delta <= -5)
-            status = "under";
-        else
-            status = "on";
-        return {
-            timeFrac: timeFrac,
-            delta: delta,
-            status: status
-        };
+        return Format.paceInfo(util, resetMs, windowMs, countdownNow);
     }
 
     function paceLabel(p) {
-        if (!p)
-            return "";
-        if (p.status === "over_quota")
-            return tr("Over quota");
-        if (p.status === "over")
-            return Math.round(p.delta) + "% " + tr("over pace");
-        if (p.status === "under")
-            return Math.round(-p.delta) + "% " + tr("under pace");
-        if (p.status === "on")
-            return tr("On pace");
-        return "";
+        return Format.paceLabel(p, lang);
     }
 
     function paceColor(status) {
@@ -1010,97 +962,31 @@ PluginComponent {
         return Theme.surfaceVariantText;
     }
 
-    // Local wall clock of a reset instant, appended to countdowns so they can be
-    // reconciled against provider dashboards that render resets in their own
-    // timezone (Z.ai's shows Asia/Shanghai). The date appears only when the
-    // reset falls on another calendar day.
     function resetClockLabel(resetMs) {
-        var resetDate = new Date(resetMs);
-        var sameDay = Qt.formatDateTime(resetDate, "yyyy-MM-dd") === Qt.formatDateTime(new Date(), "yyyy-MM-dd");
-        if (!sameDay)
-            return " (" + Qt.formatDateTime(resetDate, "ddd HH:mm") + ")";
-        return " (" + Qt.formatDateTime(resetDate, "HH:mm") + ")";
+        return Format.resetClockLabel(resetMs);
     }
 
+    // The countdownNow argument is what makes QML bindings re-evaluate on the
+    // tick; formatCountdown's old `void (countdownNow)` hint died with the
+    // move, because the dependency is now an explicit read at this call site.
     function formatCountdown(resetMs) {
-        void (countdownNow);
-        if (!resetMs)
-            return "";
-        var remaining = Math.max(0, resetMs - countdownNow);
-        if (remaining <= 0)
-            return tr("Resetting...");
-        var days = Math.floor(remaining / 86400000);
-        var hours = Math.floor((remaining % 86400000) / 3600000);
-        var mins = Math.floor((remaining % 3600000) / 60000);
-        if (days > 0)
-            return days + "d " + hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
-        return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
+        return Format.formatCountdown(resetMs, lang, countdownNow);
     }
 
-    // `wham/usage` names its windows "primary" and "secondary" with no fixed
-    // duration in the field name, but does carry each window's length, so label
-    // with the real duration. genericKey covers the window before its length has
-    // arrived (0 means not fetched, not "unknown length").
     function formatWindowLabel(seconds, genericKey) {
-        if (!seconds || seconds <= 0)
-            return root.tr(genericKey);
-        if (seconds === 604800)
-            return root.tr("Weekly Window");
-        if (seconds === 18000)
-            return root.tr("5h Window");
-        if (seconds % 86400 === 0)
-            return (seconds / 86400) + "d " + root.tr("Window");
-        var hours = Math.round(seconds / 3600);
-        return hours + "h " + root.tr("Window");
+        return Format.formatWindowLabel(seconds, genericKey, lang);
     }
 
     function formatCost(usd) {
-        var useEur = lang === "fr" && usdEurRate > 0;
-        var n = useEur ? usd * usdEurRate : usd;
-        var sym = useEur ? "" : "$";
-        var suffix = useEur ? " €" : "";
-        if (n >= 1000)
-            return sym + (n / 1000).toFixed(1) + "K" + suffix;
-        if (n >= 100)
-            return sym + Math.round(n) + suffix;
-        if (n >= 10)
-            return sym + n.toFixed(1) + suffix;
-        return sym + n.toFixed(2) + suffix;
+        return Format.formatCost(usd, lang, usdEurRate);
     }
 
     function formatTier(tier) {
-        if (!tier || tier === "unknown")
-            return "";
-        if (tier.indexOf("max_20x") >= 0)
-            return tr("Max") + " 20x";
-        if (tier.indexOf("max_5x") >= 0)
-            return tr("Max") + " 5x";
-        if (tier.indexOf("max") >= 0)
-            return tr("Max");
-        if (tier.indexOf("pro") >= 0)
-            return tr("Pro");
-        if (tier.indexOf("free") >= 0)
-            return tr("Free");
-        if (tier.indexOf("team") >= 0)
-            return tr("Team");
-        if (tier.indexOf("enterprise") >= 0)
-            return tr("Enterprise");
-        // A tier outside that list names no plan the user bought: Claude Pro
-        // reports "default_claude_ai", which read as "Pro · Default Claude Ai".
-        return "";
+        return Format.formatTier(tier, lang);
     }
 
     function formatSubscription(subType, tier) {
-        var tierLabel = formatTier(tier);
-        if (!subType || subType === "unknown")
-            return tierLabel;
-        // Normalize subscriptionType like "claude_pro" → "Pro", "claude_max" → "Max"
-        var subLabel = subType.replace(/^claude[_-]?/i, "").replace(/_/g, " ").replace(/\b\w/g, function (c) {
-            return c.toUpperCase();
-        });
-        if (tierLabel && tierLabel !== subLabel)
-            return subLabel + " · " + tierLabel;
-        return subLabel || tierLabel;
+        return Format.formatSubscription(subType, tier, lang);
     }
 
     // The value of one field on a named Account of a Source, from the Account's
