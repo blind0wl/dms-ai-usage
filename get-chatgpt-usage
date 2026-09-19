@@ -6,6 +6,52 @@
 # shellcheck disable=SC2088
 set -eu
 
+# A Requirement is a command-line program this Script cannot read any data
+# without. plugin.json declares them, and the check runs before anything else:
+# with a Requirement absent nothing downstream can be read, so a swallowed jq
+# failure would report a credential verdict instead of naming the real cause
+# (ADR 0005).
+#
+# The names are read from the manifest with sed and tr rather than jq, because
+# the program doing the checking is the one that may be missing. Presence only: a
+# jq that exists and fails is the call's own business and reports Blocked from
+# where it fails.
+SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+
+requirement_names() {
+    sed -n '/"requires"[[:space:]]*:[[:space:]]*\[/,/\]/p' "$1" \
+        | tr -d '[:space:]"' \
+        | sed -e '1s/^[^:]*://' -e 's/[][]//g' \
+        | tr ',' '\n' \
+        | sed '/^$/d'
+}
+
+missing_requirements() {
+    local name out=""
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        command -v "$name" >/dev/null 2>&1 || out="${out:+$out,}$name"
+    done < <(requirement_names "$SCRIPT_DIR/plugin.json")
+    printf '%s' "$out"
+}
+
+MISSING_REQUIREMENTS=$(missing_requirements)
+if [ -n "$MISSING_REQUIREMENTS" ]; then
+    # No credential is read and no request is made. The empty Account list keeps
+    # the selector and the settings editor from showing a stale one.
+    printf 'CREDS_STATUS=blocked\n'
+    printf 'BLOCKING_REQUIREMENT=%s\n' "$MISSING_REQUIREMENTS"
+    printf 'ACCOUNTS=\n'
+    for arg in "$@"; do
+        if [ "$arg" = "--list-accounts" ]; then
+            printf 'ACCOUNT_ORIGINS=\n'
+            printf 'ACCOUNT_SHADOWED=\n'
+            break
+        fi
+    done
+    exit 0
+fi
+
 # Cheapest possible check, before any temp dirs, network calls, or account
 # scanning: if the `codex` binary genuinely isn't installed, this Source
 # isn't just logged out, it's not present at all. Distinct from CREDS_STATUS

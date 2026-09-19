@@ -195,6 +195,10 @@ PluginComponent {
     function emptyState() {
         return {
             credsStatus: "unknown",
+            // The Requirements the Script could not read past, as its
+            // BLOCKING_REQUIREMENT report left them. Empty for every state but a
+            // Blocked one, and cleared as soon as the Source reports anything else.
+            blockingRequirement: "",
             // Consecutive Not installed reports, and the hidden decision they
             // drive. In-memory only: a restart clears them, so every enabled
             // Source shows until its first fetch lands (ADR 0004).
@@ -1209,6 +1213,11 @@ PluginComponent {
     // above it marks those values as stale rather than current.
     function applyCredsStatus(st, val) {
         st.credsStatus = val;
+        // A Blocked report is the only one that names Requirements, so any other
+        // report clears the list a previous Blocked one left behind. A restored
+        // command brings the Source back with no stale commands to name.
+        if (val !== Sources.BLOCKED)
+            st.blockingRequirement = "";
         st.notInstalledCount = Sources.nextNotInstalledCount(st.notInstalledCount, val);
         st.hidden = Sources.isHidden(st.notInstalledCount);
         if (val === "ok")
@@ -1256,6 +1265,9 @@ PluginComponent {
                 break;
             case "CREDS_STATUS":
                 root.applyCredsStatus(st, val);
+                break;
+            case "BLOCKING_REQUIREMENT":
+                st.blockingRequirement = val;
                 break;
             case "WEEK_MESSAGES":
                 st.weekMessages = parseInt(val) || 0;

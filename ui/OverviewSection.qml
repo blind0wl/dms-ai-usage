@@ -14,9 +14,11 @@ import qs.Widgets
 // The degraded rows mirror the rules the Source tab already follows. A Missing
 // Source offers the sign-in its Login Section offers, in place of a bar it has
 // no reading for, and the same Setup guide link, so a Source that needs an API
-// key has its way out here and not only on its own tab. An Unavailable Source
-// keeps its last known reading with the bar dimmed and marked stale, because a
-// stale reading is still a reading.
+// key has its way out here and not only on its own tab. A Blocked Source draws
+// `--` and names the commands its Script could not read past, with no bar and no
+// sign-in because installing the command is the fix. An Unavailable Source keeps
+// its last known reading with the bar dimmed and marked stale, because a stale
+// reading is still a reading.
 Column {
     id: root
 
@@ -44,6 +46,15 @@ Column {
         if (!countdown)
             return label;
         return label + " · " + root.api.tr("Resets in") + " " + countdown;
+    }
+
+    // What a Blocked row says in place of the Window line a ranked row carries:
+    // the commands its Script could not read past. The list is the report's, so
+    // the row names what to install without knowing which Source it is.
+    function blockedLine(row) {
+        if (!row.blocked || !row.requirements || row.requirements.length === 0)
+            return "";
+        return root.api.tr("Blocked") + ": " + row.requirements.join(", ");
     }
 
     Repeater {
@@ -122,9 +133,10 @@ Column {
 
                 // The bar, in the space a Missing row gives to its sign-in. An
                 // Unavailable Source dims its whole bar, so a stale reading does
-                // not read as a current one.
+                // not read as a current one, and a Blocked row draws none at all:
+                // no credential was read, so it has no value to draw.
                 Rectangle {
-                    visible: !row.missing
+                    visible: !row.missing && !row.blocked
                     width: parent.width
                     height: 4
                     radius: 2
@@ -173,6 +185,18 @@ Column {
                     width: parent.width
                     visible: row.showsReading
                     text: root.windowLine(modelData)
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                }
+
+                // A Blocked row's own line, where a ranked row names its Window.
+                // It names the commands rather than a fix in settings, because
+                // no plugin setting supplies a Requirement (ADR 0005).
+                StyledText {
+                    width: parent.width
+                    visible: row.blocked
+                    text: root.blockedLine(modelData)
                     font.pixelSize: Theme.fontSizeSmall
                     color: Theme.surfaceVariantText
                     wrapMode: Text.WordWrap

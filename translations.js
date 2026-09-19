@@ -276,6 +276,25 @@ var strings = {
         },
     "Usage endpoint unavailable":
         { fr: "Point d'accès d'utilisation indisponible", es: "Punto de acceso de uso no disponible" },
+    "This Source's usage endpoint could not be reached. Showing the last known values.":
+        {
+            fr: "Le point d'accès d'utilisation de cette source est injoignable. Affichage des dernières valeurs connues.",
+            es: "No se pudo contactar con el punto de acceso de uso de esta fuente. Se muestran los últimos valores conocidos."
+        },
+    "This Source's usage endpoint could not be reached. No usage data to show yet.":
+        {
+            fr: "Le point d'accès d'utilisation de cette source est injoignable. Aucune donnée d'utilisation à afficher pour le moment.",
+            es: "No se pudo contactar con el punto de acceso de uso de esta fuente. Aún no hay datos de uso que mostrar."
+        },
+    "Blocked":
+        { fr: "Bloqué", es: "Bloqueado" },
+    "Blocked by a requirement":
+        { fr: "Bloqué par un prérequis", es: "Bloqueado por un requisito" },
+    "This Source could not be read because a required command is unavailable":
+        {
+            fr: "Cette source n'a pas pu être lue car une commande requise est indisponible",
+            es: "No se pudo leer esta fuente porque un comando requerido no está disponible"
+        },
     "opencode's usage endpoint could not be reached. Showing the last known values.":
         {
             fr: "Le point d'accès d'utilisation d'opencode est injoignable. Affichage des dernières valeurs connues.",

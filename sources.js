@@ -65,6 +65,18 @@ function pickFields(id, prefix, suffixes) {
 var STATUS_KEY = "CREDS_STATUS";
 var NOT_INSTALLED = "not_installed";
 
+// The output key a Script reports the Requirements it could not read past under,
+// beside STATUS_KEY: the names of the commands that are absent or failing, comma
+// separated. The same key carries both, because a Requirement that is present
+// and failing blocks the Source exactly as an absent one does (ADR 0005).
+var BLOCKING_REQUIREMENT = "BLOCKING_REQUIREMENT";
+
+// The STATUS_KEY value meaning the Script could not read the Source because a
+// Requirement is absent or failing. Blocked is a fourth Source state beside Not
+// installed, Missing and Unavailable, and it is the only one that names a
+// command rather than a credential or an endpoint.
+var BLOCKED = "blocked";
+
 // The number of consecutive Not installed reports that hides a Source. Fixed,
 // not a setting: one report cannot tell a genuine absence from a transient one,
 // and a Source hidden by a transient report has no way back (ADR 0004).
@@ -480,11 +492,17 @@ var SOURCES = [
                 accountField: "path"
             }
         },
+        status: {
+            titleKey: "Usage endpoint unavailable",
+            bodyKey: "This Source's usage endpoint could not be reached. Showing the last known values.",
+            emptyBodyKey: "This Source's usage endpoint could not be reached. No usage data to show yet."
+        },
         planStyle: "subscription",
         sections: [
             { type: "header" },
             { type: "accounts" },
             { type: "login" },
+            { type: "status" },
             { type: "windows", counts: true },
             {
                 type: "stats",
@@ -555,11 +573,17 @@ var SOURCES = [
             program: "codex",
             args: ["login"]
         },
+        status: {
+            titleKey: "Usage endpoint unavailable",
+            bodyKey: "This Source's usage endpoint could not be reached. Showing the last known values.",
+            emptyBodyKey: "This Source's usage endpoint could not be reached. No usage data to show yet."
+        },
         planStyle: "plan",
         sections: [
             { type: "header" },
             { type: "accounts" },
             { type: "login" },
+            { type: "status" },
             { type: "windows" },
             {
                 type: "stats",
@@ -702,11 +726,17 @@ var SOURCES = [
             titleKey: "API key rejected",
             bodyKey: "Check your Z.ai API key in the plugin settings."
         },
+        status: {
+            titleKey: "Usage endpoint unavailable",
+            bodyKey: "This Source's usage endpoint could not be reached. Showing the last known values.",
+            emptyBodyKey: "This Source's usage endpoint could not be reached. No usage data to show yet."
+        },
         planStyle: "plan",
         sections: [
             { type: "header" },
             { type: "accounts" },
             { type: "login" },
+            { type: "status" },
             { type: "windows" },
             {
                 type: "stats",
@@ -837,9 +867,9 @@ function tightestWindow(state) {
 // reading is still a reading, so the Overview's bar and the Window card draw it
 // stale rather than as a fresh zero. Every state that means "nothing was read"
 // - not_installed, missing, expired, an unavailable endpoint with no fallback,
-// and the Blocked state #58 adds - carries none. This is the one place the rule
-// lives, so the surfaces that draw a reading cannot disagree about whether a
-// Source has anything to draw.
+// and the Blocked state a failing or absent Requirement produces - carries none.
+// This is the one place the rule lives, so the surfaces that draw a reading
+// cannot disagree about whether a Source has anything to draw.
 //
 // The Pill's Ring asks a narrower question, whether the reading is current, and
 // draws its hollow ring for a degraded Source even when a last-good reading is
@@ -851,12 +881,15 @@ function hasReading(state) {
 // One Overview row. It carries everything the Overview tab draws, so the tab is
 // a dumb repeater and every ranking rule stays testable here.
 //
-// A Source that has reported a reading is ranked, except a Missing one:
-// credentials can lapse after a good fetch, and the row offers the login
-// affordance instead of a stale bar. An Unavailable Source keeps its last known
-// reading and flags it stale, because a stale reading is still a reading. A
-// Source with no reading yet carries no Tightest Window, so the row cannot
-// draw a fabricated zero.
+// A Source that has reported a reading is ranked, except a Missing or a Blocked
+// one: credentials can lapse after a good fetch, and a missing Requirement means
+// no credential was read at all, so neither row draws a stale bar. An Unavailable
+// Source keeps its last known reading and flags it stale, because a stale reading
+// is still a reading. A Source with no reading yet carries no Tightest Window, so
+// the row cannot draw a fabricated zero.
+//
+// A Blocked row carries the commands its Script could not read past, so the
+// Overview can name them without reading the registry.
 //
 // Returns null for a hidden Source: hiding is a display decision the widget
 // makes once (Sources.isHidden), so this reads the shared value rather than
@@ -868,8 +901,9 @@ function overviewRow(state) {
     var d = byId(state.id);
     var missing = state.credsStatus === "missing" || state.credsStatus === "expired";
     var unavailable = state.credsStatus === "unavailable";
+    var blocked = state.credsStatus === BLOCKED;
     var reading = hasReading(state);
-    var tightest = reading ? tightestWindow(state) : null;
+    var tightest = reading && !blocked ? tightestWindow(state) : null;
     var which = tightest ? tightest.window : null;
     var declared = which && d && d.windows[which] ? d.windows[which] : null;
     var win = which ? state[which] || {} : {};
@@ -887,14 +921,19 @@ function overviewRow(state) {
         util: tightest ? tightest.util : 0,
         resetMs: tightest ? tightest.resetMs : 0,
         // Ranked means the row holds a current-enough reading to sort by.
-        ranked: reading && !missing,
+        ranked: reading && !missing && !blocked,
         // Stale marks an Unavailable Source's last known reading as not current.
         stale: reading && unavailable,
-        // Missing and Unavailable are the two degraded states, and each renders
-        // differently: a login affordance, or a dimmed stale bar.
+        // Missing, Blocked and Unavailable are the three degraded states, and
+        // each renders differently: a login affordance, a line naming the
+        // commands a Requirement needs, or a dimmed stale bar.
         missing: missing,
         unavailable: unavailable,
-        degraded: missing || unavailable,
+        blocked: blocked,
+        // The commands a Blocked Source could not read past, in the order its
+        // Script reported them. Empty for every other state.
+        requirements: blocked ? splitList(state.blockingRequirement) : [],
+        degraded: missing || unavailable || blocked,
         // The sign-in a Missing row mirrors from the Source tab's Login Section:
         // the descriptor says whether the Source has a CLI flow to run or only a
         // key to point at. Carried here so the row can be drawn by a repeater

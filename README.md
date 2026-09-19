@@ -17,6 +17,7 @@ The Overview is the Popout's first tab. It ranks the Sources you have visible by
 - **A Source with no reading yet** follows the ranked rows rather than showing a zero it never reported
 - **A Missing Source** shows the same sign-in its own tab offers, button and **Setup guide** link included, so the fix is reachable from here
 - **An Unavailable Source** keeps its last known reading, dimmed and marked stale, because a stale reading is still a reading
+- **A Blocked Source** has no credential reading to draw, so it shows `--` and names the `jq`/`curl` it could not read past, with no sign-in and no settings pointer because installing the command is the fix
 - **Two Sources is the floor.** With one visible there is nothing to compare, so the tab is absent and the Popout is that Source's tab alone. Settings can switch it off as well
 - **The Overview is not a Source.** It has no provider, no credentials and nothing of its own to fetch, so it adds no request to a refresh
 
@@ -55,6 +56,12 @@ The Overview is the Popout's first tab. It ranks the Sources you have visible by
 
 - [DMS Shell](https://github.com/AvengeMedia/DankMaterialShell)
 - [jq](https://jqlang.github.io/jq/) (JSON processor)
+- [curl](https://curl.se/) (HTTP client)
+
+The two command-line programs above are the plugin's **Requirements**: every Script
+needs them, and `plugin.json`'s `requires` list is where they are declared. A
+missing one shows as a **Blocked** Source rather than a false credential problem,
+and installing it brings that Source back on the next refresh.
 
 No Source is mandatory. Install and enable the ones you actually use. Each section
 below is the setup guide that Source's own **Setup guide** link opens in the popout,
