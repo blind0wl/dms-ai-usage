@@ -65,6 +65,8 @@ var strings = {
         { fr: "Activité quotidienne", es: "Actividad diaria" },
     "Token Consumption":
         { fr: "Consommation de tokens", es: "Consumo de tokens" },
+    "At API rates, not what you pay":
+        { fr: "Aux tarifs API, pas ce que vous payez.", es: "A tarifas de API, no a lo que pagas." },
     "Today":
         { fr: "Aujourd'hui", es: "Hoy" },
     "Week":

@@ -22,6 +22,7 @@ trap 'rm -rf "$TMPDIR_ROOT"' EXIT
 DOW=$(date +%u)
 WEEK_START=$(date -d "$((DOW - 1)) days ago" +%Y-%m-%d)
 MONTH_START=$(date +%Y-%m-01)
+TODAY=$(date +%Y-%m-%d)
 
 MOCK_DIR="$TMPDIR_ROOT/mocks"
 mkdir -p "$MOCK_DIR"
@@ -43,6 +44,11 @@ done
 kind=week
 case "$url" in
     *quota/limit*) kind=quota ;;
+    *"startTime=${ZAI_MOCK_TODAY}+00:00:00&endTime=${ZAI_MOCK_TODAY}+"*)
+        # The today call shares its URL with the month one on the month's
+        # first day, so there the month fixture answers both and today's cost
+        # reads as the month's - the same figures the real API returns.
+        [ "$ZAI_MOCK_TODAY" = "$ZAI_MOCK_MONTH_START" ] || kind=today ;;
     *"startTime=${ZAI_MOCK_MONTH_START}+"*) [ "$ZAI_MOCK_MONTH_START" = "$ZAI_MOCK_WEEK_START" ] || kind=month ;;
 esac
 
@@ -58,8 +64,12 @@ chmod +x "$TMPDIR_ROOT/curl"
 run_script() {
     local home_dir="$1"
     shift
-    HOME="$home_dir" \
+    # The pricing cache the Script reads lives under XDG_CACHE_HOME, so that
+    # is pinned inside the test environment: a developer's real cache must
+    # not price a fixture, and a fixture must not write into it.
+    HOME="$home_dir" XDG_CACHE_HOME="$home_dir/.cache" \
     ZAI_MOCK_DIR="$MOCK_DIR" ZAI_MOCK_WEEK_START="$WEEK_START" ZAI_MOCK_MONTH_START="$MONTH_START" \
+    ZAI_MOCK_TODAY="$TODAY" \
     PATH="$TMPDIR_ROOT:$PATH" ZAI_API_KEY="${ZAI_API_KEY_OVERRIDE:-}" \
         bash "$SCRIPT" "$@" 2>/dev/null
 }
@@ -72,6 +82,15 @@ new_home() {
 
 write_pi_key() {
     printf '{"providers":{"zai":{"apiKey":"%s"}}}\n' "$2" > "$1/.pi/agent/models.json"
+}
+
+# Writes the shared pricing cache the way the library's refresh would.
+# Usage: write_pricing_cache <home_dir> <models-json> [usd_eur_rate]
+write_pricing_cache() {
+    local home_dir="$1" models="$2" rate="${3:-0}"
+    mkdir -p "$home_dir/.cache/dms-ai-usage"
+    printf '{"updated": "%s", "models": %s, "usd_eur_rate": %s}' \
+        "$TODAY" "$models" "$rate" > "$home_dir/.cache/dms-ai-usage/pricing.json"
 }
 
 val() { echo "$1" | grep "^$2=" | cut -d= -f2-; }
@@ -353,6 +372,111 @@ assert_eq "$(echo "$LIST14" | grep -c "^ACCOUNTS=")" "1" "listing mode answers w
 assert_eq "$(val "$LIST14" ACCOUNT_ORIGINS)" "" "listing mode reports no origin when no key is found anywhere"
 assert_eq "$(echo "$LIST14" | grep -c "^ACCOUNT_ORIGINS=")" "1" "listing mode answers with the origins key even with nothing to list"
 assert_eq "$(echo "$LIST14" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an empty listing says the Source is not installed, rather than leaving the page to blame the rows"
+
+# ============================================================
+echo "=== Test 12: Cost — the three model-usage bodies priced ==="
+# ============================================================
+# A fresh key with small figures so the arithmetic is exact: today 40 tokens,
+# the week 100, the month 300, all on GLM-5.3. The cache prices zai's own
+# rate row for glm-5.3 at 0.001 per token, so today reads 0.04, the week
+# 0.10 and the month 0.30.
+cat > "$MOCK_DIR/k9.quota.json" << 'EOF'
+{"code":200,"msg":"ok","data":{"limits":[
+  {"type":"CREDIT_LIMIT","unit":3,"percentage":10,"nextResetTime":1789279094313},
+  {"type":"CREDIT_LIMIT","unit":6,"percentage":20,"nextResetTime":1789865116984}
+],"level":"lite"},"success":true}
+EOF
+jq -n '{code: 200, success: true,
+  data: {granularity: "hourly",
+    totalUsage: {totalTokensUsage: 100, totalModelCallCount: 1},
+    modelSummaryList: [{modelName: "GLM-5.3", totalTokens: 100, sortOrder: 1}],
+    x_time: [], tokensUsage: []}}' > "$MOCK_DIR/k9.week.json"
+jq -n '{code: 200, success: true,
+  data: {granularity: "hourly",
+    totalUsage: {totalTokensUsage: 300, totalModelCallCount: 3},
+    modelSummaryList: [{modelName: "GLM-5.3", totalTokens: 300, sortOrder: 1}],
+    x_time: [], tokensUsage: []}}' > "$MOCK_DIR/k9.month.json"
+jq -n '{code: 200, success: true,
+  data: {granularity: "hourly",
+    totalUsage: {totalTokensUsage: 40, totalModelCallCount: 1},
+    modelSummaryList: [{modelName: "GLM-5.3", totalTokens: 40, sortOrder: 1}],
+    x_time: [], tokensUsage: []}}' > "$MOCK_DIR/k9.today.json"
+
+H16=$(new_home home16)
+write_pi_key "$H16" k9
+write_pricing_cache "$H16" '{"zai/glm-5.3": {"input": 0.001, "output": 0.002, "cache_read": 0.001, "cache_write": 0}}' 0.9
+
+OUT16=$(run_script "$H16")
+
+assert_eq "$(val "$OUT16" TODAY_COST)" "0.04" "TODAY_COST prices the today call's model tokens"
+assert_eq "$(val "$OUT16" WEEK_COST)" "0.10" "WEEK_COST prices the week call's model tokens"
+assert_eq "$(val "$OUT16" MONTH_COST)" "0.30" "MONTH_COST prices the month call's model tokens"
+assert_eq "$(val "$OUT16" USD_EUR_RATE)" "0.9" "USD_EUR_RATE rides the same cache"
+assert_eq "$(val "$OUT16" WEEK_TOKENS)" "100" "costing leaves the token counts alone"
+assert_eq "$(val "$OUT16" ACCOUNT_TODAY_COST)" "default:0.04" "ACCOUNT_TODAY_COST carries the per-Account figure"
+assert_eq "$(val "$OUT16" ACCOUNT_WEEK_COST)" "default:0.10" "ACCOUNT_WEEK_COST carries the per-Account figure"
+assert_eq "$(val "$OUT16" ACCOUNT_MONTH_COST)" "default:0.30" "ACCOUNT_MONTH_COST carries the per-Account figure"
+assert_eq "$(val "$OUT16" CREDS_STATUS)" "ok" "pricing leaves the credential verdict alone"
+
+# ============================================================
+echo "=== Test 13: Model names price case-insensitively under Z.ai's own rates ==="
+# ============================================================
+# The API reports GLM- prefixed names; LiteLLM rows Z.ai's rates under
+# zai/-prefixed lowercase keys. A model neither names contributes zero.
+jq '.data.modelSummaryList = [{modelName: "GLM-4.6", totalTokens: 100, sortOrder: 1},
+                              {modelName: "GLM-9.9-Unknown", totalTokens: 500, sortOrder: 2}]' \
+    "$MOCK_DIR/k9.week.json" > "$MOCK_DIR/k10.week.json"
+cp "$MOCK_DIR/k9.quota.json" "$MOCK_DIR/k10.quota.json"
+cp "$MOCK_DIR/k9.today.json" "$MOCK_DIR/k10.today.json"
+jq '.data.modelSummaryList = [.data.modelSummaryList[0]]' "$MOCK_DIR/k9.month.json" > "$MOCK_DIR/k10.month.json"
+
+H17=$(new_home home17)
+write_pi_key "$H17" k10
+write_pricing_cache "$H17" '{"zai/glm-4.6": {"input": 0.0001, "output": 0.0002, "cache_read": 0.0001, "cache_write": 0}, "zai/glm-5.3": {"input": 0.001, "output": 0.002, "cache_read": 0.001, "cache_write": 0}}'
+
+OUT17=$(run_script "$H17")
+
+assert_eq "$(val "$OUT17" WEEK_COST)" "0.01" "WEEK_COST finds the model under Z.ai's own rate row, and only that one"
+assert_match "$OUT17" '^WEEK_MODELS=.*GLM-9.9-Unknown=500' "the unpriced model still counts its tokens"
+
+# ============================================================
+echo "=== Test 14: No pricing cache — costs read zero, tokens still count ==="
+# ============================================================
+H18=$(new_home home18)
+write_pi_key "$H18" k9
+OUT18=$(run_script "$H18")
+
+assert_eq "$(val "$OUT18" TODAY_COST)" "0.00" "TODAY_COST=0.00 with no cache and no table"
+assert_eq "$(val "$OUT18" WEEK_COST)" "0.00" "WEEK_COST=0.00 with no cache and no table"
+assert_eq "$(val "$OUT18" MONTH_COST)" "0.00" "MONTH_COST=0.00 with no cache and no table"
+assert_eq "$(val "$OUT18" WEEK_TOKENS)" "100" "WEEK_TOKENS still counts"
+assert_eq "$(val "$OUT18" USD_EUR_RATE)" "0" "USD_EUR_RATE stays 0 with nothing to read it from"
+
+# ============================================================
+echo "=== Test 15: Costs aggregate across accounts ==="
+# ============================================================
+# k7 (default) has 600 GLM-5.3 tokens on the week, k8 (work) 400 plus 600 on
+# GLM-5.3-Air, which the cache does not name and so prices at zero. At the
+# same 0.001 rate the week reads work:0.40,default:0.60 and sums to 1.00.
+H19=$(new_home home19)
+write_pi_key "$H19" k7
+write_pricing_cache "$H19" '{"zai/glm-5.3": {"input": 0.001, "output": 0.002, "cache_read": 0.001, "cache_write": 0}}'
+
+OUT19=$(run_script "$H19" "work=k8")
+
+assert_eq "$(val "$OUT19" WEEK_COST)" "1.00" "WEEK_COST sums across accounts"
+assert_eq "$(val "$OUT19" ACCOUNT_WEEK_COST)" "work:0.40,default:0.60" "ACCOUNT_WEEK_COST carries each Account's own cost"
+
+# ============================================================
+echo "=== Test 16: Not installed — cost keys present at zero ==="
+# ============================================================
+# Test 5's output carries the not-installed heredoc; the cost keys must be
+# part of it, so a Source that is not present reports zeros rather than
+# teaching the reader to miss the keys.
+assert_eq "$(val "$OUT5" TODAY_COST)" "0.00" "the not-installed answer carries TODAY_COST=0.00"
+assert_eq "$(val "$OUT5" WEEK_COST)" "0.00" "the not-installed answer carries WEEK_COST=0.00"
+assert_eq "$(val "$OUT5" MONTH_COST)" "0.00" "the not-installed answer carries MONTH_COST=0.00"
+assert_eq "$(echo "$OUT5" | grep -c '^ACCOUNT_TODAY_COST=')" "1" "the not-installed answer carries the per-Account cost keys"
 
 # ============================================================
 echo ""

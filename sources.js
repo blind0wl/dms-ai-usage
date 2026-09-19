@@ -506,6 +506,7 @@ var SOURCES = [
             { type: "windows", counts: true },
             {
                 type: "stats",
+                captionKey: "At API rates, not what you pay",
                 columns: [
                     {
                         labelKey: "Today",
@@ -563,6 +564,7 @@ var SOURCES = [
             fields: pickFields("chatgpt", "ACCOUNT_", [
                 "SUBSCRIPTION", "CREDS_STATUS", "WEEK_TOKENS",
                 "MONTH_TOKENS", "WEEK_MESSAGES", "WEEK_SESSIONS",
+                "TODAY_COST", "WEEK_COST", "MONTH_COST", "DAILY_COSTS",
                 "DAILY", "WEEK_MODELS",
                 "PRIMARY_UTIL", "PRIMARY_RESET",
                 "SECONDARY_UTIL", "SECONDARY_RESET"
@@ -587,15 +589,23 @@ var SOURCES = [
             { type: "windows" },
             {
                 type: "stats",
+                captionKey: "At API rates, not what you pay",
                 columns: [
                     {
-                        labelKey: "Week",
-                        value: { kind: "tokens", key: "weekTokens" },
+                        labelKey: "Today",
+                        value: { kind: "tokens", key: "todayTokens" },
+                        sub: { kind: "cost", key: "todayCost" },
                         accent: true
                     },
                     {
+                        labelKey: "Week",
+                        value: { kind: "tokens", key: "weekTokens" },
+                        sub: { kind: "cost", key: "weekCost" }
+                    },
+                    {
                         labelKey: "Month",
-                        value: { kind: "tokens", key: "monthTokens" }
+                        value: { kind: "tokens", key: "monthTokens" },
+                        sub: { kind: "cost", key: "monthCost" }
                     },
                     {
                         labelKey: "This Week",
@@ -715,6 +725,7 @@ var SOURCES = [
             placeholder: "",
             fields: pickFields("zai", "ACCOUNT_", [
                 "CREDS_STATUS",
+                "TODAY_COST", "WEEK_COST", "MONTH_COST",
                 "PRIMARY_UTIL", "PRIMARY_RESET",
                 "SECONDARY_UTIL", "SECONDARY_RESET"
             ])
@@ -740,20 +751,23 @@ var SOURCES = [
             { type: "windows" },
             {
                 type: "stats",
+                captionKey: "At API rates, not what you pay",
                 columns: [
                     {
-                        labelKey: "Week",
-                        value: { kind: "tokens", key: "weekTokens" },
+                        labelKey: "Today",
+                        value: { kind: "tokens", key: "todayTokens" },
+                        sub: { kind: "cost", key: "todayCost" },
                         accent: true
                     },
                     {
-                        labelKey: "Month",
-                        value: { kind: "tokens", key: "monthTokens" }
+                        labelKey: "Week",
+                        value: { kind: "tokens", key: "weekTokens" },
+                        sub: { kind: "cost", key: "weekCost" }
                     },
                     {
-                        labelKey: "This Week",
-                        value: { kind: "count", key: "weekCalls", unitKey: "Model calls" },
-                        text: true
+                        labelKey: "Month",
+                        value: { kind: "tokens", key: "monthTokens" },
+                        sub: { kind: "cost", key: "monthCost" }
                     }
                 ]
             },

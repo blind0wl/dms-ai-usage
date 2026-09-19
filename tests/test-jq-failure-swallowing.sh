@@ -224,10 +224,14 @@ for spec in "${SPECS[@]}"; do
         fi
     done
     assert_no_key "$OUT_CREDS" "PRIMARY_UTIL" "a Blocked report carries no Window reading"
-    if [ -s "$CURL_LOG" ]; then
-        fail "no request may be made once the credential read has failed"
+    # The rate table and the currency rate come from the plugin's own pricing
+    # cache (ADR 0006), which names no credential and no Source endpoint, so
+    # the request that matters here is the one that would have read the
+    # Source: a Blocked report must not ask its endpoint for a verdict.
+    if grep -qE 'chatgpt\.com|api\.z\.ai|opencode\.ai' "$CURL_LOG" 2>/dev/null; then
+        fail "no request to the Source's endpoint once the credential read has failed"
     else
-        pass "no request is made once the credential read has failed"
+        pass "no request to the Source's endpoint once the credential read has failed"
     fi
 
     if [ "$list_fail" = 1 ]; then

@@ -56,6 +56,11 @@ WEEK_SESSIONS=0
 MONTH_TOKENS=0
 DAILY=0,0,0,0,0,0,0
 WEEK_MODELS=
+TODAY_COST=0.00
+WEEK_COST=0.00
+MONTH_COST=0.00
+DAILY_COSTS=0.00,0.00,0.00,0.00,0.00,0.00,0.00
+USD_EUR_RATE=0
 ALLTIME_SESSIONS=0
 ALLTIME_MESSAGES=0
 FIRST_SESSION=unknown
@@ -74,6 +79,10 @@ ACCOUNT_WEEK_MESSAGES=
 ACCOUNT_WEEK_SESSIONS=
 ACCOUNT_DAILY=
 ACCOUNT_WEEK_MODELS=
+ACCOUNT_TODAY_COST=
+ACCOUNT_WEEK_COST=
+ACCOUNT_MONTH_COST=
+ACCOUNT_DAILY_COSTS=
 NOTINSTALLED
     exit 0
 fi
@@ -86,6 +95,7 @@ DOW=$(date +%u)  # 1=Monday, 7=Sunday
 WEEK_START=$(date -d "$((DOW - 1)) days ago" +%Y-%m-%d)
 # Calendar month: 1st of current month
 MONTH_START=$(date +%Y-%m-01)
+TODAY=$(date +%Y-%m-%d)
 
 # Local vs UTC date bucketing — same probe/expression as get-claude-usage,
 # see that script for the full rationale. $ts is a jq variable set at each
@@ -116,7 +126,8 @@ jwt_exp() {
 # --- Per-account token/model stats from local rollout session files ---
 # Usage: count_account_tokens <codex_home_dir> <out_tmpfile>
 # Writes WEEK_TOKENS, WEEK_MESSAGES, WEEK_SESSIONS, MONTH_TOKENS, DAILY,
-# WEEK_MODELS to out_tmpfile. Mirrors get-claude-usage's count_profile_tokens,
+# WEEK_MODELS and the period costs (TODAY_COST, WEEK_COST, MONTH_COST,
+# DAILY_COSTS) to out_tmpfile. Mirrors get-claude-usage's count_profile_tokens,
 # but reads Codex's rollout-*.jsonl session logs instead of project transcripts:
 # each turn's `turn_context` event carries the active model, and `token_count`
 # events under it carry that step's token delta (payload.info.last_token_usage).
@@ -147,7 +158,12 @@ count_account_tokens() {
                     | if \$item.type == \"turn_context\" then
                         \$carry + {model: (\$item.payload.model // \$carry.model), emit: {k:\"turn\", ts:\$item.timestamp, model:(\$item.payload.model // \$carry.model), file:\$carry.file}}
                       elif \$item.type == \"event_msg\" and \$item.payload.type == \"token_count\" then
-                        \$carry + {emit: {k:\"tok\", ts:\$item.timestamp, model:\$carry.model, tokens:(\$item.payload.info.last_token_usage.total_tokens // 0), file:\$carry.file}}
+                        \$carry + {emit: {k:\"tok\", ts:\$item.timestamp, model:\$carry.model,
+                            tokens:(\$item.payload.info.last_token_usage.total_tokens // 0),
+                            inp:(\$item.payload.info.last_token_usage.input_tokens // 0),
+                            cached:(\$item.payload.info.last_token_usage.cached_input_tokens // 0),
+                            out:(\$item.payload.info.last_token_usage.output_tokens // 0),
+                            file:\$carry.file}}
                       else
                         \$carry + {emit:null}
                       end
@@ -157,12 +173,38 @@ count_account_tokens() {
             | select(. != null)
             | (.ts) as \$ts
             | (${JQ_DATE_EXPR}) as \$d
-            | [.k, \$d, .model, (.tokens // 0 | tostring), .file] | @tsv
+            | [.k, \$d, .model, (.tokens // 0 | tostring), (.inp // 0 | tostring), (.cached // 0 | tostring), (.out // 0 | tostring), .file] | @tsv
         " 2>/dev/null \
-        | awk -F'\t' -v week_start="$WEEK_START" -v month_start="$MONTH_START" -v day_dates="$day_dates" '
-        BEGIN { split(day_dates, dates, ",") }
+        | awk -F'\t' -v week_start="$WEEK_START" -v month_start="$MONTH_START" -v today="$TODAY" -v day_dates="$day_dates" -v pricing="$PRICING_AWK" '
+        BEGIN {
+            split(day_dates, dates, ",")
+            has_pricing = 0
+            if (pricing != "") {
+                n = split(pricing, pmodels, ",")
+                for (i = 1; i <= n; i++) {
+                    split(pmodels[i], pp, ":")
+                    price_in[pp[1]] = pp[2] + 0
+                    price_out[pp[1]] = pp[3] + 0
+                    price_cr[pp[1]] = pp[4] + 0
+                    price_cw[pp[1]] = pp[5] + 0
+                }
+                has_pricing = 1
+            }
+        }
+        # The rate row for a model: its own name, or the base name when the
+        # rollout names a dated snapshot the table entries under their base
+        # ("gpt-4.1-2025-04-14" -> "gpt-4.1"). Empty when the table does not
+        # name the model, which prices its tokens at zero (ADR 0006).
+        function rate_row(name,  base) {
+            if (name in price_in) return name
+            base = name
+            if (base ~ /-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) base = substr(base, 1, length(base) - 11)
+            if (base in price_in) return base
+            return ""
+        }
         {
-            kind = $1; date = $2; model = $3; tok = $4 + 0; file = $5
+            kind = $1; date = $2; model = $3
+            tok = $4 + 0; inp = $5 + 0; cached = $6 + 0; out = $7 + 0; file = $8
 
             if (kind == "turn") {
                 if (date >= week_start) week_msgs++
@@ -174,6 +216,20 @@ count_account_tokens() {
                     sess_seen[file] = 1
                 }
                 if (date >= month_start) month_tokens += tok
+
+                # The four-way split (ADR 0006): cached input at the cache-read
+                # rate, the remainder of the input at the input rate, output at
+                # the output rate. Codex reports no cache-write figure, so that
+                # bucket of the split contributes nothing today; the rate rides
+                # the pricing string all the same.
+                m = rate_row(model)
+                if (has_pricing && m != "") {
+                    if (cached > inp) cached = inp
+                    cost = (inp - cached) * price_in[m] + cached * price_cr[m] + out * price_out[m]
+                    day_cost[date] += cost
+                    if (date >= week_start) week_cost += cost
+                    if (date >= month_start) month_cost += cost
+                }
             }
         }
         END {
@@ -199,10 +255,20 @@ count_account_tokens() {
                 }
             }
             printf "WEEK_MODELS=%s\n", models
+
+            daily_costs = ""
+            for (i = 1; i <= 7; i++) {
+                val = (dates[i] in day_cost) ? day_cost[dates[i]] : 0
+                daily_costs = daily_costs (i > 1 ? "," : "") sprintf("%.2f", val)
+            }
+            printf "DAILY_COSTS=%s\n", daily_costs
+            printf "TODAY_COST=%.2f\n", (today in day_cost) ? day_cost[today] : 0
+            printf "WEEK_COST=%.2f\n", week_cost + 0
+            printf "MONTH_COST=%.2f\n", month_cost + 0
         }' > "$out_file" 2>/dev/null || true
 
     # Defaults if the pipeline produced nothing (no session files, jq/awk failure)
-    [ -s "$out_file" ] || printf 'WEEK_TOKENS=0\nWEEK_MESSAGES=0\nWEEK_SESSIONS=0\nMONTH_TOKENS=0\nDAILY=0,0,0,0,0,0,0\nWEEK_MODELS=\n' > "$out_file"
+    [ -s "$out_file" ] || printf 'WEEK_TOKENS=0\nWEEK_MESSAGES=0\nWEEK_SESSIONS=0\nMONTH_TOKENS=0\nDAILY=0,0,0,0,0,0,0\nWEEK_MODELS=\nDAILY_COSTS=0.00,0.00,0.00,0.00,0.00,0.00,0.00\nTODAY_COST=0.00\nWEEK_COST=0.00\nMONTH_COST=0.00\n' > "$out_file"
 }
 
 # --- Per-account all-time stats from local rollout session files ---
@@ -456,6 +522,11 @@ if [ "$LIST_ACCOUNTS" -eq 1 ]; then
     exit 0
 fi
 
+# The listing has answered by now, so the fetch path can spend the network
+# calls the prices need (ADR 0006). A refresh that fails keeps yesterday's
+# cache; with no cache at all the tokens still count and price at zero.
+load_pricing
+
 # --- Fetch usage per account in parallel ---
 TMPDIR_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_ROOT"' EXIT
@@ -502,6 +573,10 @@ WEEK_SESSIONS=0
 MONTH_TOKENS=0
 DAILY="0,0,0,0,0,0,0"
 WEEK_MODELS=""
+TODAY_COST="0.00"
+WEEK_COST="0.00"
+MONTH_COST="0.00"
+DAILY_COSTS="0.00,0.00,0.00,0.00,0.00,0.00,0.00"
 ALLTIME_SESSIONS=0
 ALLTIME_MESSAGES=0
 FIRST_SESSION="unknown"
@@ -518,8 +593,13 @@ ACCOUNT_WEEK_MESSAGES_LIST=""
 ACCOUNT_WEEK_SESSIONS_LIST=""
 ACCOUNT_DAILY_LIST=""
 ACCOUNT_WEEK_MODELS_LIST=""
+ACCOUNT_TODAY_COST_LIST=""
+ACCOUNT_WEEK_COST_LIST=""
+ACCOUNT_MONTH_COST_LIST=""
+ACCOUNT_DAILY_COSTS_LIST=""
 
 DAILY_ARR=(0 0 0 0 0 0 0)
+DAILY_COSTS_ARR=(0.00 0.00 0.00 0.00 0.00 0.00 0.00)
 
 for idx in "${!USAGE_TMPFILES[@]}"; do
     usage_tmpf="${USAGE_TMPFILES[$idx]}"
@@ -546,6 +626,7 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     a_br=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
 
     a_wt=0; a_wm=0; a_ws=0; a_mt=0; a_daily="0,0,0,0,0,0,0"; a_models=""
+    a_tc="0.00"; a_wc="0.00"; a_mc="0.00"; a_dc="0.00,0.00,0.00,0.00,0.00,0.00,0.00"
     if [ -f "$tokens_tmpf" ]; then
         a_wt=$(result_value "$tokens_tmpf" WEEK_TOKENS 0)
         a_wm=$(result_value "$tokens_tmpf" WEEK_MESSAGES 0)
@@ -553,6 +634,10 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
         a_mt=$(result_value "$tokens_tmpf" MONTH_TOKENS 0)
         a_daily=$(result_value "$tokens_tmpf" DAILY "0,0,0,0,0,0,0")
         a_models=$(result_value "$tokens_tmpf" WEEK_MODELS "")
+        a_tc=$(result_value "$tokens_tmpf" TODAY_COST "0.00")
+        a_wc=$(result_value "$tokens_tmpf" WEEK_COST "0.00")
+        a_mc=$(result_value "$tokens_tmpf" MONTH_COST "0.00")
+        a_dc=$(result_value "$tokens_tmpf" DAILY_COSTS "0.00,0.00,0.00,0.00,0.00,0.00,0.00")
     fi
 
     a_as=0; a_am=0; a_fs="unknown"
@@ -596,6 +681,17 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     ')
     IFS=',' read -ra DAILY_ARR <<< "$DAILY"
 
+    # Costs sum as floats, not as the integers the tokens do.
+    TODAY_COST=$(awk "BEGIN {printf \"%.2f\", $TODAY_COST + $a_tc}")
+    WEEK_COST=$(awk "BEGIN {printf \"%.2f\", $WEEK_COST + $a_wc}")
+    MONTH_COST=$(awk "BEGIN {printf \"%.2f\", $MONTH_COST + $a_mc}")
+    DAILY_COSTS=$(echo "$a_dc" | awk -v cur="$(IFS=,; echo "${DAILY_COSTS_ARR[*]}")" '
+        BEGIN { split(cur, a, ",") }
+        { split($0, b, ","); for(i=1;i<=7;i++) a[i]+=b[i]+0 }
+        END { for(i=1;i<=7;i++) printf "%s%.2f", (i>1?",":""), a[i]+0; print "" }
+    ')
+    IFS=',' read -ra DAILY_COSTS_ARR <<< "$DAILY_COSTS"
+
     ACCOUNT_PLAN_LIST="${ACCOUNT_PLAN_LIST:+${ACCOUNT_PLAN_LIST},}${aname}:${a_plan}"
     ACCOUNT_PRIMARY_UTIL_LIST="${ACCOUNT_PRIMARY_UTIL_LIST:+${ACCOUNT_PRIMARY_UTIL_LIST},}${aname}:${a_pu}"
     ACCOUNT_PRIMARY_RESET_LIST="${ACCOUNT_PRIMARY_RESET_LIST:+${ACCOUNT_PRIMARY_RESET_LIST},}${aname}:${a_pr}"
@@ -608,6 +704,10 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     ACCOUNT_WEEK_SESSIONS_LIST="${ACCOUNT_WEEK_SESSIONS_LIST:+${ACCOUNT_WEEK_SESSIONS_LIST},}${aname}:${a_ws}"
     ACCOUNT_DAILY_LIST="${ACCOUNT_DAILY_LIST:+${ACCOUNT_DAILY_LIST}|}${aname}:${a_daily}"
     ACCOUNT_WEEK_MODELS_LIST="${ACCOUNT_WEEK_MODELS_LIST:+${ACCOUNT_WEEK_MODELS_LIST}|}${aname}:${a_models}"
+    ACCOUNT_TODAY_COST_LIST="${ACCOUNT_TODAY_COST_LIST:+${ACCOUNT_TODAY_COST_LIST},}${aname}:${a_tc}"
+    ACCOUNT_WEEK_COST_LIST="${ACCOUNT_WEEK_COST_LIST:+${ACCOUNT_WEEK_COST_LIST},}${aname}:${a_wc}"
+    ACCOUNT_MONTH_COST_LIST="${ACCOUNT_MONTH_COST_LIST:+${ACCOUNT_MONTH_COST_LIST},}${aname}:${a_mc}"
+    ACCOUNT_DAILY_COSTS_LIST="${ACCOUNT_DAILY_COSTS_LIST:+${ACCOUNT_DAILY_COSTS_LIST}|}${aname}:${a_dc}"
 
     rm -f "$usage_tmpf" "$tokens_tmpf" "$alltime_tmpf"
 done
@@ -643,6 +743,11 @@ echo "WEEK_SESSIONS=${WEEK_SESSIONS}"
 echo "MONTH_TOKENS=${MONTH_TOKENS}"
 echo "DAILY=${DAILY}"
 echo "WEEK_MODELS=${WEEK_MODELS}"
+echo "TODAY_COST=${TODAY_COST}"
+echo "WEEK_COST=${WEEK_COST}"
+echo "MONTH_COST=${MONTH_COST}"
+echo "DAILY_COSTS=${DAILY_COSTS}"
+echo "USD_EUR_RATE=${USD_EUR_RATE}"
 echo "ALLTIME_SESSIONS=${ALLTIME_SESSIONS}"
 echo "ALLTIME_MESSAGES=${ALLTIME_MESSAGES}"
 echo "FIRST_SESSION=${FIRST_SESSION}"
@@ -663,3 +768,7 @@ echo "ACCOUNT_WEEK_MESSAGES=${ACCOUNT_WEEK_MESSAGES_LIST}"
 echo "ACCOUNT_WEEK_SESSIONS=${ACCOUNT_WEEK_SESSIONS_LIST}"
 echo "ACCOUNT_DAILY=${ACCOUNT_DAILY_LIST}"
 echo "ACCOUNT_WEEK_MODELS=${ACCOUNT_WEEK_MODELS_LIST}"
+echo "ACCOUNT_TODAY_COST=${ACCOUNT_TODAY_COST_LIST}"
+echo "ACCOUNT_WEEK_COST=${ACCOUNT_WEEK_COST_LIST}"
+echo "ACCOUNT_MONTH_COST=${ACCOUNT_MONTH_COST_LIST}"
+echo "ACCOUNT_DAILY_COSTS=${ACCOUNT_DAILY_COSTS_LIST}"

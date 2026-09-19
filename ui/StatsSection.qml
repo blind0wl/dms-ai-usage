@@ -6,9 +6,13 @@ import qs.Widgets
 // over its label and sub-line, then the all-time line at the foot.
 //
 // The columns are declared by the Source's descriptor rather than fixed here,
-// because Sources report different periods in different units. Claude shows
-// Today, Week and Month in tokens with a cost sub-line, while ChatGPT and Z.ai
-// show Week and Month in tokens with a call or session count beside them.
+// because Sources report different periods in different units. Claude,
+// ChatGPT and Z.ai show Today, Week and Month in tokens with a cost sub-line;
+// ChatGPT keeps its session and message count beside them.
+//
+// A descriptor that carries a captionKey qualifies the card's figures with it,
+// which is where the cost caveat (ADR 0006) lives: the figures are what the
+// tokens would have cost at API rates, not what the subscription was paid.
 //
 // All-time session and message figures ride along here rather than in a card of
 // their own, and hide until there is something to report. The widget zeroes them
@@ -54,6 +58,18 @@ StyledRect {
             font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.Medium
             color: Theme.surfaceVariantText
+        }
+
+        // The notional-cost caveat a cost-bearing descriptor carries (ADR 0006).
+        // A dollar figure on a subscription reads as an amount owed, so the
+        // card says what the figure is before the figures themselves.
+        StyledText {
+            visible: root.section && root.section.captionKey !== undefined
+            width: parent.width
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontSizeSmall - 1
+            color: Theme.surfaceVariantText
+            text: root.section && root.section.captionKey ? root.api.tr(root.section.captionKey) : ""
         }
 
         // Left-aligned rather than centred columns: each figure is its value

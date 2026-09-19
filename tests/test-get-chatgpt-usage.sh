@@ -73,7 +73,11 @@ run_script() {
     shift
     # Widen PATH with the mock curl but keep a fake `codex` present too, so
     # the not_installed short-circuit doesn't fire in the common case.
-    HOME="$home_dir" CODEX_HOME="$home_dir/.codex" PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" "$@" 2>/dev/null
+    # The pricing cache the Script reads lives under XDG_CACHE_HOME, so that
+    # is pinned inside the test environment as well: a developer's real cache
+    # must not price a fixture, and a fixture must not write into it.
+    HOME="$home_dir" CODEX_HOME="$home_dir/.codex" XDG_CACHE_HOME="$home_dir/.cache" \
+        PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" "$@" 2>/dev/null
 }
 
 # Fake `codex` binary — only its presence on PATH is checked by most tests;
@@ -94,6 +98,26 @@ append_turn() {
     printf '{"type":"event_msg","timestamp":"%sT12:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":%d}}}}\n' "$date" "$tokens" >> "$file"
 }
 
+# The same, with the four-way token split the costing consumes. Codex's
+# total_tokens counts input plus output, the cached share inside the input.
+# Usage: append_priced_turn <file> <date> <model> <input> <cached> <output>
+append_priced_turn() {
+    local file="$1" date="$2" model="$3" inp="$4" cached="$5" out="$6"
+    printf '{"type":"turn_context","timestamp":"%sT12:00:00Z","payload":{"model":"%s"}}\n' "$date" "$model" >> "$file"
+    printf '{"type":"event_msg","timestamp":"%sT12:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":%d,"input_tokens":%d,"cached_input_tokens":%d,"output_tokens":%d}}}}\n' \
+        "$date" "$((inp + out))" "$inp" "$cached" "$out" >> "$file"
+}
+
+# Write the shared pricing cache the way the library's refresh would, under
+# the test environment's own XDG cache directory.
+# Usage: write_pricing_cache <home_dir> <models-json> [usd_eur_rate]
+write_pricing_cache() {
+    local home_dir="$1" models="$2" rate="${3:-0}"
+    mkdir -p "$home_dir/.cache/dms-ai-usage"
+    printf '{"updated": "%s", "models": %s, "usd_eur_rate": %s}' \
+        "$TODAY" "$models" "$rate" > "$home_dir/.cache/dms-ai-usage/pricing.json"
+}
+
 TODAY=$(date +%Y-%m-%d)
 DOW=$(date +%u)  # 1=Monday, 7=Sunday
 
@@ -104,7 +128,7 @@ ENV1=$(setup_env "test1")
 write_auth "$ENV1/.codex" 9999999999 "$(date -Iseconds)"
 OUTPUT1=$(run_script "$ENV1")
 
-EXPECTED_KEYS="PLAN_TYPE PRIMARY_UTIL PRIMARY_RESET PRIMARY_WINDOW_SECONDS SECONDARY_UTIL SECONDARY_RESET SECONDARY_WINDOW_SECONDS CREDITS_BALANCE CREDITS_HAS CREDS_STATUS WEEK_TOKENS WEEK_MESSAGES WEEK_SESSIONS MONTH_TOKENS DAILY WEEK_MODELS ACCOUNTS ACCOUNT_SUBSCRIPTION ACCOUNT_PRIMARY_UTIL ACCOUNT_PRIMARY_RESET ACCOUNT_SECONDARY_UTIL ACCOUNT_SECONDARY_RESET ACCOUNT_CREDS_STATUS ACCOUNT_WEEK_TOKENS ACCOUNT_MONTH_TOKENS ACCOUNT_WEEK_MESSAGES ACCOUNT_WEEK_SESSIONS ACCOUNT_DAILY ACCOUNT_WEEK_MODELS"
+EXPECTED_KEYS="PLAN_TYPE PRIMARY_UTIL PRIMARY_RESET PRIMARY_WINDOW_SECONDS SECONDARY_UTIL SECONDARY_RESET SECONDARY_WINDOW_SECONDS CREDITS_BALANCE CREDITS_HAS CREDS_STATUS WEEK_TOKENS WEEK_MESSAGES WEEK_SESSIONS MONTH_TOKENS DAILY WEEK_MODELS TODAY_COST WEEK_COST MONTH_COST DAILY_COSTS USD_EUR_RATE ACCOUNTS ACCOUNT_SUBSCRIPTION ACCOUNT_PRIMARY_UTIL ACCOUNT_PRIMARY_RESET ACCOUNT_SECONDARY_UTIL ACCOUNT_SECONDARY_RESET ACCOUNT_CREDS_STATUS ACCOUNT_WEEK_TOKENS ACCOUNT_MONTH_TOKENS ACCOUNT_WEEK_MESSAGES ACCOUNT_WEEK_SESSIONS ACCOUNT_DAILY ACCOUNT_WEEK_MODELS ACCOUNT_TODAY_COST ACCOUNT_WEEK_COST ACCOUNT_MONTH_COST ACCOUNT_DAILY_COSTS"
 for key in $EXPECTED_KEYS; do
     if echo "$OUTPUT1" | grep -q "^${key}="; then
         pass "key $key present"
@@ -450,6 +474,169 @@ assert_eq "$(echo "$LIST16D" | grep -c "^ACCOUNTS=")" "1" "an uninstalled Source
 assert_eq "$(echo "$LIST16D" | grep "^ACCOUNT_ORIGINS=" | cut -d= -f2)" "" "an uninstalled Source answers with an empty origins key"
 assert_eq "$(echo "$LIST16D" | grep -c "^ACCOUNT_ORIGINS=")" "1" "an uninstalled Source still answers with the origins key"
 assert_eq "$(echo "$LIST16D" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an uninstalled Source says so in its listing answer"
+
+# ============================================================
+echo "=== Test 17: Cost — the four-way split, from the pricing cache ==="
+# ============================================================
+# Rates chosen so each bucket of the split lands on its own cent: a turn
+# today with input 20000 (half cached) and output 10000 prices as
+#   (20000−10000)·1e-05 + 10000·1e-06 + 10000·1e-04 = 0.10 + 0.01 + 1.00
+# Charging the cached share at the input rate reads 1.20; charging it as free
+# reads 1.10. Only the right split reads 1.11.
+ENV17=$(setup_env "test17")
+write_auth "$ENV17/.codex" 9999999999 "$(date -Iseconds)"
+write_pricing_cache "$ENV17" \
+    '{"gpt-5.1": {"input": 1e-05, "output": 1e-04, "cache_read": 1e-06, "cache_write": 0}}' 0.9
+
+append_priced_turn "$ENV17/.codex/sessions/a.jsonl" "$TODAY" "gpt-5.1" 20000 10000 10000
+append_priced_turn "$ENV17/.codex/sessions/a.jsonl" "$OTHER_DAY" "gpt-5.1" 1000 0 0
+
+OUTPUT17=$(run_script "$ENV17")
+
+assert_eq "$(echo "$OUTPUT17" | grep '^TODAY_COST=' | cut -d= -f2)" "1.11" \
+    "TODAY_COST prices cached input at the cache-read rate, not the input rate"
+assert_eq "$(echo "$OUTPUT17" | grep '^WEEK_COST=' | cut -d= -f2)" "1.12" \
+    "WEEK_COST sums the week's turns across days"
+assert_eq "$(echo "$OUTPUT17" | grep '^MONTH_COST=' | cut -d= -f2)" "1.12" \
+    "MONTH_COST sums the month's turns"
+DAILY_COSTS17=$(echo "$OUTPUT17" | grep '^DAILY_COSTS=' | cut -d= -f2)
+assert_eq "$(echo "$DAILY_COSTS17" | tr ',' '\n' | sed -n "$((TODAY_IDX + 1))p")" "1.11" \
+    "DAILY_COSTS carries today's cost in today's slot"
+assert_eq "$(echo "$DAILY_COSTS17" | tr ',' '\n' | sed -n "$((OTHER_IDX + 1))p")" "0.01" \
+    "DAILY_COSTS carries the other day's cost in its own slot"
+assert_eq "$(echo "$OUTPUT17" | grep '^USD_EUR_RATE=' | cut -d= -f2)" "0.9" \
+    "USD_EUR_RATE rides the same cache"
+WEEK_TOKENS17=$(echo "$OUTPUT17" | grep '^WEEK_TOKENS=' | cut -d= -f2)
+assert_eq "$WEEK_TOKENS17" "31000" \
+    "costing leaves the token counts alone (total stays input + output)"
+
+assert_eq "$(echo "$OUTPUT17" | grep '^ACCOUNT_TODAY_COST=' | cut -d= -f2)" "default:1.11" \
+    "ACCOUNT_TODAY_COST carries the per-Account figure"
+assert_eq "$(echo "$OUTPUT17" | grep '^ACCOUNT_WEEK_COST=' | cut -d= -f2)" "default:1.12" \
+    "ACCOUNT_WEEK_COST carries the per-Account figure"
+assert_eq "$(echo "$OUTPUT17" | grep '^ACCOUNT_MONTH_COST=' | cut -d= -f2)" "default:1.12" \
+    "ACCOUNT_MONTH_COST carries the per-Account figure"
+# The per-Account daily-cost series is asserted slot by slot: today is not
+# the week's first day in general, so a prefix match would only pass on Monday.
+ACCOUNT_DAILY_COSTS17=$(echo "$OUTPUT17" | grep '^ACCOUNT_DAILY_COSTS=' | cut -d= -f2)
+assert_eq "$(echo "${ACCOUNT_DAILY_COSTS17#default:}" | tr ',' '\n' | sed -n "$((TODAY_IDX + 1))p")" "1.11" \
+    "ACCOUNT_DAILY_COSTS carries the per-Account series"
+assert_eq "$(echo "${ACCOUNT_DAILY_COSTS17#default:}" | tr ',' '\n' | sed -n "$((OTHER_IDX + 1))p")" "0.01" \
+    "ACCOUNT_DAILY_COSTS carries the other day's cost too"
+
+# ============================================================
+echo "=== Test 18: An unpriced model costs zero but still counts ==="
+# ============================================================
+ENV18=$(setup_env "test18")
+write_auth "$ENV18/.codex" 9999999999 "$(date -Iseconds)"
+write_pricing_cache "$ENV18" \
+    '{"gpt-5.1": {"input": 1e-05, "output": 1e-04, "cache_read": 1e-06, "cache_write": 0}}'
+
+# codex-auto-review is the model LiteLLM does not name yet; its turns add
+# tokens and no cost, and the figure heals when the table names it.
+append_priced_turn "$ENV18/.codex/sessions/a.jsonl" "$TODAY" "codex-auto-review" 1000 0 500
+OUTPUT18=$(run_script "$ENV18")
+
+assert_eq "$(echo "$OUTPUT18" | grep '^TODAY_COST=' | cut -d= -f2)" "0.00" \
+    "TODAY_COST=0.00 when the model is not in the table"
+assert_eq "$(echo "$OUTPUT18" | grep '^WEEK_TOKENS=' | cut -d= -f2)" "1500" \
+    "WEEK_TOKENS still counts the unpriced turn"
+assert_match "$OUTPUT18" '^WEEK_MODELS=.*codex-auto-review=1500' \
+    "WEEK_MODELS still names the unpriced model"
+
+# ============================================================
+echo "=== Test 19: A dated model snapshot prices at its base name ==="
+# ============================================================
+ENV19=$(setup_env "test19")
+write_auth "$ENV19/.codex" 9999999999 "$(date -Iseconds)"
+write_pricing_cache "$ENV19" \
+    '{"gpt-4.1": {"input": 2e-05, "output": 2e-04, "cache_read": 2e-06, "cache_write": 0}}'
+
+# A runtime name can carry the snapshot date the table's entry omits.
+append_priced_turn "$ENV19/.codex/sessions/a.jsonl" "$TODAY" "gpt-4.1-2025-04-14" 1000 0 1000
+OUTPUT19=$(run_script "$ENV19")
+
+# 1000·2e-05 + 1000·2e-04 = 0.22
+assert_eq "$(echo "$OUTPUT19" | grep '^TODAY_COST=' | cut -d= -f2)" "0.22" \
+    "TODAY_COST strips the date suffix and prices at the base entry"
+
+# ============================================================
+echo "=== Test 20: The cache is fetched when it is absent ==="
+# ============================================================
+ENV20=$(setup_env "test20")
+write_auth "$ENV20/.codex" 9999999999 "$(date -Iseconds)"
+
+# A curl answering by URL: the price table from a fixture, the EUR rate from
+# Frankfurter's shape, and the usage endpoint's answer for anything else.
+mkdir -p "$TMPDIR_ROOT/test20"
+cat > "$TMPDIR_ROOT/test20/litellm.json" << 'LITELLMEOF'
+{
+    "gpt-5.2": {"input_cost_per_token": 2e-05, "output_cost_per_token": 2e-04, "litellm_provider": "openai"},
+    "codex-auto-review": null
+}
+LITELLMEOF
+cat > "$TMPDIR_ROOT/test20/curl" << 'URLEOF'
+#!/usr/bin/env bash
+case "${*: -1}" in
+    *model_prices_and_context_window.json)
+        cat "${LITELLM_FIXTURE:?}" ;;
+    *frankfurter*)
+        echo '{"rates":{"EUR":0.9}}' ;;
+    *)
+        printf '%s' '{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":42,"reset_at":"2099-01-01T00:00:00Z","limit_window_seconds":18000},"secondary_window":{"used_percent":15,"reset_at":"2099-01-07T00:00:00Z","limit_window_seconds":604800}},"credits":{"balance":5,"has_credits":true}}' ;;
+esac
+URLEOF
+chmod +x "$TMPDIR_ROOT/test20/curl"
+
+append_priced_turn "$ENV20/.codex/sessions/a.jsonl" "$TODAY" "gpt-5.2" 1000 0 1000
+OUTPUT20=$(HOME="$ENV20" CODEX_HOME="$ENV20/.codex" XDG_CACHE_HOME="$ENV20/.cache" \
+    LITELLM_FIXTURE="$TMPDIR_ROOT/test20/litellm.json" \
+    PATH="$TMPDIR_ROOT/test20:$TMPDIR_ROOT:$PATH" bash "$SCRIPT" 2>/dev/null)
+
+assert_eq "$(echo "$OUTPUT20" | grep '^TODAY_COST=' | cut -d= -f2)" "0.22" \
+    "TODAY_COST prices from a table fetched over the network"
+assert_eq "$(echo "$OUTPUT20" | grep '^USD_EUR_RATE=' | cut -d= -f2)" "0.9" \
+    "USD_EUR_RATE comes from the fetched Frankfurter answer"
+if [ -f "$ENV20/.cache/dms-ai-usage/pricing.json" ]; then
+    pass "the fetched prices land in the shared cache"
+else
+    fail "the fetched prices land in the shared cache (no cache file)"
+fi
+assert_eq "$(echo "$OUTPUT20" | grep '^CREDS_STATUS=' | cut -d= -f2)" "ok" \
+    "pricing leaves the credential verdict alone"
+
+# ============================================================
+echo "=== Test 21: Pricing that cannot be read costs nothing ==="
+# ============================================================
+ENV21=$(setup_env "test21")
+write_auth "$ENV21/.codex" 9999999999 "$(date -Iseconds)"
+append_turn "$ENV21/.codex/sessions/a.jsonl" "$TODAY" "gpt-5-codex" 700
+
+# A curl that never answers with a table: the refresh fails, the tokens
+# still count and every cost figure reads zero.
+OUTPUT21=$(HOME="$ENV21" CODEX_HOME="$ENV21/.codex" XDG_CACHE_HOME="$ENV21/.cache" \
+    PATH="$TMPDIR_ROOT:$PATH" bash "$SCRIPT" 2>/dev/null)
+assert_eq "$(echo "$OUTPUT21" | grep '^TODAY_COST=' | cut -d= -f2)" "0.00" \
+    "TODAY_COST=0.00 when no price can be read"
+assert_eq "$(echo "$OUTPUT21" | grep '^WEEK_COST=' | cut -d= -f2)" "0.00" \
+    "WEEK_COST=0.00 when no price can be read"
+assert_eq "$(echo "$OUTPUT21" | grep '^DAILY_COSTS=' | cut -d= -f2)" "0.00,0.00,0.00,0.00,0.00,0.00,0.00" \
+    "DAILY_COSTS is a zero series when no price can be read"
+assert_eq "$(echo "$OUTPUT21" | grep '^WEEK_TOKENS=' | cut -d= -f2)" "700" \
+    "WEEK_TOKENS still counts when no price can be read"
+
+# ============================================================
+echo "=== Test 22: Not installed — cost keys present at zero ==="
+# ============================================================
+# Test 5's output carries the not-installed heredoc; the cost keys must be
+# part of it, so a Source that is not present reports zeros rather than
+# teaching the reader to miss the keys.
+assert_eq "$(echo "$OUTPUT5" | grep '^TODAY_COST=' | cut -d= -f2)" "0.00" \
+    "the not-installed answer carries TODAY_COST=0.00"
+assert_eq "$(echo "$OUTPUT5" | grep '^DAILY_COSTS=' | cut -d= -f2)" "0.00,0.00,0.00,0.00,0.00,0.00,0.00" \
+    "the not-installed answer carries a zero DAILY_COSTS"
+assert_eq "$(echo "$OUTPUT5" | grep -c '^ACCOUNT_TODAY_COST=')" "1" \
+    "the not-installed answer carries the per-Account cost keys"
 
 # ============================================================
 echo ""

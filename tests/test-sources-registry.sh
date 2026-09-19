@@ -108,6 +108,9 @@ for (const d of reg.SOURCES) {
             check(s.counts === undefined || typeof s.counts === "boolean", `${tag} windows section counts flag is boolean`);
         if (s.type === "stats") {
             check(Array.isArray(s.columns) && s.columns.length > 0, `${tag} stats declares columns`);
+            if (s.captionKey !== undefined)
+                check(typeof s.captionKey === "string" && s.captionKey.length > 0 && tr[s.captionKey] !== undefined,
+                      `${tag} stats caption "${s.captionKey}" is translated`);
             for (const c of s.columns || []) {
                 check(typeof c.labelKey === "string" && tr[c.labelKey] !== undefined, `${tag} stats column "${c.labelKey}" is translated`);
                 for (const slot of ["value", "sub"]) {
