@@ -477,9 +477,12 @@ check(JSON.stringify(reg.scriptCommand("/plugins", "aiUsage", null)) === JSON.st
       "scriptCommand still names the watchdog when it cannot name a file");
 for (const name of ["AiUsageWidget.qml", "ui/AccountsEditor.qml"]) {
     const source = fs.readFileSync(path.join(root, name), "utf8");
-    check(source.includes("Sources.scriptCommand("), `${name} starts a Script through scriptCommand`);
     check(!/\[\s*"timeout"/.test(source), `${name} does not restate the Script's launch prefix`);
 }
+check(fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8").includes("Sources.scriptCommand("),
+      "the widget starts a Script through scriptCommand");
+// The settings editor starts its Processes from the Listing's commands (#80);
+// that those commands carry the launch prefix is pinned on the module below.
 
 // The arguments decide which of two Accounts sharing a name survives the
 // Script's own de-duplication, so the widget's fetch and the settings editor's
@@ -505,20 +508,23 @@ check(reg.scriptPath("/plugins", "aiUsage", null) === "" && reg.scriptPath("", "
 // Both the widget's fetch and the settings editor's listing reach the Script
 // through one expression, so a change to where plugin files live cannot leave
 // them pointing at different files.
-for (const name of ["AiUsageWidget.qml", "ui/AccountsEditor.qml"]) {
-    const source = fs.readFileSync(path.join(root, name), "utf8");
-    check(source.includes("Sources.scriptCommand("), `${name} reaches a Script through scriptCommand`);
-    check(!/pluginDirectory\s*\+/.test(source), `${name} does not build a Script path by hand`);
-}
+const widgetSource = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
+check(widgetSource.includes("Sources.scriptCommand("), "the widget reaches a Script through scriptCommand");
+check(!/pluginDirectory\s*\+/.test(widgetSource), "the widget does not build a Script path by hand");
 
-// The settings editor is per-Source code like the widget is, so it reads the
-// Account wiring off the descriptor too: which keys the listing arrives under,
-// and how the Script's arguments are built.
+// The settings editor reaches its Script through the Listing module (#80): the
+// machine builds the commands from the registry's own parts and reads the wire
+// keys off the shared constants, so the editor hardcodes neither.
 const editor = fs.readFileSync(path.join(root, "ui/AccountsEditor.qml"), "utf8");
-check(editor.includes("Sources.LIST_KEY") && editor.includes("Sources.ORIGINS_KEY") && editor.includes("Sources.SHADOWED_KEY"),
-      "the settings editor reads the Account wire keys off the shared constants");
-check(editor.includes("Sources.accountArgs("), "the settings editor builds the Script's Account arguments with the widget's own builder");
-check(editor.includes("Sources.LIST_ACCOUNTS_FLAG"), "the settings editor asks for the listing mode by its declared flag");
+check(editor.includes("Listing.create("), "the settings editor asks its Script through the Listing module");
+check(!/pluginDirectory\s*\+/.test(editor), "the settings editor does not build a Script path by hand");
+const listingLib = fs.readFileSync(path.join(root, "listing.js"), "utf8");
+check(listingLib.includes("Sources.scriptCommand(") && listingLib.includes("Sources.LIST_ACCOUNTS_FLAG"),
+      "the Listing module builds the listing command from the registry's own parts");
+check(listingLib.includes("Sources.accountArgs("),
+      "the Listing module builds the Script's Account arguments with the widget's own builder");
+check(listingLib.includes("Sources.LIST_KEY") && listingLib.includes("Sources.ORIGINS_KEY") && listingLib.includes("Sources.SHADOWED_KEY"),
+      "the Listing module reads the Account wire keys off the shared constants");
 check(editor.includes("Sources.detectedAccounts(") && editor.includes("Sources.unregisteredRows("),
       "the settings editor reads both Account lists from the registry rather than parsing them out");
 check(editor.includes("acct.overriddenKey"), "the settings editor takes the override copy off the descriptor");
@@ -539,53 +545,47 @@ check(/!root\.settingsRoot\.pluginService/.test(editor),
       "the settings editor does not ask the Script for a listing before the store it reads is available");
 check(/listingAnswered/.test(editor),
       "the settings editor hands out a verdict only once the Script has answered with its Account list");
-check(/Sources\.STATUS_KEY/.test(editor) && /Sources\.NOT_INSTALLED/.test(editor) && /sourceAbsent/.test(editor),
-      "the settings editor tells a Source that is not installed from the user's rows being wrong, off the registry's own keys");
-check(/function commitListing/.test(editor) && /pendingAccounts/.test(editor),
-      "the settings editor commits one whole Script answer at a time rather than field by field");
+check(editor.includes("root.sourceAbsent = l.absent"),
+      "the settings editor tells a Source that is not installed from the user's rows being wrong, off the Listing's answer");
+check(/function mirrorListing/.test(editor),
+      "the settings editor mirrors one whole Script answer at a time rather than field by field");
 
-// The Add guard: the editor asks the Script about the row it is about to save, and
-// saves it only from that answer. Pinned because the failure is silent and
-// destructive - the user's Source switches to a hand-typed key.
-check(editor.includes("Sources.addOutcome(") && /probeProcess\.command =/.test(editor),
-      "the settings editor asks the Script about a new row before saving it");
-check(/function finishAdd/.test(editor) && /reason: "unreadable"/.test(editor),
-      "the settings editor refuses to save a row when the Script has not answered for it");
+// The Add guard: the editor asks the Listing about the row it is about to save,
+// and saves it only from that answer. Pinned because the failure is silent and
+// destructive - the user's Source switches to a hand-typed key. What the two
+// questions mean and when a verdict stands is behaviourally tested in
+// test-listing.sh; what is pinned here is the editor's half.
+check(editor.includes("machine.askAdd(") && /probeProcess\.command =/.test(editor),
+      "the settings editor asks the Listing about a new row before saving it");
+check(/function handleOutcome/.test(editor) && /act\.outcome !== null/.test(editor),
+      "the settings editor refuses to save a row the Listing reported a verdict against");
 check(/function addAnyway/.test(editor) && /addWarning\.lost === true/.test(editor),
       "the settings editor offers the deliberate override only for a row that would win");
-// The row a question was asked about is snapshotted, so an answer that lands after
-// the user has typed another row cannot decide for it - the double-Add bypass.
-check(/askedName/.test(editor) && /probedName/.test(editor) && /root\.askedName = ""/.test(editor),
-      "the settings editor attaches the Script's answer to the row it was asked about");
+// The verdict names the row it was asked about, so an answer that lands after the
+// user has typed another row cannot decide for it - the double-Add bypass.
+check(/probedName/.test(editor) && /act\.name/.test(editor),
+      "the verdict the Listing reports names its row, and the editor keeps it for the override");
 check(/nameInput\.text\.trim\(\) !== name/.test(editor) && /valueInput\.text\.trim\(\) !== value/.test(editor),
       "the settings editor discards an answer the fields have moved on from");
-check(/function listingCommand/.test(editor) && /root\.listingCommand\(/.test(editor),
-      "the settings editor builds both Script questions in one place");
-const probeExit = editor.slice(editor.indexOf("onExited"), editor.indexOf("function readProbeLine"));
-check(probeExit.indexOf("root.addPending") >= 0 && probeExit.indexOf("return") < 0,
+check(listingLib.includes("function askAdd"),
+      "the Listing asks what the list does now and what it would do with the row, in one Add");
+check(/act\.queued && !handled/.test(editor),
       "the settings editor honours an Add queued while the Script was answering, whatever the answer was");
-// The guard asks both questions for the same Add, because the listing on screen can
-// be a cycle behind the store: a clash it has not caught up with must not be blamed
-// on the row being added.
-check(/function askCandidate/.test(editor) && /probeStage === 2/.test(editor) && /root\.baselineListing/.test(editor),
-      "the settings editor asks what the list does now and what it would do with the row, in one Add");
 // Both questions are asked about one snapshot of the list, and a verdict for a list
 // the editor no longer holds is asked again rather than believed: otherwise a Remove
 // between the two runs lets a clash an earlier row caused mask the new row's own.
 check(/root\.askedList = root\.items\.slice\(\)/.test(editor)
-      && /Sources\.accountArgs\(root\.descriptor, root\.askedList/.test(editor)
       && /JSON\.stringify\(root\.items\) !== JSON\.stringify\(root\.askedList\)/.test(editor),
       "the settings editor asks both questions about one snapshot of the list, and re-asks when the list moves");
-const finishAdd = editor.slice(editor.indexOf("function finishAdd"));
-check(finishAdd.indexOf("Sources.addOutcome(") < finishAdd.indexOf('nameInput.text = ""'),
+const handle = editor.slice(editor.indexOf("function handleOutcome"));
+check(handle.indexOf("act.outcome !== null") >= 0 && handle.indexOf("act.outcome !== null") < handle.indexOf("saveItems(items.concat"),
       "the settings editor saves a row only after the guard has let it through, so the typed values survive a refusal");
 check(/onTextChanged: root\.clearAddWarning\(\)/.test(editor),
       "the settings editor clears the Add warning when the row it is about is edited");
 
-// One wire, one splitter: the report reader and the settings editor's listing
-// parser take their key and value from wirePair, and read a comma-separated
-// list through splitList.
-for (const name of ["state.js", "ui/AccountsEditor.qml"]) {
+// One wire, one splitter: the report reader and the Listing take their key and
+// value from wirePair, and read a comma-separated list through splitList.
+for (const name of ["state.js", "listing.js"]) {
     const source = fs.readFileSync(path.join(root, name), "utf8");
     check(source.includes("Sources.wirePair("), `${name} splits a wire line with wirePair`);
 }

@@ -4,6 +4,7 @@ import qs.Common
 import qs.Services
 import qs.Widgets
 import "../sources.js" as Sources
+import "../listing.js" as Listing
 
 // One Source's Accounts, in two labelled lists: the Custom Accounts the user
 // adds here and can edit, and the Detected Accounts the Source's Script finds on
@@ -28,40 +29,14 @@ Column {
     property bool isLoading: false
     property var items: []
 
-    // The Script's listing, as it arrives: the Accounts under the shared
-    // LIST_KEY, their Origins under ORIGINS_KEY, and the registrations it
-    // refused under SHADOWED_KEY.
+    // Mirrors of the machine's committed Listing: the Script's last whole
+    // answer, with the Accounts under the shared LIST_KEY, their Origins under
+    // ORIGINS_KEY, and the registrations it refused under SHADOWED_KEY. The
+    // machine commits every field together, so what the page shows is always
+    // one whole answer rather than half of one.
     property string listedAccounts: ""
     property string listedOrigins: ""
     property string listedShadowed: ""
-    // The answer being read. The Script's line order is its own, and a verdict
-    // drawn from half of it would be wrong: an Account list with no origins yet,
-    // or no instalment state yet, reads as a Source full of Unknown origins or as
-    // rows that are not in use. Every field is committed together once the Script
-    // has finished, so what the page shows is always one whole answer.
-    property string pendingAccounts: ""
-    property string pendingOrigins: ""
-    property string pendingShadowed: ""
-    property bool pendingAnswered: false
-    property bool pendingAbsent: false
-    property bool pendingBlocked: false
-    property string pendingRequirement: ""
-
-    // The same, for the two listings the Add guard asks for: what the Script makes
-    // of the list as it stands, and what it makes of the list with the candidate
-    // row. Both are asked for the same Add, back to back, because the listing on
-    // screen can be a cycle behind the store and a clash it has not caught up with
-    // would otherwise be blamed on the row being added.
-    property string baselineAccounts: ""
-    property string baselineOrigins: ""
-    property string baselineShadowed: ""
-    property bool baselineAnswered: false
-    property string candidateAccounts: ""
-    property string candidateOrigins: ""
-    property string candidateShadowed: ""
-    property bool candidateAnswered: false
-    // 0 idle, 1 the list as it stands asked, 2 the list with the candidate asked.
-    property int probeStage: 0
 
     // Set once the Script has answered with its Account list, so a Source whose
     // Script registered nothing still marks the rows it registered nothing for. A
@@ -81,35 +56,30 @@ Column {
     property string blockingRequirement: ""
     readonly property string blockedCommands: Sources.splitList(root.blockingRequirement).join(", ")
 
-    // The row the Script has been asked about: `asked*` while the question is out,
-    // `probed*` once it has been answered. Both exist because the user can keep
-    // typing while the Script runs, and an answer may only decide for the row it
-    // was asked about - never for whatever the fields happen to hold when it lands.
-    property string askedName: ""
-    property string askedValue: ""
     // The row list the guard's two questions are about, snapshotted when Add is
-    // pressed. Both commands are built from it, so a Remove (or a store write)
-    // between the two runs cannot leave them describing different lists - which
-    // would let a clash an earlier row caused mask the new row's own.
+    // pressed. A verdict is only applied when the list it lands on is still
+    // this list: a Remove (or a store write) between the questions and the
+    // verdict makes it stale, and the same row is asked again.
     property var askedList: []
+    // The row a verdict landed for, kept so the deliberate override can check
+    // the fields still hold the row it was about.
     property string probedName: ""
     property string probedValue: ""
-    // null, or the outcome of Sources.addOutcome() for the row in the fields.
+    // null, or the outcome the Listing reported for the row in the fields.
     property var addWarning: null
 
-    // The two listings the guard compares, in the form Sources.addOutcome() reads.
-    readonly property var baselineListing: Sources.listing(root.baselineAccounts, root.baselineOrigins, root.baselineShadowed, root.baselineAnswered)
-    readonly property var candidateListing: Sources.listing(root.candidateAccounts, root.candidateOrigins, root.candidateShadowed, root.candidateAnswered)
     // Set when the Script that answers the listing fails, so a listing that never
     // arrived is not shown as a Source with nothing detected.
     property bool listFailed: false
-    // Set when the Account list changes while the Script is answering the
-    // previous one, so the answer the editor keeps describes the list it was
-    // asked about rather than the one the user just edited.
-    property bool listPending: false
-    // Set when Add is pressed while the Script is still answering the previous
-    // one, so the question is asked again rather than dropped.
-    property bool addPending: false
+
+    // The Listing machine: it owns the conversation with the Script, from which
+    // questions go out to what the answers mean, so the editor never stages a
+    // half question or reads half an answer. It is created once its inputs are
+    // known, and `machineSig` is what it was built from, so a page whose
+    // Source or plugin path changed rebuilds it rather than asking a stale
+    // conversation.
+    property var machine: null
+    property string machineSig: ""
 
     readonly property var detected: Sources.detectedAccounts(root.listedAccounts, root.listedOrigins, root.listedShadowed)
     // The Custom Account rows the Script did not register: another Account
@@ -198,111 +168,60 @@ Column {
             settingsRoot.saveValue(settingKey, newItems);
     }
 
-    // Asks the Script what it would make of this row before the row is saved, and
-    // saves it only when the Script reports no clash with a detected Account. The
-    // question carries the list as it stands plus the candidate, so the answer is
-    // the Script's own verdict rather than a guess from names.
+    // Asks the Listing what the Script would make of this row before the row is
+    // saved, and saves it only when the Script reports no clash with a detected
+    // Account. The question carries the list as it stands plus the candidate, so
+    // the answer is the Script's own verdict rather than a guess from names.
+    // While another probe is out the ask is queued inside the machine and
+    // re-asked when its verdict lands, with whatever the fields hold then.
     function addItem() {
         var name = nameInput.text.trim();
         var value = valueInput.text.trim();
         if (!name || !value)
             return;
-        if (!probeProcess || !root.settingsRoot || !root.descriptor)
+        if (!probeProcess || !root.settingsRoot || !root.descriptor || !root.machine)
             return;
 
         root.addWarning = null;
-        if (probeProcess.running) {
-            // A question about another row is still out. Its answer is not this
-            // row's, so wait for it and ask again rather than letting it decide.
-            root.addPending = true;
-            return;
-        }
-
-        root.addPending = false;
-        root.askedName = name;
-        root.askedValue = value;
+        // The stale-verdict check compares the list the questions are asked
+        // about with the list a verdict lands on, so the editor keeps its own
+        // snapshot of what it asked.
         root.askedList = root.items.slice();
-        root.baselineAccounts = "";
-        root.baselineOrigins = "";
-        root.baselineShadowed = "";
-        root.baselineAnswered = false;
-        root.candidateAccounts = "";
-        root.candidateOrigins = "";
-        root.candidateShadowed = "";
-        root.candidateAnswered = false;
-
-        // First what the Script makes of the list as it stands, then what it makes
-        // of the list with this row: the difference between the two answers is what
-        // this row would do.
-        root.probeStage = 1;
-        probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.askedList));
-        probeProcess.running = true;
+        var act = root.machine.askAdd(name, value, root.askedList);
+        if (act.kind === "run") {
+            probeProcess.command = act.command;
+            probeProcess.running = true;
+        }
     }
 
-    // The second half of the guard's question: the same list with the candidate row
-    // on the end of it. Returns false when there is nothing left to ask: the row in
-    // the fields is no longer the row this Add is about, or the first question could
-    // not be answered at all.
-    function askCandidate(exitCode) {
-        var name = nameInput.text.trim();
-        var value = valueInput.text.trim();
-        if (name !== root.askedName || value !== root.askedValue) {
-            root.probeStage = 0;
-            root.addWarning = null;
-            return false;
-        }
-        if (exitCode !== 0) {
-            root.probeStage = 0;
-            root.finishAdd(exitCode);
-            return false;
-        }
-
-        var entry = {
-            name: name
-        };
-        entry[root.argField] = value;
-        root.probeStage = 2;
-        probeProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.askedList.concat([entry])));
-        probeProcess.running = true;
-        return true;
-    }
-
-    // What to do about the row the Script has answered for: save it, or say why
-    // not. The answer is the pair of listings the two questions produced, and it is
-    // applied to the row those questions were about.
-    function finishAdd(exitCode) {
-        var name = root.askedName;
-        var value = root.askedValue;
-        root.askedName = "";
-        root.askedValue = "";
-        root.probeStage = 0;
+    // What to do about the verdict the Listing reported: save the row, or say
+    // why not. Returns true when it has already re-asked, so the caller does
+    // not re-ask a queued Add twice.
+    function handleOutcome(act) {
+        var name = act.name;
+        var value = act.value;
         root.probedName = name;
         root.probedValue = value;
 
-        // The answer belongs to the row that was asked about, and to no other: if
-        // the fields hold something else by now, this verdict is stale and the
-        // next Add asks again.
+        // The answer belongs to the row that was asked about, and to no other:
+        // if the fields hold something else by now, this verdict is stale and
+        // the next Add asks again.
         if (name === "" || nameInput.text.trim() !== name || valueInput.text.trim() !== value) {
             root.addWarning = null;
-            return;
+            return false;
         }
-        // The row list moved under the questions (a Remove, or the store changing
-        // underneath): this verdict is about a list the editor no longer holds, so
-        // it is dropped and the same row is asked again against the current one.
+        // The row list moved under the questions (a Remove, or the store
+        // changing underneath): this verdict is about a list the editor no
+        // longer holds, so it is dropped and the same row is asked again
+        // against the current one.
         if (JSON.stringify(root.items) !== JSON.stringify(root.askedList)) {
             root.addWarning = null;
-            root.addPending = true;
-            return;
+            Qt.callLater(root.addItem);
+            return true;
         }
-        if (exitCode !== 0) {
-            root.addWarning = { reason: "unreadable" };
-            return;
-        }
-
-        var outcome = Sources.addOutcome(root.baselineListing, root.candidateListing, name);
-        if (outcome !== null) {
-            root.addWarning = outcome;
-            return;
+        if (act.outcome !== null) {
+            root.addWarning = act.outcome;
+            return false;
         }
 
         var entry = {
@@ -316,6 +235,7 @@ Column {
         root.probedName = "";
         root.probedValue = "";
         nameInput.forceActiveFocus();
+        return false;
     }
 
     // The deliberate override: the user has been told which detected Account this
@@ -381,16 +301,23 @@ Column {
 
     // --- Asking the Script ---
 
-    // The command is built here, as the list is asked for, rather than bound to a
-    // property: the Account arguments are part of the question, and a command
-    // evaluated before this change would answer for the list the user has just
-    // edited.
-    // The command that asks a Script for its Account list with the caller's
-    // arguments. The editor's own listing and the question Add asks about a
-    // candidate row are the same question, asked about different lists.
-    function listingCommand(args) {
-        return Sources.scriptCommand(PluginService.pluginDirectory, root.settingsRoot.pluginId, root.descriptor,
-                                     [Sources.LIST_ACCOUNTS_FLAG].concat(args));
+    // The Listing machine is created once its inputs are known, and rebuilt
+    // when they change: it holds the conversation's in-flight state, so a page
+    // whose Source or plugin path changed must rebuild it rather than ask a
+    // stale conversation.
+    function ensureMachine() {
+        var dir = PluginService.pluginDirectory;
+        var pid = root.settingsRoot ? root.settingsRoot.pluginId : "";
+        var sig = dir + "|" + pid + "|" + (root.descriptor ? root.descriptor.id : "");
+        if (root.machine && root.machineSig === sig)
+            return;
+        if (!dir || !pid || !root.descriptor) {
+            root.machine = null;
+            root.machineSig = "";
+            return;
+        }
+        root.machine = Listing.create(dir, pid, root.descriptor);
+        root.machineSig = sig;
     }
 
     function refreshDetected() {
@@ -403,50 +330,30 @@ Column {
         // show a detected Account as live that a Custom row is about to replace.
         if (!root.settingsRoot.pluginService)
             return;
-        if (listProcess.running) {
-            root.listPending = true;
+        ensureMachine();
+        if (!root.machine)
             return;
+        var act = root.machine.askList(root.items);
+        if (act.kind === "run") {
+            root.listFailed = false;
+            listProcess.command = act.command;
+            listProcess.running = true;
         }
-        root.listFailed = false;
-        root.pendingAccounts = "";
-        root.pendingOrigins = "";
-        root.pendingShadowed = "";
-        root.pendingAnswered = false;
-        root.pendingAbsent = false;
-        root.pendingBlocked = false;
-        root.pendingRequirement = "";
-        listProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.items));
-        listProcess.running = true;
+        // A queued ask is remembered by the machine; the exit handler re-asks
+        // it when the current one lands.
     }
 
-    function readListLine(line) {
-        var pair = Sources.wirePair(line);
-        if (!pair)
-            return;
-        if (pair.key === Sources.LIST_KEY) {
-            root.pendingAccounts = pair.value;
-            root.pendingAnswered = true;
-        } else if (pair.key === Sources.ORIGINS_KEY)
-            root.pendingOrigins = pair.value;
-        else if (pair.key === Sources.SHADOWED_KEY)
-            root.pendingShadowed = pair.value;
-        else if (pair.key === Sources.STATUS_KEY) {
-            root.pendingAbsent = pair.value === Sources.NOT_INSTALLED;
-            root.pendingBlocked = pair.value === Sources.BLOCKED;
-        } else if (pair.key === Sources.BLOCKING_REQUIREMENT)
-            root.pendingRequirement = pair.value;
-    }
-
-    // One whole answer at a time, and only from a Script that finished: a listing
-    // that failed leaves the last answer standing beside the line that says so.
-    function commitListing() {
-        root.listedAccounts = root.pendingAccounts;
-        root.listedOrigins = root.pendingOrigins;
-        root.listedShadowed = root.pendingShadowed;
-        root.listingAnswered = root.pendingAnswered;
-        root.sourceAbsent = root.pendingAbsent;
-        root.blocked = root.pendingBlocked;
-        root.blockingRequirement = root.pendingRequirement;
+    // The committed Listing is mirrored into the properties the page binds, so
+    // every field of the answer changes together.
+    function mirrorListing() {
+        var l = root.machine.listing;
+        root.listedAccounts = l.names;
+        root.listedOrigins = l.origins;
+        root.listedShadowed = l.shadowed;
+        root.listingAnswered = l.answered;
+        root.sourceAbsent = l.absent;
+        root.blocked = l.blocked;
+        root.blockingRequirement = l.requirement;
     }
 
     Process {
@@ -454,47 +361,37 @@ Column {
         running: false
 
         stdout: SplitParser {
-            onRead: data => root.readProbeLine(data.trim())
-        }
-
-        onExited: (exitCode, exitStatus) => {
-            if (root.probeStage === 2)
-                root.finishAdd(exitCode);
-            else
-                root.askCandidate(exitCode);
-
-            // A press that arrived while the Script was answering is asked again,
-            // whatever this answer turned out to be: a queued Add is never dropped.
-            if (root.addPending) {
-                root.addPending = false;
-                Qt.callLater(root.addItem);
+            onRead: data => {
+                if (root.machine)
+                    root.machine.onProbeLine(data.trim());
             }
         }
-    }
 
-    function readProbeLine(line) {
-        var pair = Sources.wirePair(line);
-        if (!pair)
-            return;
-        var baseline = root.probeStage !== 2;
-        if (pair.key === Sources.LIST_KEY) {
-            if (baseline) {
-                root.baselineAccounts = pair.value;
-                root.baselineAnswered = true;
-            } else {
-                root.candidateAccounts = pair.value;
-                root.candidateAnswered = true;
+        onExited: (exitCode) => {
+            if (!root.machine)
+                return;
+            var act = root.machine.onProbeExit(exitCode);
+            if (act.kind === "run") {
+                // The candidate question is only for the row it was asked
+                // about. If the fields hold something else by now, the
+                // question is declined and the probe is reset.
+                if (nameInput.text.trim() !== act.name || valueInput.text.trim() !== act.value) {
+                    var reset = root.machine.abandonAdd();
+                    root.addWarning = null;
+                    if (reset.queued)
+                        Qt.callLater(root.addItem);
+                    return;
+                }
+                probeProcess.command = act.command;
+                probeProcess.running = true;
+            } else if (act.kind === "outcome") {
+                var handled = root.handleOutcome(act);
+                // A press that arrived while the Script was answering is asked
+                // again, whatever this answer turned out to be: a queued Add is
+                // never dropped.
+                if (act.queued && !handled)
+                    Qt.callLater(root.addItem);
             }
-        } else if (pair.key === Sources.ORIGINS_KEY) {
-            if (baseline)
-                root.baselineOrigins = pair.value;
-            else
-                root.candidateOrigins = pair.value;
-        } else if (pair.key === Sources.SHADOWED_KEY) {
-            if (baseline)
-                root.baselineShadowed = pair.value;
-            else
-                root.candidateShadowed = pair.value;
         }
     }
 
@@ -503,17 +400,21 @@ Column {
         running: false
 
         stdout: SplitParser {
-            onRead: data => root.readListLine(data.trim())
+            onRead: data => {
+                if (root.machine)
+                    root.machine.onListLine(data.trim());
+            }
         }
 
-        onExited: (exitCode, exitStatus) => {
-            root.listFailed = exitCode !== 0;
-            if (exitCode === 0)
-                root.commitListing();
-            if (root.listPending) {
-                root.listPending = false;
+        onExited: (exitCode) => {
+            if (!root.machine)
+                return;
+            var act = root.machine.onListExit(exitCode);
+            root.listFailed = act.kind === "failed";
+            if (act.kind === "committed")
+                root.mirrorListing();
+            if (act.rerun)
                 Qt.callLater(root.refreshDetected);
-            }
         }
     }
 
