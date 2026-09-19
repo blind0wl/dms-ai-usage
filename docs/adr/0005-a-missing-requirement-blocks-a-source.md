@@ -38,7 +38,18 @@ we looked" (ADR 0004), which is what a missing `jq` produces. But the Source is
 in use and the user has credentials for it, so hiding it removes the only surface
 that could explain why it left.
 
-**Presence only, not capability.** The guard asks `command -v`, not whether the
-installed `jq` can do what a Script needs. A `jq` that exists and fails still
-yields the old wrong states in the three Scripts that swallow it, and that is a
-separate concern from a Requirement that is absent.
+## Consequences
+
+A Requirement that is present but fails reports the same Blocked state as one
+that is absent. The preflight asks `command -v`, so it cannot judge whether an
+installed `jq` works; the call that fails is where the failure becomes known.
+The Script separates the two causes by the response it was reading. A body that
+is not valid JSON is the endpoint answering with an unexpected body, which is
+**Unavailable** (ADR 0002). A `jq` that fails on a valid response is the tool's
+own failure, which is **Blocked** with `jq` named.
+
+The guard stays presence-only. Capability cannot be judged before a call is made,
+so a `jq` that is present and broken reaches the call and reports Blocked from
+there. The three Scripts that swallow the failure today report the false states
+their swallowed errors produce, and applying this rule to them is a separate
+change from the preflight.

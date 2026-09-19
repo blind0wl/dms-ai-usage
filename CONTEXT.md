@@ -146,7 +146,8 @@ marks its last known values stale instead of showing them as current.
 _Avoid_: missing, not installed, error, offline
 
 **Blocked**:
-A Source whose Script could not run because a Requirement is missing, so no
-credential was read. A Blocked Source stays visible and names the missing
-command, because installing it is the fix and no plugin setting is.
+A Source whose Script could not read its data because a Requirement is missing
+or failed, so no credential was read. A Blocked Source stays visible and names
+the command, because installing or repairing it is the fix and no plugin
+setting is.
 _Avoid_: unavailable, missing, not installed
