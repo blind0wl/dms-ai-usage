@@ -42,14 +42,17 @@ const tr = load("translations.js", "; this.strings = strings;").strings;
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
 const tab = fs.readFileSync(path.join(root, "ui/SourceTab.qml"), "utf8");
 
-// State keys the widget produces: declared in emptyState(), or derived onto the
-// state object in stateFor() and its helpers.
+// State keys the reader produces: declared in empty(), or derived onto the
+// State in render() and its helpers.
+const stateSource = fs.readFileSync(path.join(root, "state.js"), "utf8");
 const stateKeys = new Set();
-for (const m of widget.matchAll(/\bst\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g))
+for (const m of stateSource.matchAll(/\bst\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g))
     stateKeys.add(m[1]);
-for (const m of widget.matchAll(/\bout\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g))
+for (const m of stateSource.matchAll(/\bout\.([A-Za-z_][A-Za-z0-9_]*)\s*=/g))
     stateKeys.add(m[1]);
-const stateBlock = widget.match(/function emptyState\(\)\s*\{\s*return \{([\s\S]*?)\n        \};/);
+for (const m of stateSource.matchAll(/\bto:\s*"([A-Za-z_][A-Za-z0-9_]*)"/g))
+    stateKeys.add(m[1]);
+const stateBlock = stateSource.match(/function empty\(\)\s*\{\s*return \{([\s\S]*?)\n    \};/);
 if (stateBlock) {
     for (const m of stateBlock[1].matchAll(/^\s*([A-Za-z_][A-Za-z0-9_]*):/gm))
         stateKeys.add(m[1]);
@@ -578,15 +581,20 @@ check(finishAdd.indexOf("Sources.addOutcome(") < finishAdd.indexOf('nameInput.te
 check(/onTextChanged: root\.clearAddWarning\(\)/.test(editor),
       "the settings editor clears the Add warning when the row it is about is edited");
 
-// One wire, one splitter: the widget's fetch parser and the settings editor's
-// listing parser take their key and value from wirePair, and read a
-// comma-separated list through splitList.
-for (const name of ["AiUsageWidget.qml", "ui/AccountsEditor.qml"]) {
+// One wire, one splitter: the report reader and the settings editor's listing
+// parser take their key and value from wirePair, and read a comma-separated
+// list through splitList.
+for (const name of ["state.js", "ui/AccountsEditor.qml"]) {
     const source = fs.readFileSync(path.join(root, name), "utf8");
     check(source.includes("Sources.wirePair("), `${name} splits a wire line with wirePair`);
 }
-check(widget.includes("Sources.splitList(") && !/val\.length > 0 \? val\.split\(","\)/.test(widget),
-      "the widget reads a wire list with splitList rather than restating its shape");
+check(stateSource.includes("Sources.splitList(") && !/val\.length > 0 \? val\.split\(","\)/.test(stateSource),
+      "the reader reads a wire list with splitList rather than restating its shape");
+
+// The widget holds no reader of its own: one module turns a Script's report
+// into a State, so the widget and its tests cannot drift from it.
+check(!/function parseLine\(/.test(widget) && !/function emptyState\(/.test(widget),
+      "the widget does not carry its own report reader or State shape");
 
 // --- The widget holds no per-Source branches ---
 // ADR-0001: a Source is data. The Account setting key, the Account output keys

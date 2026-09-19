@@ -30,15 +30,18 @@ const path = require("path");
 const vm = require("vm");
 const root = process.argv[2];
 
-const load = (file, suffix) => {
-    const source = fs.readFileSync(path.join(root, file), "utf8").replace(/^\.pragma library\s*/, "");
-    const sandbox = { console };
+const load = (file, suffix, extra) => {
+    const source = fs.readFileSync(path.join(root, file), "utf8")
+        .replace(/^\.pragma library\s*/, "")
+        .replace(/^\.import\s+"[^"]+"\s+as\s+\w+\s*$/gm, "");
+    const sandbox = Object.assign({ console }, extra || {});
     vm.createContext(sandbox);
     vm.runInContext(source + suffix, sandbox, { filename: file });
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, overviewRow, overviewRows, hasReading, nextNotInstalledCount, isHidden, STATUS_KEY, NOT_INSTALLED, BLOCKING_REQUIREMENT, BLOCKED };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, wirePair, splitList, nameValueMap, overviewRow, overviewRows, hasReading, nextNotInstalledCount, isHidden, STATUS_KEY, NOT_INSTALLED, BLOCKING_REQUIREMENT, BLOCKED };").api;
+const State = load("state.js", "; this.api = { empty, readLine, render, hasCurrentReading };", { Sources: reg }).api;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
 const status = fs.readFileSync(path.join(root, "ui/StatusSection.qml"), "utf8");
@@ -98,47 +101,27 @@ const ranked = reg.overviewRows([
 check(ranked.length === 2 && ranked[0].id === "zai" && ranked[1].id === "claude",
       "a Blocked Source follows a Source that holds a reading, so it cannot outrank one");
 
-// --- The widget: routing the report into state ---
-check(/case "BLOCKING_REQUIREMENT":/.test(widget) && /st\.blockingRequirement = val;/.test(widget),
-      "the widget routes BLOCKING_REQUIREMENT to a state field the way it routes CREDS_STATUS");
-check(/blockingRequirement: ""/.test(widget), "the empty state starts with no command list");
-check(/if \(val !== Sources\.BLOCKED\)\s*\n\s*st\.blockingRequirement = "";/.test(widget),
-      "any report other than Blocked clears the command list a previous one left");
+// --- The reader: routing the report into a State ---
+check(State.empty().blockingRequirement === "", "the empty State starts with no command list");
 
-// The Pill's own reading predicate, run rather than pattern-matched. The rule is
-// narrower than the registry's: it asks whether the reading is current, so a
-// Blocked Source draws a hollow ring even when the tab keeps a last-good value.
-function extract(name) {
-    const m = widget.match(new RegExp("function " + name + "\\([^\\n]*\\)[\\s\\S]*?\\n    \\}"));
-    if (!m)
-        throw new Error("could not extract " + name);
-    return m[0];
-}
+const readInto = (state, line) => State.readLine(state, {}, "claude", line).state;
+const blockedState = readInto(readInto(State.empty(), "BLOCKING_REQUIREMENT=jq,curl"), "CREDS_STATUS=blocked");
+check(blockedState.credsStatus === reg.BLOCKED, "a Blocked report lands as the Source's status");
+check(blockedState.blockingRequirement === "jq,curl",
+      "the reader routes BLOCKING_REQUIREMENT to a State field the way it routes CREDS_STATUS");
+check(blockedState.notInstalledCount === 0, "a Blocked report resets the consecutive Not installed count");
+const restoredState = readInto(blockedState, "CREDS_STATUS=ok");
+check(restoredState.credsStatus === "ok" && restoredState.blockingRequirement === "" && restoredState.hasData === true,
+      "a restored Source returns with no stale command list and its reading back");
 
-const pill = { Sources: reg, console, root: { sourceData: {} } };
-vm.createContext(pill);
-vm.runInContext(extract("pillHasReading"), pill, { filename: "pillHasReading" });
-const ringFor = (statusValue, hasData) => {
-    pill.root.sourceData = { s: { credsStatus: statusValue, hasData: hasData === true } };
-    return pill.pillHasReading("s");
-};
+// The Pill's own reading predicate. The rule is narrower than the registry's:
+// it asks whether the reading is current, so a Blocked Source draws a hollow
+// ring even when the tab keeps a last-good value.
+const ringFor = (statusValue, hasData) =>
+    State.hasCurrentReading({ credsStatus: statusValue, hasData: hasData === true });
 check(ringFor(reg.BLOCKED) === false, "a Blocked Source draws a hollow ring");
 check(ringFor(reg.BLOCKED, true) === false, "a Blocked Source draws a hollow ring even with a last-good reading kept");
 check(ringFor("ok") === true, "a Source with a good reading still draws its ring");
-
-// applyCredsStatus, run for real: a Blocked report lands as the status, and a
-// restored Source comes back with no stale command list.
-const creds = { Sources: reg, console };
-vm.createContext(creds);
-vm.runInContext(extract("applyCredsStatus"), creds, { filename: "applyCredsStatus" });
-const blockedState = { credsStatus: "ok", blockingRequirement: "" };
-creds.applyCredsStatus(blockedState, reg.BLOCKED);
-check(blockedState.credsStatus === reg.BLOCKED, "a Blocked report lands as the Source's status");
-check(blockedState.notInstalledCount === 0, "a Blocked report resets the consecutive Not installed count");
-blockedState.blockingRequirement = "jq";
-creds.applyCredsStatus(blockedState, "ok");
-check(blockedState.credsStatus === "ok" && blockedState.blockingRequirement === "" && blockedState.hasData === true,
-      "a restored Source returns with no stale command list and its reading back");
 
 // --- The status card ---
 check(/readonly property bool blocked: source && source\.credsStatus === "blocked"/.test(status),

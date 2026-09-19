@@ -946,7 +946,7 @@ function overviewRow(state) {
 // The Overview's rows, in the order the tab renders them.
 //
 // `states` is the ordered list of visible Sources in settings order, each
-// carrying its own Source id (stateFor() sets it). Settings order is what ties
+// carrying its own Source id (the reader stamps it). Settings order is what ties
 // fall back to, so rows do not jitter between fetches. Ranked rows come first,
 // by Tightest Window Utilisation descending, so the scarcest budget is the top
 // line; every Source with no reading follows them in settings order.
