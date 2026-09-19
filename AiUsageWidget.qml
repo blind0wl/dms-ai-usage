@@ -817,7 +817,7 @@ PluginComponent {
 
     popoutContent: Component {
         PopoutComponent {
-            headerText: root.tr("AI Usage")
+            headerText: root.tr("AI Usage Monitor")
             showCloseButton: true
 
             // The host already insets plugin popout content by Theme.spacingS

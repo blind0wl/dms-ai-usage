@@ -1,4 +1,4 @@
-# AI Usage
+# AI Usage Monitor
 
 A [DMS (Dank Material Shell)](https://github.com/AvengeMedia/DankMaterialShell) plugin that monitors your Claude, ChatGPT/Codex, Z.ai and opencode Go subscription usage directly from the taskbar. All four are optional and independently toggled. Install this for one, or any combination, and whichever aren't set up stay out of the way.
 
@@ -121,8 +121,8 @@ systemctl --user restart dms
 Two more steps follow, both in DMS Settings (`Mod + ,`), and both needed before a
 pill appears:
 
-1. **Enable the plugin** — Plugins > AI Usage. This is what loads it.
-2. **Place it on the bar** — DankBar > add AI Usage to the right side of the bar.
+1. **Enable the plugin** — Plugins > AI Usage Monitor. This is what loads it.
+2. **Place it on the bar** — DankBar > add AI Usage Monitor to the right side of the bar.
    The bar stays empty until this step.
 
 They are separate actions on separate settings pages, in that order, and neither has
@@ -130,7 +130,7 @@ a `dms plugins` equivalent.
 
 ## Configuration
 
-Open DMS Settings (`Mod + ,` > Plugins > AI Usage) to adjust the refresh interval,
+Open DMS Settings (`Mod + ,` > Plugins > AI Usage Monitor) to adjust the refresh interval,
 toggle pacing indicators and turn the Overview on or off. The same page enables and
 disables each Source, sets the order of the pill rings and popout tabs, and registers
 custom profiles/accounts.
@@ -214,7 +214,7 @@ the ChatGPT backend (usage), the Z.ai API (usage), the opencode Go usage endpoin
 
 ## Credits
 
-AI Usage began as a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by
+AI Usage Monitor began as a fork of [dms-claudecode](https://github.com/titeya/dms-claudecode) by
 Nicolas Bellamy, which is a Claude Code usage monitor. This fork keeps that project's Claude
 Source, its pacing and cost estimates, its profile handling and its settings and chart layout,
 and adds the Source registry, the ChatGPT/Codex, Z.ai and opencode Go Sources, the Account model

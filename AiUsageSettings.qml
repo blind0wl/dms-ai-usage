@@ -131,7 +131,7 @@ PluginSettings {
 
     StyledText {
         width: parent.width
-        text: root.tr("AI Usage")
+        text: root.tr("AI Usage Monitor")
         font.pixelSize: Theme.fontSizeLarge
         font.weight: Font.Medium
         color: Theme.surfaceText

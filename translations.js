@@ -1,8 +1,8 @@
 .pragma library
 
 var strings = {
-    "AI Usage":
-        { fr: "Utilisation de l'IA", es: "Uso de IA" },
+    "AI Usage Monitor":
+        { fr: "Moniteur d'utilisation de l'IA", es: "Monitor de uso de IA" },
     "Sources":
         { fr: "Sources", es: "Fuentes" },
     "Account":
