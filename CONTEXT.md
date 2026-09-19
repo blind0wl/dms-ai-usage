@@ -71,6 +71,16 @@ name. A Script reports one per Account it lists, and _custom_ for an Account tha
 came from the Custom Account list rather than detection.
 _Avoid_: source, discovery, provider
 
+**Listing**:
+One Script's whole answer about its Accounts, asked in its listing mode: the
+Accounts it registers, the Origin it found each at, and the registrations it
+refused. The settings page asks each Source's Script for a Listing to show its
+page, and twice more before it saves a Custom Account row: the list as it
+stands, then the list with the candidate row on the end, and the difference
+between the two is the row's verdict. Asking is one module's job (listing.js),
+so the page shows only whole answers and the Add guard cannot skip a question.
+_Avoid_: scan, inventory, detection pass, probe
+
 **Window**:
 A rate-limited period a Source allows usage in, with a length, a Utilisation and
 a reset time. A Source has up to two, called primary and secondary. A length

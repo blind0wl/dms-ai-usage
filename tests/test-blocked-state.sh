@@ -47,6 +47,9 @@ const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
 const status = fs.readFileSync(path.join(root, "ui/StatusSection.qml"), "utf8");
 const overview = fs.readFileSync(path.join(root, "ui/OverviewSection.qml"), "utf8");
 const editor = fs.readFileSync(path.join(root, "ui/AccountsEditor.qml"), "utf8");
+// The Listing reads the two status keys off the registry's constants; the
+// editor mirrors what the machine committed (#80).
+const listing = fs.readFileSync(path.join(root, "listing.js"), "utf8");
 
 const results = [];
 const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
@@ -150,8 +153,8 @@ check(/showsReading: modelData\.ranked/.test(overview),
       "a Blocked row keeps the unranked row's `--` percentage");
 
 // --- The settings Accounts editor ---
-check(/pair\.value === Sources\.BLOCKED/.test(editor), "the editor reads the Blocked status from the listing");
-check(/pair\.key === Sources\.BLOCKING_REQUIREMENT/.test(editor), "the editor reads the Requirement list from the listing");
+check(/pair\.value === Sources\.BLOCKED/.test(listing), "the Listing reads the Blocked status off the registry's own key");
+check(/pair\.key === Sources\.BLOCKING_REQUIREMENT/.test(listing), "the Listing reads the Requirement list off the registry's own key");
 check(/readonly property string blockedCommands: Sources\.splitList\(root\.blockingRequirement\)\.join/.test(editor),
       "the editor turns the report's list into the commands it names");
 check(/visible: root\.blocked/.test(editor) && /root\.blockedCommands/.test(editor),
