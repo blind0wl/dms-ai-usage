@@ -15,6 +15,10 @@ jobs:
         with:
           scandir: .
           additional_files: get-claude-usage
+          # The Scripts source lib/source-script.sh, and the action checks one
+          # file at a time, so without -x every one of them reports the library
+          # as unfollowed rather than checking it.
+          additional_args: -x
 
   tests:
     runs-on: ubuntu-latest

@@ -10,6 +10,10 @@
 # rather than running a Script and reading its report. The four Scripts' own
 # tests, and tests/test-requirement-preflight.sh, stay the proof that each
 # Script wires the library in.
+#
+# Each case body is a string this file hands to a fresh bash, so the expansions
+# in it are meant to happen there and not here: the single quotes are the point.
+# shellcheck disable=SC2016
 set -eu
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"

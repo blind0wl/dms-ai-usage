@@ -189,7 +189,7 @@ echo "=== the read-back defaults are reachable ==="
 # The library the Script runs on is sourced here, so a result file with a line
 # missing can be fed to the exact code it uses rather than to a file a fetch
 # happened to produce.
-# shellcheck source=../lib/source-script.sh
+# shellcheck source-path=SCRIPTDIR source=../lib/source-script.sh
 . "$SCRIPT_DIR/lib/source-script.sh"
 
 printf 'FIVE_HOUR_UTIL=42\n' > "$TMPDIR_ROOT/partial-result"

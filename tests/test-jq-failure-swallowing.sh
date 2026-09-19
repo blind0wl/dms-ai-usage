@@ -345,7 +345,7 @@ echo "=== the result write is all-or-nothing ==="
 # Each Script publishes a result file with a temp-then-rename, so a reader never
 # sees a half-written file. The writer is the library's, so it is sourced and run
 # directly rather than only exercised through a fetch that happened to complete.
-# shellcheck source=../lib/source-script.sh
+# shellcheck source-path=SCRIPTDIR source=../lib/source-script.sh
 . "$SCRIPT_DIR/lib/source-script.sh"
 for script in get-chatgpt-usage get-zai-usage get-opencode-go-usage; do
     DEST="$TMPDIR_ROOT/result-$script"
