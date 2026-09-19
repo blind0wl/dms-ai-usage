@@ -44,6 +44,8 @@ Column {
     property string pendingShadowed: ""
     property bool pendingAnswered: false
     property bool pendingAbsent: false
+    property bool pendingBlocked: false
+    property string pendingRequirement: ""
 
     // The same, for the two listings the Add guard asks for: what the Script makes
     // of the list as it stands, and what it makes of the list with the candidate
@@ -69,6 +71,15 @@ Column {
     // reports is in use because the Source itself is absent, which is a state of
     // the Source rather than a verdict on the user's rows.
     property bool sourceAbsent: false
+    // Set when the Script answered that it could not read past a Requirement.
+    // The empty Account list that answer carries is not a verdict on what exists:
+    // no credential or config directory was read at all, so the editor shows the
+    // notice naming the commands and no rows, rather than an empty list the user
+    // would take for the truth.
+    property bool blocked: false
+    // The commands the Script could not read past, as its report named them.
+    property string blockingRequirement: ""
+    readonly property string blockedCommands: Sources.splitList(root.blockingRequirement).join(", ")
 
     // The row the Script has been asked about: `asked*` while the question is out,
     // `probed*` once it has been answered. Both exist because the user can keep
@@ -402,6 +413,8 @@ Column {
         root.pendingShadowed = "";
         root.pendingAnswered = false;
         root.pendingAbsent = false;
+        root.pendingBlocked = false;
+        root.pendingRequirement = "";
         listProcess.command = root.listingCommand(Sources.accountArgs(root.descriptor, root.items));
         listProcess.running = true;
     }
@@ -417,8 +430,11 @@ Column {
             root.pendingOrigins = pair.value;
         else if (pair.key === root.acct.shadowedKey)
             root.pendingShadowed = pair.value;
-        else if (pair.key === Sources.STATUS_KEY)
+        else if (pair.key === Sources.STATUS_KEY) {
             root.pendingAbsent = pair.value === Sources.NOT_INSTALLED;
+            root.pendingBlocked = pair.value === Sources.BLOCKED;
+        } else if (pair.key === Sources.BLOCKING_REQUIREMENT)
+            root.pendingRequirement = pair.value;
     }
 
     // One whole answer at a time, and only from a Script that finished: a listing
@@ -429,6 +445,8 @@ Column {
         root.listedShadowed = root.pendingShadowed;
         root.listingAnswered = root.pendingAnswered;
         root.sourceAbsent = root.pendingAbsent;
+        root.blocked = root.pendingBlocked;
+        root.blockingRequirement = root.pendingRequirement;
     }
 
     Process {
@@ -521,7 +539,21 @@ Column {
 
     StyledText {
         width: parent.width
+        visible: !root.blocked
         text: root.settingsRoot.tr(root.acct.descriptionKey)
+        font.pixelSize: Theme.fontSizeSmall
+        color: Theme.surfaceVariantText
+        wrapMode: Text.WordWrap
+    }
+
+    // The Script's own report that it could not read past a Requirement. The
+    // notice takes the Account list's place, because an empty listing here means
+    // no credential was read rather than no Account existing, and installing the
+    // named command is the only fix.
+    StyledText {
+        width: parent.width
+        visible: root.blocked
+        text: root.settingsRoot.tr("This Source could not be read because a required command is unavailable") + ": " + root.blockedCommands + "."
         font.pixelSize: Theme.fontSizeSmall
         color: Theme.surfaceVariantText
         wrapMode: Text.WordWrap
@@ -530,6 +562,7 @@ Column {
     Row {
         width: parent.width
         spacing: Theme.spacingXS
+        visible: !root.blocked
 
         StyledText {
             width: root.nameColumnWidth
@@ -556,6 +589,7 @@ Column {
     Row {
         width: parent.width
         spacing: Theme.spacingXS
+        visible: !root.blocked
 
         DankTextField {
             id: nameInput
@@ -587,7 +621,7 @@ Column {
     Row {
         width: parent.width
         spacing: Theme.spacingXXS
-        visible: root.addWarning !== null
+        visible: !root.blocked && root.addWarning !== null
 
         DankIcon {
             anchors.verticalCenter: parent.verticalCenter
@@ -648,6 +682,7 @@ Column {
     Column {
         width: parent.width
         spacing: Theme.spacingXS
+        visible: !root.blocked
 
         Repeater {
             model: root.items
