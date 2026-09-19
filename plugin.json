@@ -2,7 +2,7 @@
   "id": "aiUsage",
   "name": "AI Usage",
   "description": "Monitor your Claude, ChatGPT/Codex, Z.ai and opencode Go usage with token tracking, estimated API costs, rate limits, and daily activity charts",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "author": "blind0wl",
   "icon": "monitoring",
   "type": "widget",
