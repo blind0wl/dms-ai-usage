@@ -77,12 +77,55 @@ WEEK_CALLS=0
 MONTH_TOKENS=0
 DAILY=0,0,0,0,0,0,0
 WEEK_MODELS=
+TODAY_COST=0.00
+WEEK_COST=0.00
+MONTH_COST=0.00
+USD_EUR_RATE=0
 ACCOUNTS=
 ACCOUNT_ORIGINS=
 ACCOUNT_SHADOWED=
+ACCOUNT_TODAY_COST=
+ACCOUNT_WEEK_COST=
+ACCOUNT_MONTH_COST=
 NOTINSTALLED
     exit 0
 fi
+
+# The listing has answered by now, and so has the Not installed check, so the
+# fetch path is the only one that spends the network calls the prices need
+# (ADR 0006). A refresh that fails keeps yesterday's cache; with no cache at
+# all the tokens still count and price at zero.
+load_pricing
+
+# One model-usage body's tokens priced (ADR 0006). Z.ai reports one total per
+# model with no input/output split and no cache distinction, so the input
+# rate is what prices it - the conservative end of a figure that is notional
+# anyway. The API names models GLM-prefixed while Z.ai's own rate rows sit
+# lowercase under a zai/ prefix, so the lookup lowercases and prefixes; a
+# model neither names contributes zero while its tokens still count.
+price_models() {
+    local body="$1" out
+    out=$(printf '%s' "$body" | jq -r '
+        [.data.modelSummaryList[]? | select((.totalTokens // 0) > 0)
+         | "\(.modelName)\t\(.totalTokens)"] | join("\n")' 2>/dev/null \
+        | awk -F'\t' -v pricing="$PRICING_AWK" '
+        BEGIN {
+            n = split(pricing, pmodels, ",")
+            for (i = 1; i <= n; i++) {
+                split(pmodels[i], pp, ":")
+                price_in[pp[1]] = pp[2] + 0
+            }
+        }
+        {
+            name = tolower($1)
+            tok = $2 + 0
+            if (name in price_in) total += tok * price_in[name]
+            else if (("zai/" name) in price_in) total += tok * price_in["zai/" name]
+        }
+        END { printf "%.2f\n", total + 0 }' 2>/dev/null) || out=""
+    [ -n "$out" ] || out="0.00"
+    printf '%s' "$out"
+}
 
 # --- Per-account quota + server-side usage fetcher ---
 # Usage: fetch_account_usage <api-key> <out_tmpfile>
@@ -98,6 +141,7 @@ fetch_account_usage() {
     local creds_status="missing"
     local week_tokens=0 week_calls=0 month_tokens=0
     local daily="0,0,0,0,0,0,0" week_models=""
+    local today_cost="0.00" week_cost="0.00" month_cost="0.00"
 
     write_out() {
         write_usage_result "$out_file" \
@@ -113,7 +157,10 @@ fetch_account_usage() {
             "WEEK_CALLS=$week_calls" \
             "MONTH_TOKENS=$month_tokens" \
             "DAILY=$daily" \
-            "WEEK_MODELS=$week_models"
+            "WEEK_MODELS=$week_models" \
+            "TODAY_COST=$today_cost" \
+            "WEEK_COST=$week_cost" \
+            "MONTH_COST=$month_cost"
     }
 
     # A failure report carries only the lines the fetch actually has: the status,
@@ -237,11 +284,15 @@ fetch_account_usage() {
         return
     fi
 
-    local week_body month_body
+    local week_body month_body today_body
     week_body=$(api_get "${API_BASE}/model-usage?startTime=${WEEK_START}+00:00:00&endTime=${TODAY}+23:59:59")
     week_body="${week_body#*$'\n'}"
     month_body=$(api_get "${API_BASE}/model-usage?startTime=${MONTH_START}+00:00:00&endTime=${TODAY}+23:59:59")
     month_body="${month_body#*$'\n'}"
+    # One extra call for today's figure: the week's model breakdown covers
+    # seven days, so pricing today alone needs its own answer (ADR 0006).
+    today_body=$(api_get "${API_BASE}/model-usage?startTime=${TODAY}+00:00:00&endTime=${TODAY}+23:59:59")
+    today_body="${today_body#*$'\n'}"
 
     week_tokens=$(echo "$week_body" | jq -r '.data.totalUsage.totalTokensUsage // 0' 2>/dev/null || echo 0)
     week_calls=$(echo "$week_body" | jq -r '.data.totalUsage.totalModelCallCount // 0' 2>/dev/null || echo 0)
@@ -250,6 +301,10 @@ fetch_account_usage() {
         [.data.modelSummaryList[]? | select((.totalTokens // 0) > 0)]
         | sort_by(.sortOrder // 0)
         | map("\(.modelName)=\(.totalTokens)") | join(",")' 2>/dev/null || echo "")
+
+    today_cost=$(price_models "$today_body")
+    week_cost=$(price_models "$week_body")
+    month_cost=$(price_models "$month_body")
 
     for var in week_tokens week_calls month_tokens; do
         case "${!var}" in
@@ -318,6 +373,9 @@ WEEK_CALLS=0
 MONTH_TOKENS=0
 DAILY="0,0,0,0,0,0,0"
 WEEK_MODELS=""
+TODAY_COST="0.00"
+WEEK_COST="0.00"
+MONTH_COST="0.00"
 
 # Per-Account lists, in the "name:value,name2:value2" form the Claude and
 # ChatGPT Sources already emit. The aggregate above keeps the Pill reading
@@ -327,6 +385,9 @@ ACCOUNT_PRIMARY_RESET=""
 ACCOUNT_SECONDARY_UTIL=""
 ACCOUNT_SECONDARY_RESET=""
 ACCOUNT_CREDS_STATUS=""
+ACCOUNT_TODAY_COST=""
+ACCOUNT_WEEK_COST=""
+ACCOUNT_MONTH_COST=""
 BLOCKING_REQUIREMENT=""
 
 MODELS_ACC=""
@@ -351,6 +412,9 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     a_mt=$(result_value "$usage_tmpf" MONTH_TOKENS 0)
     a_daily=$(result_value "$usage_tmpf" DAILY "0,0,0,0,0,0,0")
     a_models=$(result_value "$usage_tmpf" WEEK_MODELS "")
+    a_tc=$(result_value "$usage_tmpf" TODAY_COST "0.00")
+    a_wcost=$(result_value "$usage_tmpf" WEEK_COST "0.00")
+    a_mc=$(result_value "$usage_tmpf" MONTH_COST "0.00")
 
     # Plan/status come from the "default" account, falling back to the first
     # account when the user only configured named ones.
@@ -379,6 +443,11 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     WEEK_CALLS=$(( WEEK_CALLS + a_wc ))
     MONTH_TOKENS=$(( MONTH_TOKENS + a_mt ))
 
+    # Costs sum as floats, not as the integers the tokens do.
+    TODAY_COST=$(awk "BEGIN {printf \"%.2f\", $TODAY_COST + $a_tc}")
+    WEEK_COST=$(awk "BEGIN {printf \"%.2f\", $WEEK_COST + $a_wcost}")
+    MONTH_COST=$(awk "BEGIN {printf \"%.2f\", $MONTH_COST + $a_mc}")
+
     DAILY=$(echo "$a_daily" | awk -v cur="$(IFS=,; echo "${DAILY_ARR[*]}")" '
         BEGIN { split(cur, a, ",") }
         { split($0, b, ","); for(i=1;i<=7;i++) a[i]+=b[i]+0 }
@@ -392,6 +461,9 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     # healthy default. A Blocked or Unavailable Account has no reading to carry,
     # so it is left out of the Window lists rather than zeroed (ADR 0002/0005).
     ACCOUNT_CREDS_STATUS="${ACCOUNT_CREDS_STATUS:+${ACCOUNT_CREDS_STATUS},}${aname}:${a_cs}"
+    ACCOUNT_TODAY_COST="${ACCOUNT_TODAY_COST:+${ACCOUNT_TODAY_COST},}${aname}:${a_tc}"
+    ACCOUNT_WEEK_COST="${ACCOUNT_WEEK_COST:+${ACCOUNT_WEEK_COST},}${aname}:${a_wcost}"
+    ACCOUNT_MONTH_COST="${ACCOUNT_MONTH_COST:+${ACCOUNT_MONTH_COST},}${aname}:${a_mc}"
     if [ "$a_cs" != "unavailable" ] && [ "$a_cs" != "blocked" ]; then
         ACCOUNT_PRIMARY_UTIL="${ACCOUNT_PRIMARY_UTIL:+${ACCOUNT_PRIMARY_UTIL},}${aname}:${a_pu}"
         ACCOUNT_PRIMARY_RESET="${ACCOUNT_PRIMARY_RESET:+${ACCOUNT_PRIMARY_RESET},}${aname}:${a_pr}"
@@ -434,9 +506,16 @@ echo "WEEK_CALLS=${WEEK_CALLS}"
 echo "MONTH_TOKENS=${MONTH_TOKENS}"
 echo "DAILY=${DAILY}"
 echo "WEEK_MODELS=${WEEK_MODELS}"
+echo "TODAY_COST=${TODAY_COST}"
+echo "WEEK_COST=${WEEK_COST}"
+echo "MONTH_COST=${MONTH_COST}"
+echo "USD_EUR_RATE=${USD_EUR_RATE}"
 echo "ACCOUNTS=${ACCOUNTS}"
 echo "ACCOUNT_PRIMARY_UTIL=${ACCOUNT_PRIMARY_UTIL}"
 echo "ACCOUNT_PRIMARY_RESET=${ACCOUNT_PRIMARY_RESET}"
 echo "ACCOUNT_SECONDARY_UTIL=${ACCOUNT_SECONDARY_UTIL}"
 echo "ACCOUNT_SECONDARY_RESET=${ACCOUNT_SECONDARY_RESET}"
 echo "ACCOUNT_CREDS_STATUS=${ACCOUNT_CREDS_STATUS}"
+echo "ACCOUNT_TODAY_COST=${ACCOUNT_TODAY_COST}"
+echo "ACCOUNT_WEEK_COST=${ACCOUNT_WEEK_COST}"
+echo "ACCOUNT_MONTH_COST=${ACCOUNT_MONTH_COST}"

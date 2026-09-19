@@ -65,6 +65,7 @@ for (const d of registry.api.SOURCES) {
     if (d.status)
         nameKey(d.status.titleKey), nameKey(d.status.bodyKey), nameKey(d.status.emptyBodyKey);
     for (const section of d.sections) {
+        nameKey(section.captionKey);
         for (const column of section.columns || []) {
             nameKey(column.labelKey);
             for (const slot of ["value", "sub"])
