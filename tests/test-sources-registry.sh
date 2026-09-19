@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, addOutcome, listing, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, HIDDEN_AFTER, nextNotInstalledCount, isHidden, hasReading, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, addOutcome, listing, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, HIDDEN_AFTER, nextNotInstalledCount, isHidden, hasReading, LIST_ACCOUNTS_FLAG, LIST_KEY, ORIGINS_KEY, SHADOWED_KEY };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -134,45 +134,31 @@ for (const d of reg.SOURCES) {
         check(/^w*[Aa]ccounts?$|^custom\w+$/.test(d.accounts.settingKey), `${tag} account settingKey looks like a settings key`);
         check(widget.indexOf("pluginData[d.accounts.settingKey]") >= 0, `${tag} account settingKey is resolved generically by the widget`);
         check(["path", "key"].indexOf(d.accounts.argField) >= 0, `${tag} account argField is path or key`);
-        check(typeof d.accounts.listKey === "string" && d.accounts.listKey.length > 0, `${tag} account declares the output key that lists its Accounts`);
-        // The settings editor asks the Script's own listing mode which Accounts
-        // it would report and where each came from, so it can show what it does
-        // not own without re-deriving detection. The key that list arrives under
-        // is descriptor data, like the Account list itself.
-        check(typeof d.accounts.originsKey === "string" && d.accounts.originsKey.length > 0,
-              `${tag} account declares the output key its Account origins arrive under`);
+        // The wire has one vocabulary (#80): the key the Account list arrives
+        // under is shared, so the descriptor carries no wire keys and no
+        // per-Source override can drift from the Script's own names.
+        check(d.accounts.listKey === undefined, `${tag} account carries no listKey; the wire key is shared`);
+        check(d.accounts.originsKey === undefined, `${tag} account carries no originsKey; the wire key is shared`);
         // The settings editor's read-only list heads itself with the Source's own
         // word for an Account, because CONTEXT.md keeps Profile for Claude-facing
         // copy and Account for everything else.
         check(typeof d.accounts.detectedTitleKey === "string" && tr[d.accounts.detectedTitleKey] !== undefined,
               `${tag} account declares a translated heading for the detected list`);
-        // The editor marks a detected Account a Custom one replaced from the
-        // listing's own report, so the key it arrives under and the copy that
-        // describes it are descriptor data too.
-        check(typeof d.accounts.shadowedKey === "string" && d.accounts.shadowedKey.length > 0,
-              `${tag} account declares the output key its refused registrations arrive under`);
+        check(d.accounts.shadowedKey === undefined, `${tag} account carries no shadowedKey; the wire key is shared`);
         check(typeof d.accounts.overriddenKey === "string" && tr[d.accounts.overriddenKey] !== undefined,
               `${tag} account declares translated copy for a detected Account a Custom one replaced`);
         // The Account registry and the listing are the same for every Source, so
-        // they live in lib/source-script.sh and a Script only declares the keys
-        // it reports them under (#75). The checks below read the Script for what
-        // it declares and the library for what it inherits.
+        // they live in lib/source-script.sh under the one shared wire (#80). The
+        // checks below read the library for the fixed names and hold every Script
+        // to them.
         const scriptText = fs.readFileSync(path.join(root, d.script), "utf8");
         check(/\.\s+"\$SCRIPT_DIR\/lib\/source-script\.sh"/.test(scriptText),
               `${tag} script ${d.script} sources lib/source-script.sh`);
         const libText = fs.readFileSync(path.join(root, "lib", "source-script.sh"), "utf8");
-        // A Script that says nothing takes the library's defaults, which is why
-        // only Claude declares its own: its Accounts are Profiles on the wire.
-        const declared = (text, name, pattern) => (text.match(pattern) || [])[1];
-        const listKey = declared(scriptText, "list", /^ACCOUNT_LIST_KEY=(\w+)/m)
-              || declared(libText, "list", /^ACCOUNT_LIST_KEY="\$\{ACCOUNT_LIST_KEY:-(\w+)\}"/m);
-        const keyPrefixDeclared = declared(scriptText, "prefix", /^ACCOUNT_KEY_PREFIX=(\w+)/m)
-              || declared(libText, "prefix", /^ACCOUNT_KEY_PREFIX="\$\{ACCOUNT_KEY_PREFIX:-(\w+)\}"/m);
-        check(listKey === d.accounts.listKey, `${tag} script ${d.script} reports ${d.accounts.listKey}`);
-        check(`${keyPrefixDeclared}ORIGINS` === d.accounts.originsKey,
-              `${tag} script ${d.script} reports ${d.accounts.originsKey}`);
-        check(`${keyPrefixDeclared}SHADOWED` === d.accounts.shadowedKey,
-              `${tag} script ${d.script} reports ${d.accounts.shadowedKey}`);
+        check(/^ACCOUNT_LIST_KEY=ACCOUNTS$/m.test(libText), "the library fixes the Account list key at ACCOUNTS");
+        check(/^ACCOUNT_KEY_PREFIX=ACCOUNT_$/m.test(libText), "the library fixes the per-Account key prefix at ACCOUNT_");
+        check(!/^ACCOUNT_LIST_KEY=/m.test(scriptText) && !/^ACCOUNT_KEY_PREFIX=/m.test(scriptText),
+              `${tag} script ${d.script} declares no wire-key overrides`);
         // The editor drops an Account the Custom Account list provided by its
         // exact origin tag, so a registry that spelled it differently would look
         // like it had detected the user's own Accounts. Both strings have to be
@@ -184,18 +170,13 @@ for (const d of reg.SOURCES) {
         check(lines.some((line) => line.includes(`"${reg.LIST_ACCOUNTS_FLAG}"`) && line.includes("LIST_ACCOUNTS=1")),
               `${tag} script ${d.script} answers the listing mode in its argument loop`);
         check(d.accounts.fields !== undefined && Object.keys(d.accounts.fields).length > 0, `${tag} account declares its output fields`);
-        // The prefix a Source's per-Account keys wear is descriptor data, so
-        // nothing here has to ask which Source it is. Claude declares PROFILE_
-        // because get-claude-usage is upstream's file; the rest declare
-        // ACCOUNT_, which CONTEXT.md's Account term implies.
-        check(typeof d.accounts.keyPrefix === "string" && /^[A-Z]+_$/.test(d.accounts.keyPrefix),
-              `${tag} account declares the prefix its output keys wear`);
-        const keyPrefix = typeof d.accounts.keyPrefix === "string" ? d.accounts.keyPrefix : "";
+        // One prefix for every Source (#80): pickFields applies ACCOUNT_ itself,
+        // so a field key either wears it or is dead config.
         const declaredFields = new Set();
         for (const [key, spec] of Object.entries(d.accounts.fields || {})) {
-            check(keyPrefix.length > 0 && key.indexOf(keyPrefix) === 0,
-                  `${tag} account field "${key}" wears the prefix the descriptor declares`);
-            const suffix = keyPrefix.length > 0 ? key.slice(keyPrefix.length) : key;
+            check(key.indexOf("ACCOUNT_") === 0,
+                  `${tag} account field "${key}" wears the shared ACCOUNT_ prefix`);
+            const suffix = key.slice("ACCOUNT_".length);
             check(accountFields[suffix] !== undefined,
                   `${tag} account field "${key}" has an ACCOUNT_FIELDS row for suffix "${suffix}"`);
             if (!spec) {
@@ -534,8 +515,8 @@ for (const name of ["AiUsageWidget.qml", "ui/AccountsEditor.qml"]) {
 // Account wiring off the descriptor too: which keys the listing arrives under,
 // and how the Script's arguments are built.
 const editor = fs.readFileSync(path.join(root, "ui/AccountsEditor.qml"), "utf8");
-for (const key of ["listKey", "originsKey"])
-    check(editor.includes(`acct.${key}`), `the settings editor reads the Account ${key} off the descriptor`);
+check(editor.includes("Sources.LIST_KEY") && editor.includes("Sources.ORIGINS_KEY") && editor.includes("Sources.SHADOWED_KEY"),
+      "the settings editor reads the Account wire keys off the shared constants");
 check(editor.includes("Sources.accountArgs("), "the settings editor builds the Script's Account arguments with the widget's own builder");
 check(editor.includes("Sources.LIST_ACCOUNTS_FLAG"), "the settings editor asks for the listing mode by its declared flag");
 check(editor.includes("Sources.detectedAccounts(") && editor.includes("Sources.unregisteredRows("),

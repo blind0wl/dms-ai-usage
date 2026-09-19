@@ -28,9 +28,9 @@ Column {
     property bool isLoading: false
     property var items: []
 
-    // The Script's listing, as it arrives: the Accounts under the descriptor's
-    // listKey, their origins under its originsKey, and the registrations it
-    // refused under its shadowedKey.
+    // The Script's listing, as it arrives: the Accounts under the shared
+    // LIST_KEY, their Origins under ORIGINS_KEY, and the registrations it
+    // refused under SHADOWED_KEY.
     property string listedAccounts: ""
     property string listedOrigins: ""
     property string listedShadowed: ""
@@ -423,12 +423,12 @@ Column {
         var pair = Sources.wirePair(line);
         if (!pair)
             return;
-        if (pair.key === root.acct.listKey) {
+        if (pair.key === Sources.LIST_KEY) {
             root.pendingAccounts = pair.value;
             root.pendingAnswered = true;
-        } else if (pair.key === root.acct.originsKey)
+        } else if (pair.key === Sources.ORIGINS_KEY)
             root.pendingOrigins = pair.value;
-        else if (pair.key === root.acct.shadowedKey)
+        else if (pair.key === Sources.SHADOWED_KEY)
             root.pendingShadowed = pair.value;
         else if (pair.key === Sources.STATUS_KEY) {
             root.pendingAbsent = pair.value === Sources.NOT_INSTALLED;
@@ -477,7 +477,7 @@ Column {
         if (!pair)
             return;
         var baseline = root.probeStage !== 2;
-        if (pair.key === root.acct.listKey) {
+        if (pair.key === Sources.LIST_KEY) {
             if (baseline) {
                 root.baselineAccounts = pair.value;
                 root.baselineAnswered = true;
@@ -485,12 +485,12 @@ Column {
                 root.candidateAccounts = pair.value;
                 root.candidateAnswered = true;
             }
-        } else if (pair.key === root.acct.originsKey) {
+        } else if (pair.key === Sources.ORIGINS_KEY) {
             if (baseline)
                 root.baselineOrigins = pair.value;
             else
                 root.candidateOrigins = pair.value;
-        } else if (pair.key === root.acct.shadowedKey) {
+        } else if (pair.key === Sources.SHADOWED_KEY) {
             if (baseline)
                 root.baselineShadowed = pair.value;
             else

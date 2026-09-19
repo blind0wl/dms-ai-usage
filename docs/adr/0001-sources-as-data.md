@@ -32,3 +32,17 @@ shared output contract. This keeps `get-claude-usage` emitting `FIVE_HOUR_UTIL`
 while the others emit `PRIMARY_UTIL`, so the refactor could not change what any
 Source reports and the scripts stay mergeable against upstream. The cost is a
 translation layer that a shared contract would not need.
+
+## Amendment (issue #80): the Account wire is shared
+
+The Account part of the wire is no longer mergeable against upstream, by
+decision. `get-claude-usage` now emits `ACCOUNTS`, `ACCOUNT_ORIGINS`,
+`ACCOUNT_SHADOWED` and `ACCOUNT_*` per-Account keys like every other Script,
+and the Descriptor carries no wire keys. The Descriptor fields existed to spare
+upstream's file a rename; keeping them meant every reader learned four
+per-Source facts about a difference only one Source had.
+
+Two limits hold. The Window keys (`FIVE_HOUR_UTIL`, `SEVEN_DAY_UTIL`) stay
+per-Descriptor, so the paragraph above still covers them. And Claude-facing
+copy still says Profile throughout, because CONTEXT.md keeps Profile for the
+user's words and Account for the wire.
