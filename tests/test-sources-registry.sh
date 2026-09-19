@@ -150,15 +150,32 @@ for (const d of reg.SOURCES) {
               `${tag} account declares the output key its refused registrations arrive under`);
         check(typeof d.accounts.overriddenKey === "string" && tr[d.accounts.overriddenKey] !== undefined,
               `${tag} account declares translated copy for a detected Account a Custom one replaced`);
-        const script = fs.readFileSync(path.join(root, d.script), "utf8");
-        for (const key of [d.accounts.listKey, d.accounts.originsKey, d.accounts.shadowedKey])
-            check(script.includes(`${key}=`), `${tag} script ${d.script} reports ${key}`);
+        // The Account registry and the listing are the same for every Source, so
+        // they live in lib/source-script.sh and a Script only declares the keys
+        // it reports them under (#75). The checks below read the Script for what
+        // it declares and the library for what it inherits.
+        const scriptText = fs.readFileSync(path.join(root, d.script), "utf8");
+        check(/\.\s+"\$SCRIPT_DIR\/lib\/source-script\.sh"/.test(scriptText),
+              `${tag} script ${d.script} sources lib/source-script.sh`);
+        const libText = fs.readFileSync(path.join(root, "lib", "source-script.sh"), "utf8");
+        // A Script that says nothing takes the library's defaults, which is why
+        // only Claude declares its own: its Accounts are Profiles on the wire.
+        const declared = (text, name, pattern) => (text.match(pattern) || [])[1];
+        const listKey = declared(scriptText, "list", /^ACCOUNT_LIST_KEY=(\w+)/m)
+              || declared(libText, "list", /^ACCOUNT_LIST_KEY="\$\{ACCOUNT_LIST_KEY:-(\w+)\}"/m);
+        const keyPrefixDeclared = declared(scriptText, "prefix", /^ACCOUNT_KEY_PREFIX=(\w+)/m)
+              || declared(libText, "prefix", /^ACCOUNT_KEY_PREFIX="\$\{ACCOUNT_KEY_PREFIX:-(\w+)\}"/m);
+        check(listKey === d.accounts.listKey, `${tag} script ${d.script} reports ${d.accounts.listKey}`);
+        check(`${keyPrefixDeclared}ORIGINS` === d.accounts.originsKey,
+              `${tag} script ${d.script} reports ${d.accounts.originsKey}`);
+        check(`${keyPrefixDeclared}SHADOWED` === d.accounts.shadowedKey,
+              `${tag} script ${d.script} reports ${d.accounts.shadowedKey}`);
         // The editor drops an Account the Custom Account list provided by its
-        // exact origin tag, so a Script that spelled it differently would look
+        // exact origin tag, so a registry that spelled it differently would look
         // like it had detected the user's own Accounts. Both strings have to be
         // tagged where the Account is registered, not merely mentioned.
-        const lines = script.split("\n");
-        const tagAtCallSite = new RegExp(`add_(account|profile) .*"${reg.CUSTOM_ORIGIN}"\\s*;;`);
+        const lines = libText.split("\n");
+        const tagAtCallSite = new RegExp(`add_account .*"${reg.CUSTOM_ORIGIN}"\\s*;;`);
         check(lines.some((line) => tagAtCallSite.test(line)),
               `${tag} script ${d.script} tags a Custom Account where it registers it`);
         check(lines.some((line) => line.includes(`"${reg.LIST_ACCOUNTS_FLAG}"`) && line.includes("LIST_ACCOUNTS=1")),

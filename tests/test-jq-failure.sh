@@ -186,9 +186,11 @@ fi
 # ============================================================
 echo "=== the read-back defaults are reachable ==="
 # ============================================================
-# The helper is extracted so a result file with a line missing can be fed to the
-# exact code the Script runs, not only to a file a fetch happened to produce.
-eval "$(sed -n '/^result_value() {/,/^}/p' "$SCRIPT")"
+# The library the Script runs on is sourced here, so a result file with a line
+# missing can be fed to the exact code it uses rather than to a file a fetch
+# happened to produce.
+# shellcheck source-path=SCRIPTDIR source=../lib/source-script.sh
+. "$SCRIPT_DIR/lib/source-script.sh"
 
 printf 'FIVE_HOUR_UTIL=42\n' > "$TMPDIR_ROOT/partial-result"
 assert_eq "$(result_value "$TMPDIR_ROOT/partial-result" FIVE_HOUR_UTIL 0)" "42" "a line that is present is read"
@@ -206,7 +208,6 @@ assert_eq "$old_default" "" "the old pipeline shape left its default unreachable
 # ============================================================
 echo "=== the result write is all-or-nothing ==="
 # ============================================================
-eval "$(sed -n '/^write_usage_result() {/,/^}/p' "$SCRIPT")"
 
 DEST="$TMPDIR_ROOT/result"
 write_usage_result "$DEST" "CREDS_STATUS=blocked" "BLOCKING_REQUIREMENT=jq"

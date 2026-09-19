@@ -25,7 +25,9 @@ _Avoid_: using it as the general term; that is Account.
 One Source's own program: the file the plugin runs to find that Source's Accounts,
 report them under their Origins and fetch their usage. The widget and the settings
 page ask the same Script the same questions, so the two cannot disagree about what
-exists.
+exists. What is the same for every Source - the Requirement preflight, the Blocked
+report, the Account registry and the result writer - lives in one library the
+Scripts source, so a Script is only its Source's endpoint, detection and key names.
 _Avoid_: helper, executable, plugin binary
 
 **State**:
@@ -79,6 +81,12 @@ _Avoid_: period, limit, quota, bucket
 How much of a Window has been consumed, as a percentage of the Window's
 allowance.
 _Avoid_: usage, consumption, burn
+
+**Cost**:
+What a Source's tokens would have cost at the providers' published API rates,
+not what the subscription was paid. The figure is an estimate wherever it
+appears, and a Source may report none.
+_Avoid_: spend, bill, price paid, charges
 
 **Brand Colour**:
 The fixed colour that identifies a Source, independent of the shell theme:

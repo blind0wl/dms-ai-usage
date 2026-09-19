@@ -6,75 +6,22 @@
 # shellcheck disable=SC2088
 set -eu
 
-# A Requirement is a command-line program this Script cannot read any data
-# without. plugin.json declares them, and the check runs before anything else:
-# with a Requirement absent nothing downstream can be read, so a swallowed jq
-# failure would report a credential verdict instead of naming the real cause
-# (ADR 0005).
-#
-# The names are read from the manifest with sed and tr rather than jq, because
-# the program doing the checking is the one that may be missing. Presence only: a
-# jq that exists and fails is the call's own business and reports Blocked from
-# where it fails.
+# What every Script does the same way - the Requirement preflight, the Blocked
+# report, the Account registry and the result file reader and writer - lives in
+# lib/source-script.sh. The library cannot report its own absence, so those four
+# lines are here rather than there: a partial install names what is wrong instead
+# of dying with empty output that would read as Unavailable.
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-
-requirement_names() {
-    sed -n '/"requires"[[:space:]]*:[[:space:]]*\[/,/\]/p' "$1" \
-        | tr -d '[:space:]"' \
-        | sed -e '1s/^[^:]*://' -e 's/[][]//g' \
-        | tr ',' '\n' \
-        | sed '/^$/d'
-}
-
-missing_requirements() {
-    local name out=""
-    while IFS= read -r name; do
-        [ -n "$name" ] || continue
-        command -v "$name" >/dev/null 2>&1 || out="${out:+$out,}$name"
-    done < <(requirement_names "$SCRIPT_DIR/plugin.json")
-    printf '%s' "$out"
-}
-
-MISSING_REQUIREMENTS=$(missing_requirements)
-if [ -n "$MISSING_REQUIREMENTS" ]; then
-    # No credential is read and no request is made. The empty Account list keeps
-    # the selector and the settings editor from showing a stale one.
+if ! . "$SCRIPT_DIR/lib/source-script.sh" 2>/dev/null; then
     printf 'CREDS_STATUS=blocked\n'
-    printf 'BLOCKING_REQUIREMENT=%s\n' "$MISSING_REQUIREMENTS"
-    printf 'ACCOUNTS=\n'
-    for arg in "$@"; do
-        if [ "$arg" = "--list-accounts" ]; then
-            printf 'ACCOUNT_ORIGINS=\n'
-            printf 'ACCOUNT_SHADOWED=\n'
-            break
-        fi
-    done
+    printf 'BLOCKING_REQUIREMENT=%s\n' 'lib/source-script.sh'
     exit 0
 fi
 
-# The value of one line in a result file, or the given default when the line is
-# absent or empty. The default is applied outside the pipeline that reads the
-# value, because `grep | cut || echo` binds `||` to cut, whose exit status is 0
-# even when grep matched nothing (#59).
-result_value() {
-    local file="$1" key="$2" default="$3" value
-    value=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
-    printf '%s' "${value:-$default}"
-}
-
-# Write a result file all-or-nothing: a reader sees the whole file or none of it,
-# never a half-written one. The temporary sits beside the destination, so the
-# rename that publishes it is atomic.
-write_usage_result() {
-    local out_file="$1"
-    shift
-    local tmp="${out_file}.tmp.$$"
-    if printf '%s\n' "$@" 2>/dev/null > "$tmp"; then
-        mv -f "$tmp" "$out_file" 2>/dev/null || rm -f "$tmp"
-    else
-        rm -f "$tmp"
-    fi
-}
+# Before anything else: with a Requirement absent nothing downstream can be read,
+# so a swallowed jq failure would report a credential verdict instead of naming
+# the real cause (ADR 0005). Reports Blocked and ends the Script.
+require_requirements "$@"
 
 # Cheapest possible check, before any temp dirs, network calls, or account
 # scanning: if the `codex` binary genuinely isn't installed, this Source
@@ -461,29 +408,14 @@ fetch_account_usage() {
 }
 
 # --- Collect account list ---
-ACCOUNT_NAMES=()
-ACCOUNT_DIRS=()  # codex home dir per account
-ACCOUNT_ORIGINS=()
-ACCOUNT_SHADOWED=()
-
-# add_account <name> <codex_home_dir> <origin>
-# First registration of a name wins. The origin is where the directory came
-# from, as the user would look for it: a file path, the name of an environment
-# variable, or "custom" for an entry from the plugin's Custom Account list. It
-# is display text, so the two list delimiters are stripped from it just as they
-# are from a name.
-add_account() {
-    local name="$1" dir="$2" origin="${3:-}"
-
-    # , | : are output delimiters, they cannot survive in an account name. An
-    # origin is display text: the list it rides is comma-separated and the other
-    # Account lists separate entries with |, so neither can survive in it either.
-    # The ":" that separates an origin from its name is left alone, because a
-    # pair is split on its first colon and a path may carry one.
-    name="${name//[,|:]/}"
-    origin="${origin//[,|]/}"
-    [ -n "$name" ] || return 0
-    [ -n "$dir" ] || return 0
+# An Account's value here is the codex home directory it reads. The registry
+# compares values as strings, so the path is resolved first: two spellings of one
+# directory, or a symlink to it, are one Account rather than two. A directory
+# that cannot be resolved does not exist yet, and registers as typed, because a
+# Custom Account added before codex first runs is still the user's answer about
+# where it will live.
+add_codex_account() {
+    local name="$1" dir="$2" origin="${3:-}" resolved
 
     case "$dir" in
         [~]/*) dir="${HOME}/${dir#*/}" ;;
@@ -491,76 +423,27 @@ add_account() {
     esac
     dir="${dir%/}"
 
-    local idx
-    # Nothing to clash with while the list is empty, and the guard keeps that
-    # true on a bash that cannot expand an empty indexed list under set -u.
-    if [ "${#ACCOUNT_NAMES[@]}" -gt 0 ]; then
-        for idx in "${!ACCOUNT_NAMES[@]}"; do
-            if [ "${ACCOUNT_NAMES[$idx]}" = "$name" ] || [ "${ACCOUNT_DIRS[$idx]}" = "$dir" ]; then
-                # Only a clash a user can act on is reported: one side of it has
-                # to be a Custom Account. Two detected registrations clashing is
-                # the Script's own precedence, which its description explains.
-                if [ "$origin" = "custom" ] || [ "${ACCOUNT_ORIGINS[$idx]}" = "custom" ]; then
-                    ACCOUNT_SHADOWED+=("${ACCOUNT_NAMES[$idx]}|${name}:${origin}")
-                fi
-                return 0
-            fi
-        done
-    fi
-
-    ACCOUNT_NAMES+=("$name")
-    ACCOUNT_DIRS+=("$dir")
-    ACCOUNT_ORIGINS+=("$origin")
-}
-
-# account_origins -> "name:origin,name:origin". The form the per-Account lists
-# already use, so the settings page parses one shape.
-account_origins() {
-    local out="" idx
-    # An empty list has nothing to join, and the guard keeps the expansion valid
-    # on a bash that cannot expand an empty indexed list under set -u.
-    if [ "${#ACCOUNT_NAMES[@]}" -gt 0 ]; then
-        for idx in "${!ACCOUNT_NAMES[@]}"; do
-            out="${out:+${out},}${ACCOUNT_NAMES[$idx]}:${ACCOUNT_ORIGINS[$idx]}"
-        done
-    fi
-    printf '%s' "$out"
-}
-
-# account_shadowed -> "<winner>|<name>:<origin>" for the registrations the list
-# refused because something already held their name or their value: what kept it,
-# then what lost and where it came from. The settings page is how the user learns
-# that a Custom Account took a detected one's place, which is otherwise only
-# visible as an API rejection. The winner makes that link explicit even when the
-# two names differ, as they do when the value is what clashed.
-account_shadowed() {
-    local out="" idx
-    # An empty list has nothing to join, and the guard keeps the expansion valid
-    # on a bash that cannot expand an empty indexed list under set -u.
-    if [ "${#ACCOUNT_SHADOWED[@]}" -gt 0 ]; then
-        for idx in "${!ACCOUNT_SHADOWED[@]}"; do
-            out="${out:+${out},}${ACCOUNT_SHADOWED[$idx]}"
-        done
-    fi
-    printf '%s' "$out"
+    resolved=$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P) || resolved="$dir"
+    add_account "$name" "$resolved" "$origin"
 }
 
 # The origin names the environment variable when it decided the directory, and
 # the conventional path otherwise.
 if [ -n "${CODEX_HOME:-}" ]; then
-    add_account "default" "$CODEX_HOME" "CODEX_HOME"
+    add_codex_account "default" "$CODEX_HOME" "CODEX_HOME"
 else
-    add_account "default" "${HOME}/.codex" "~/.codex"
+    add_codex_account "default" "${HOME}/.codex" "~/.codex"
 fi
 
-LIST_ACCOUNTS=0
-
 # Manual entries from plugin settings: "name=/path/to/codex/home", same
-# convention as get-claude-usage's manual profile entries.
+# convention as get-claude-usage's manual profile entries. They register last,
+# so the detected Account above takes priority over one naming the same
+# directory. The registry is handed the resolved path, so add_account is wrapped
+# rather than called through parse_account_args.
 for arg in "$@"; do
     case "$arg" in
         "--list-accounts") LIST_ACCOUNTS=1 ;;
-        *=*) add_account "${arg%%=*}" "${arg#*=}" "custom" ;;
+        *=*) add_codex_account "${arg%%=*}" "${arg#*=}" "custom" ;;
     esac
 done
 
@@ -569,16 +452,7 @@ done
 # Account a name refers to. This returns before the first request: opening the
 # settings page must not spend an API call.
 if [ "$LIST_ACCOUNTS" -eq 1 ]; then
-    # The listing answer says why it is empty when it is: an empty Account list
-    # is this Script's own Not installed state, and the settings page needs to
-    # know that as a state of the Source rather than as a verdict on the user's
-    # rows.
-    printf 'ACCOUNTS=%s\n' "$(IFS=,; echo "${ACCOUNT_NAMES[*]:-}")"
-    printf 'ACCOUNT_ORIGINS=%s\n' "$(account_origins)"
-    printf 'ACCOUNT_SHADOWED=%s\n' "$(account_shadowed)"
-    if [ "${#ACCOUNT_NAMES[@]}" -eq 0 ]; then
-        printf 'CREDS_STATUS=not_installed\n'
-    fi
+    emit_account_listing
     exit 0
 fi
 
@@ -591,18 +465,18 @@ TOKENS_TMPFILES=()
 ALLTIME_TMPFILES=()
 PIDS=()
 
-for idx in "${!ACCOUNT_DIRS[@]}"; do
+for idx in "${!ACCOUNT_VALUES[@]}"; do
     usage_tmpf=$(mktemp "$TMPDIR_ROOT/account_XXXXXX")
     tokens_tmpf=$(mktemp "$TMPDIR_ROOT/tokens_XXXXXX")
     alltime_tmpf=$(mktemp "$TMPDIR_ROOT/alltime_XXXXXX")
     USAGE_TMPFILES+=("$usage_tmpf")
     TOKENS_TMPFILES+=("$tokens_tmpf")
     ALLTIME_TMPFILES+=("$alltime_tmpf")
-    fetch_account_usage "${ACCOUNT_DIRS[$idx]}" "$usage_tmpf" &
+    fetch_account_usage "${ACCOUNT_VALUES[$idx]}" "$usage_tmpf" &
     PIDS+=("$!")
-    count_account_tokens "${ACCOUNT_DIRS[$idx]}/sessions" "$tokens_tmpf" &
+    count_account_tokens "${ACCOUNT_VALUES[$idx]}/sessions" "$tokens_tmpf" &
     PIDS+=("$!")
-    count_account_alltime "${ACCOUNT_DIRS[$idx]}/sessions" "$alltime_tmpf" &
+    count_account_alltime "${ACCOUNT_VALUES[$idx]}/sessions" "$alltime_tmpf" &
     PIDS+=("$!")
 done
 
