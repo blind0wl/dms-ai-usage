@@ -25,7 +25,9 @@ _Avoid_: using it as the general term; that is Account.
 One Source's own program: the file the plugin runs to find that Source's Accounts,
 report them under their Origins and fetch their usage. The widget and the settings
 page ask the same Script the same questions, so the two cannot disagree about what
-exists.
+exists. What is the same for every Source - the Requirement preflight, the Blocked
+report, the Account registry and the result writer - lives in one library the
+Scripts source, so a Script is only its Source's endpoint, detection and key names.
 _Avoid_: helper, executable, plugin binary
 
 **State**:

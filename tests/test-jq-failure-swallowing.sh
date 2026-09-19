@@ -343,10 +343,11 @@ done
 echo "=== the result write is all-or-nothing ==="
 # ============================================================
 # Each Script publishes a result file with a temp-then-rename, so a reader never
-# sees a half-written file. The helper is extracted and run directly, not only
-# exercised through a fetch that happened to complete.
+# sees a half-written file. The writer is the library's, so it is sourced and run
+# directly rather than only exercised through a fetch that happened to complete.
+# shellcheck source=../lib/source-script.sh
+. "$SCRIPT_DIR/lib/source-script.sh"
 for script in get-chatgpt-usage get-zai-usage get-opencode-go-usage; do
-    eval "$(sed -n '/^write_usage_result() {/,/^}/p' "$SCRIPT_DIR/$script")"
     DEST="$TMPDIR_ROOT/result-$script"
     write_usage_result "$DEST" "CREDS_STATUS=blocked" "BLOCKING_REQUIREMENT=jq"
     assert_eq "$(cat "$DEST")" "$(printf 'CREDS_STATUS=blocked\nBLOCKING_REQUIREMENT=jq')" \
