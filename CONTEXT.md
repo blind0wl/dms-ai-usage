@@ -28,6 +28,12 @@ page ask the same Script the same questions, so the two cannot disagree about wh
 exists.
 _Avoid_: helper, executable, plugin binary
 
+**Requirement**:
+A command-line program the plugin cannot read any Source without, because every
+Script invokes it: `jq` and `curl`. The plugin declares its Requirements but
+cannot install them, and no plugin setting supplies one.
+_Avoid_: dependency, prerequisite, package
+
 **Detected Account**:
 An Account a Source's Script finds for itself rather than being handed one: a
 credential or config directory the machine already had, in the Source's own
@@ -148,3 +154,10 @@ because its endpoint failed, timed out or answered with an unexpected body. The
 user cannot fix it, so the Source does not point at settings and the widget
 marks its last known values stale instead of showing them as current.
 _Avoid_: missing, not installed, error, offline
+
+**Blocked**:
+A Source whose Script could not read its data because a Requirement is missing
+or failed, so no credential was read. A Blocked Source stays visible and names
+the command, because installing or repairing it is the fix and no plugin
+setting is.
+_Avoid_: unavailable, missing, not installed
