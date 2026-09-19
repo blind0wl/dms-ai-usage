@@ -832,6 +832,22 @@ function tightestWindow(state) {
     return best;
 }
 
+// Whether a Source's state holds a reading a surface can draw. A fetch reports
+// one by setting hasData, and that flag survives a later failure: a last-good
+// reading is still a reading, so the Overview's bar and the Window card draw it
+// stale rather than as a fresh zero. Every state that means "nothing was read"
+// - not_installed, missing, expired, an unavailable endpoint with no fallback,
+// and the Blocked state #58 adds - carries none. This is the one place the rule
+// lives, so the surfaces that draw a reading cannot disagree about whether a
+// Source has anything to draw.
+//
+// The Pill's Ring asks a narrower question, whether the reading is current, and
+// draws its hollow ring for a degraded Source even when a last-good reading is
+// kept for these surfaces (ADR 0002).
+function hasReading(state) {
+    return !!state && state.hasData === true;
+}
+
 // One Overview row. It carries everything the Overview tab draws, so the tab is
 // a dumb repeater and every ranking rule stays testable here.
 //
@@ -852,8 +868,8 @@ function overviewRow(state) {
     var d = byId(state.id);
     var missing = state.credsStatus === "missing" || state.credsStatus === "expired";
     var unavailable = state.credsStatus === "unavailable";
-    var hasReading = state.hasData === true;
-    var tightest = hasReading ? tightestWindow(state) : null;
+    var reading = hasReading(state);
+    var tightest = reading ? tightestWindow(state) : null;
     var which = tightest ? tightest.window : null;
     var declared = which && d && d.windows[which] ? d.windows[which] : null;
     var win = which ? state[which] || {} : {};
@@ -871,9 +887,9 @@ function overviewRow(state) {
         util: tightest ? tightest.util : 0,
         resetMs: tightest ? tightest.resetMs : 0,
         // Ranked means the row holds a current-enough reading to sort by.
-        ranked: hasReading && !missing,
+        ranked: reading && !missing,
         // Stale marks an Unavailable Source's last known reading as not current.
-        stale: hasReading && unavailable,
+        stale: reading && unavailable,
         // Missing and Unavailable are the two degraded states, and each renders
         // differently: a login affordance, or a dimmed stale bar.
         missing: missing,

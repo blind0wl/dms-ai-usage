@@ -840,10 +840,14 @@ echo "=== Test 11: the Pill's no-reading rule ==="
 # ============================================================
 
 # pillHasReading decides whether a Pill slot draws a reading or a hollow
-# no-reading ring. Extracted from the widget so the rule cannot drift.
+# no-reading ring. Extracted from the widget so the rule cannot drift. The
+# registry's hasReading is loaded alongside it: whether a Source has a reading a
+# surface can draw is one rule, and the Pill asks the narrower question of
+# whether that reading is current.
 PILL_REPORT=/tmp/pill-reading-report.txt
 node - "$SCRIPT_DIR/AiUsageWidget.qml" > "$PILL_REPORT" 2>&1 <<'NODE'
 const fs = require("fs");
+const path = require("path");
 const vm = require("vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
 const match = source.match(/function pillHasReading\(id\) \{[\s\S]*?\n    \}/);
@@ -854,10 +858,14 @@ if (!match) {
 const sandbox = { root: { sourceData: {} } };
 vm.createContext(sandbox);
 vm.runInContext(match[0] + "; this.pillHasReading = pillHasReading;", sandbox, { filename: "pillHasReading" });
+vm.runInContext(
+    fs.readFileSync(path.join(path.dirname(process.argv[2]), "sources.js"), "utf8").replace(/^\.pragma library\s*/, "") +
+        "; this.Sources = { hasReading };",
+    sandbox, { filename: "sources.js" });
 const results = [];
 const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
-const has = (status) => {
-    sandbox.root.sourceData = status === undefined ? {} : { s: { credsStatus: status } };
+const has = (status, hasData) => {
+    sandbox.root.sourceData = status === undefined ? {} : { s: { credsStatus: status, hasData: hasData === true } };
     return sandbox.pillHasReading("s");
 };
 check(has(undefined) === true, "a Source before its first fetch keeps its ring");
@@ -866,6 +874,17 @@ check(has("ok") === true, "a good reading draws the ring");
 check(has("missing") === false, "missing credentials draw no reading");
 check(has("expired") === false, "expired credentials draw no reading");
 check(has("unavailable") === false, "an unavailable endpoint draws no reading");
+
+// The shared rule the Overview, the Window card and the status card ask. A
+// last-good reading survives a degraded report, so those surfaces draw it
+// (stale) rather than a fabricated zero, while the Pill's ring draws only a
+// current reading and stays hollow (ADR 0002).
+const draws = (status, hasData) => sandbox.Sources.hasReading({ credsStatus: status, hasData: hasData });
+check(draws("not_installed", false) === false, "a not_installed Source with no data has no reading to draw");
+check(draws("unavailable", false) === false, "an unavailable endpoint with no data has no reading to draw");
+check(draws("unavailable", true) === true, "an unavailable endpoint with a last-good reading has one to draw");
+check(has("unavailable", true) === false && draws("unavailable", true) === true,
+      "the Pill keeps its hollow ring for a degraded Source the other surfaces draw stale");
 console.log(results.join("\n"));
 NODE
 

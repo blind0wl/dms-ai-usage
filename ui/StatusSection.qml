@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Common
 import qs.Widgets
+import "../sources.js" as Sources
 
 // Endpoint-failure card, shown when a Source's credentials are fine but its
 // usage endpoint failed: a 404, a timeout, a 5xx or a body that does not carry
@@ -20,8 +21,10 @@ StyledRect {
     readonly property var status: ctx && ctx.descriptor ? ctx.descriptor.status : null
 
     // A Source that has never had a good reading has nothing to fall back on,
-    // so it says so rather than claiming to show last known values.
-    readonly property bool hasData: source && source.hasData === true
+    // so it says so rather than claiming to show last known values. The rule is
+    // the registry's (Sources.hasReading), the same one the Window card and the
+    // Overview ask.
+    readonly property bool hasData: Sources.hasReading(source)
     readonly property bool unavailable: source && source.credsStatus === "unavailable"
     // The Section's own intent to show. The renderer reads this rather than
     // `visible`, which QML reports as false while an ancestor is hidden.
