@@ -52,6 +52,16 @@ if [ -n "$MISSING_REQUIREMENTS" ]; then
     exit 0
 fi
 
+# The value of one line in a result file, or the given default when the line is
+# absent or empty. The default is applied outside the pipeline that reads the
+# value, because `grep | cut || echo` binds `||` to cut, whose exit status is 0
+# even when grep matched nothing (#59).
+result_value() {
+    local file="$1" key="$2" default="$3" value
+    value=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+    printf '%s' "${value:-$default}"
+}
+
 # Cheapest possible check, before any temp dirs, network calls, or account
 # scanning: if the `codex` binary genuinely isn't installed, this Source
 # isn't just logged out, it's not present at all. Distinct from CREDS_STATUS
@@ -274,7 +284,9 @@ count_account_alltime() {
 # Usage: fetch_account_usage <codex_home_dir> <out_tmpfile>
 # Writes PLAN_TYPE, PRIMARY_UTIL, PRIMARY_RESET, PRIMARY_WINDOW_SECONDS,
 #        SECONDARY_UTIL, SECONDARY_RESET, SECONDARY_WINDOW_SECONDS,
-#        CREDITS_BALANCE, CREDITS_HAS, CREDS_STATUS to out_tmpfile
+#        CREDITS_BALANCE, CREDITS_HAS, CREDS_STATUS to out_tmpfile. A jq that
+#        fails reports Blocked (a body that is not valid JSON reports
+#        Unavailable) instead of a credential verdict (ADR 0005).
 fetch_account_usage() {
     local codex_home="$1"
     local out_file="$2"
@@ -288,6 +300,8 @@ fetch_account_usage() {
     # when a token exists but the API call failed to produce one, "missing"
     # when there's no auth file (or no usable token in it) to even try.
     local creds_status="unknown"
+    # The Requirement a failure names; empty unless the run is Blocked.
+    local blocking=""
 
     write_out() {
         printf 'PLAN_TYPE=%s\nPRIMARY_UTIL=%s\nPRIMARY_RESET=%s\nPRIMARY_WINDOW_SECONDS=%s\nSECONDARY_UTIL=%s\nSECONDARY_RESET=%s\nSECONDARY_WINDOW_SECONDS=%s\nCREDITS_BALANCE=%s\nCREDITS_HAS=%s\nCREDS_STATUS=%s\n' \
@@ -296,16 +310,36 @@ fetch_account_usage() {
             "$credits_balance" "$credits_has" "$creds_status" > "$out_file"
     }
 
+    # A failure report carries only the lines the fetch actually has: the status,
+    # and the Requirement for a Blocked one. The reading lines are left out rather
+    # than written as zero, so the aggregate's read-back defaults stand in and no
+    # fabricated reading is recorded.
+    write_failure() {
+        printf 'CREDS_STATUS=%s\n' "$creds_status" > "$out_file"
+        if [ "$creds_status" = "blocked" ]; then
+            printf 'BLOCKING_REQUIREMENT=%s\n' "$blocking" >> "$out_file"
+        fi
+    }
+
     if [ ! -f "$auth_file" ]; then
         creds_status="missing"
         write_out
         return
     fi
 
+    # A jq that fails reading the credential file must not read as the file
+    # lacking the key: the two outcomes are different states (ADR 0005). The exit
+    # status is what tells them apart, so it is captured rather than swallowed.
     local token account_id last_refresh
-    token=$(jq -r '.tokens.access_token // ""' "$auth_file" 2>/dev/null || echo "")
-    account_id=$(jq -r '.tokens.account_id // ""' "$auth_file" 2>/dev/null || echo "")
-    last_refresh=$(jq -r '.last_refresh // ""' "$auth_file" 2>/dev/null || echo "")
+    token=$(jq -r '.tokens.access_token // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+    account_id=$(jq -r '.tokens.account_id // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+    last_refresh=$(jq -r '.last_refresh // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+
+    if [ -n "$blocking" ]; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
 
     if [ -z "$token" ] || [ -z "$account_id" ]; then
         creds_status="missing"
@@ -333,8 +367,13 @@ fetch_account_usage() {
 
     if [ "$stale" = true ]; then
         CODEX_HOME="$codex_home" timeout 15 codex login status >/dev/null 2>&1 || true
-        token=$(jq -r '.tokens.access_token // ""' "$auth_file" 2>/dev/null || echo "$token")
-        account_id=$(jq -r '.tokens.account_id // ""' "$auth_file" 2>/dev/null || echo "$account_id")
+        token=$(jq -r '.tokens.access_token // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+        account_id=$(jq -r '.tokens.account_id // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+        if [ -n "$blocking" ]; then
+            creds_status="blocked"
+            write_failure
+            return
+        fi
     fi
 
     local api_resp
@@ -344,22 +383,45 @@ fetch_account_usage() {
         -H "User-Agent: codex-cli" \
         "https://chatgpt.com/backend-api/wham/usage" 2>/dev/null || echo '{}')
 
-    if echo "$api_resp" | jq -e '.rate_limit' >/dev/null 2>&1; then
-        creds_status="ok"
-        plan_type=$(echo "$api_resp" | jq -r '.plan_type // "unknown"')
-        primary_util=$(echo "$api_resp" | jq -r '.rate_limit.primary_window.used_percent // 0')
-        primary_reset=$(echo "$api_resp" | jq -r '.rate_limit.primary_window.reset_at // ""')
-        primary_window=$(echo "$api_resp" | jq -r '.rate_limit.primary_window.limit_window_seconds // 0')
-        secondary_util=$(echo "$api_resp" | jq -r '.rate_limit.secondary_window.used_percent // 0')
-        secondary_reset=$(echo "$api_resp" | jq -r '.rate_limit.secondary_window.reset_at // ""')
-        secondary_window=$(echo "$api_resp" | jq -r '.rate_limit.secondary_window.limit_window_seconds // 0')
-        credits_balance=$(echo "$api_resp" | jq -r '.credits.balance // "0"')
-        credits_has=$(echo "$api_resp" | jq -r '.credits.has_credits // false')
+    # The response body separates the two jq failure modes (ADR 0005). A body
+    # that is not valid JSON is the endpoint answering with something unexpected,
+    # which is Unavailable. A jq that fails while reading a valid body is the
+    # tool's own failure, which is Blocked with jq named.
+    #
+    # Each extraction reports its own failure rather than swallowing it into a
+    # default: the exit status is what routes the failure, and a reading that was
+    # never obtained cannot be mistaken for one.
+    if ! printf '%s' "$api_resp" | jq -e . >/dev/null 2>&1; then
+        creds_status="unavailable"
     else
-        creds_status="expired"
+        local extraction_failed=false
+        local rate_limit_present
+        plan_type=$(printf '%s' "$api_resp" | jq -r '.plan_type // "unknown"' 2>/dev/null) || extraction_failed=true
+        primary_util=$(printf '%s' "$api_resp" | jq -r '.rate_limit.primary_window.used_percent // 0' 2>/dev/null) || extraction_failed=true
+        primary_reset=$(printf '%s' "$api_resp" | jq -r '.rate_limit.primary_window.reset_at // ""' 2>/dev/null) || extraction_failed=true
+        primary_window=$(printf '%s' "$api_resp" | jq -r '.rate_limit.primary_window.limit_window_seconds // 0' 2>/dev/null) || extraction_failed=true
+        secondary_util=$(printf '%s' "$api_resp" | jq -r '.rate_limit.secondary_window.used_percent // 0' 2>/dev/null) || extraction_failed=true
+        secondary_reset=$(printf '%s' "$api_resp" | jq -r '.rate_limit.secondary_window.reset_at // ""' 2>/dev/null) || extraction_failed=true
+        secondary_window=$(printf '%s' "$api_resp" | jq -r '.rate_limit.secondary_window.limit_window_seconds // 0' 2>/dev/null) || extraction_failed=true
+        credits_balance=$(printf '%s' "$api_resp" | jq -r '.credits.balance // "0"' 2>/dev/null) || extraction_failed=true
+        credits_has=$(printf '%s' "$api_resp" | jq -r '.credits.has_credits // false' 2>/dev/null) || extraction_failed=true
+        rate_limit_present=$(printf '%s' "$api_resp" | jq -r 'if (.rate_limit // null) == null then "no" else "yes" end' 2>/dev/null) || extraction_failed=true
+
+        if [ "$extraction_failed" = true ]; then
+            creds_status="blocked"
+            blocking="jq"
+        elif [ "$rate_limit_present" = "yes" ]; then
+            creds_status="ok"
+        else
+            creds_status="expired"
+        fi
     fi
 
-    write_out
+    if [ "$creds_status" = "blocked" ] || [ "$creds_status" = "unavailable" ]; then
+        write_failure
+    else
+        write_out
+    fi
 }
 
 # --- Collect account list ---
@@ -523,6 +585,7 @@ SECONDARY_WINDOW_SECONDS=0
 CREDITS_BALANCE="0"
 CREDITS_HAS="false"
 CREDS_STATUS="missing"
+BLOCKING_REQUIREMENT=""
 WEEK_TOKENS=0
 WEEK_MESSAGES=0
 WEEK_SESSIONS=0
@@ -558,34 +621,35 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     a_plan="unknown"
     a_pu=0; a_pr=""; a_pw=0
     a_su=0; a_sr=""; a_sw=0
-    a_cb="0"; a_ch="false"; a_cs="missing"
+    a_cb="0"; a_ch="false"; a_cs="missing"; a_br=""
 
-    a_plan=$(grep "^PLAN_TYPE=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
-    a_pu=$(grep "^PRIMARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_pr=$(grep "^PRIMARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-    a_pw=$(grep "^PRIMARY_WINDOW_SECONDS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_su=$(grep "^SECONDARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_sr=$(grep "^SECONDARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-    a_sw=$(grep "^SECONDARY_WINDOW_SECONDS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_cb=$(grep "^CREDITS_BALANCE=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "0")
-    a_ch=$(grep "^CREDITS_HAS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "false")
-    a_cs=$(grep "^CREDS_STATUS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "missing")
+    a_plan=$(result_value "$usage_tmpf" PLAN_TYPE unknown)
+    a_pu=$(result_value "$usage_tmpf" PRIMARY_UTIL 0)
+    a_pr=$(result_value "$usage_tmpf" PRIMARY_RESET "")
+    a_pw=$(result_value "$usage_tmpf" PRIMARY_WINDOW_SECONDS 0)
+    a_su=$(result_value "$usage_tmpf" SECONDARY_UTIL 0)
+    a_sr=$(result_value "$usage_tmpf" SECONDARY_RESET "")
+    a_sw=$(result_value "$usage_tmpf" SECONDARY_WINDOW_SECONDS 0)
+    a_cb=$(result_value "$usage_tmpf" CREDITS_BALANCE "0")
+    a_ch=$(result_value "$usage_tmpf" CREDITS_HAS false)
+    a_cs=$(result_value "$usage_tmpf" CREDS_STATUS missing)
+    a_br=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
 
     a_wt=0; a_wm=0; a_ws=0; a_mt=0; a_daily="0,0,0,0,0,0,0"; a_models=""
     if [ -f "$tokens_tmpf" ]; then
-        a_wt=$(grep "^WEEK_TOKENS=" "$tokens_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-        a_wm=$(grep "^WEEK_MESSAGES=" "$tokens_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-        a_ws=$(grep "^WEEK_SESSIONS=" "$tokens_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-        a_mt=$(grep "^MONTH_TOKENS=" "$tokens_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-        a_daily=$(grep "^DAILY=" "$tokens_tmpf" 2>/dev/null | cut -d= -f2- || echo "0,0,0,0,0,0,0")
-        a_models=$(grep "^WEEK_MODELS=" "$tokens_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
+        a_wt=$(result_value "$tokens_tmpf" WEEK_TOKENS 0)
+        a_wm=$(result_value "$tokens_tmpf" WEEK_MESSAGES 0)
+        a_ws=$(result_value "$tokens_tmpf" WEEK_SESSIONS 0)
+        a_mt=$(result_value "$tokens_tmpf" MONTH_TOKENS 0)
+        a_daily=$(result_value "$tokens_tmpf" DAILY "0,0,0,0,0,0,0")
+        a_models=$(result_value "$tokens_tmpf" WEEK_MODELS "")
     fi
 
     a_as=0; a_am=0; a_fs="unknown"
     if [ -f "$alltime_tmpf" ]; then
-        a_as=$(grep "^ALLTIME_SESSIONS=" "$alltime_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-        a_am=$(grep "^ALLTIME_MESSAGES=" "$alltime_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-        a_fs=$(grep "^FIRST_SESSION=" "$alltime_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
+        a_as=$(result_value "$alltime_tmpf" ALLTIME_SESSIONS 0)
+        a_am=$(result_value "$alltime_tmpf" ALLTIME_MESSAGES 0)
+        a_fs=$(result_value "$alltime_tmpf" FIRST_SESSION unknown)
     fi
 
     if [ "$aname" = "default" ]; then
@@ -599,6 +663,9 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
         CREDITS_BALANCE="$a_cb"
         CREDITS_HAS="$a_ch"
         CREDS_STATUS="$a_cs"
+        # The command list beside the status is the default Account's, because
+        # the status is: the two always describe the same report.
+        BLOCKING_REQUIREMENT="$a_br"
     fi
 
     # Aggregate token totals across all accounts
@@ -641,15 +708,25 @@ WEEK_MODELS=$(echo "$ACCOUNT_WEEK_MODELS_LIST" | tr '|' '\n' | cut -d: -f2- | tr
     awk -F= '{ acc[$1]+=$2 } END { first=1; for(m in acc) { printf "%s%s=%d", (first?"":","),(m),(acc[m]+0); first=0 } print "" }')
 
 echo "PLAN_TYPE=${PLAN_TYPE}"
-echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
-echo "PRIMARY_RESET=${PRIMARY_RESET}"
-echo "PRIMARY_WINDOW_SECONDS=${PRIMARY_WINDOW_SECONDS}"
-echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
-echo "SECONDARY_RESET=${SECONDARY_RESET}"
-echo "SECONDARY_WINDOW_SECONDS=${SECONDARY_WINDOW_SECONDS}"
-echo "CREDITS_BALANCE=${CREDITS_BALANCE}"
-echo "CREDITS_HAS=${CREDITS_HAS}"
+# A Blocked or Unavailable report carries no reading, so the Window keys are left
+# out rather than written as zero: the widget keeps the last good reading for the
+# tab and draws no ring, instead of reading a failure as a fresh zero (ADR 0002).
+if [ "$CREDS_STATUS" != "blocked" ] && [ "$CREDS_STATUS" != "unavailable" ]; then
+    echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
+    echo "PRIMARY_RESET=${PRIMARY_RESET}"
+    echo "PRIMARY_WINDOW_SECONDS=${PRIMARY_WINDOW_SECONDS}"
+    echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
+    echo "SECONDARY_RESET=${SECONDARY_RESET}"
+    echo "SECONDARY_WINDOW_SECONDS=${SECONDARY_WINDOW_SECONDS}"
+    echo "CREDITS_BALANCE=${CREDITS_BALANCE}"
+    echo "CREDITS_HAS=${CREDITS_HAS}"
+fi
 echo "CREDS_STATUS=${CREDS_STATUS}"
+# Emitted only for a Blocked report, so the other outputs are unchanged and the
+# widget's own clearing of the key removes one a previous fetch left.
+if [ "$CREDS_STATUS" = "blocked" ]; then
+    echo "BLOCKING_REQUIREMENT=${BLOCKING_REQUIREMENT}"
+fi
 echo "WEEK_TOKENS=${WEEK_TOKENS}"
 echo "WEEK_MESSAGES=${WEEK_MESSAGES}"
 echo "WEEK_SESSIONS=${WEEK_SESSIONS}"

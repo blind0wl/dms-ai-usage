@@ -35,12 +35,14 @@ missing_requirements() {
     printf '%s' "$out"
 }
 
-MISSING_REQUIREMENTS=$(missing_requirements)
-if [ -n "$MISSING_REQUIREMENTS" ]; then
-    # No credential is read and no request is made. The empty Account list keeps
-    # the selector and the settings editor from showing a stale one.
+# The report a Script emits when it cannot read a credential: the state, the
+# commands that blocked it, and an empty Account list so a listing parses. The
+# origins and shadowed keys answer only the listing, which asks for them.
+blocked_report() {
+    local commands="$1"
+    shift
     printf 'CREDS_STATUS=blocked\n'
-    printf 'BLOCKING_REQUIREMENT=%s\n' "$MISSING_REQUIREMENTS"
+    printf 'BLOCKING_REQUIREMENT=%s\n' "$commands"
     printf 'ACCOUNTS=\n'
     for arg in "$@"; do
         if [ "$arg" = "--list-accounts" ]; then
@@ -49,8 +51,24 @@ if [ -n "$MISSING_REQUIREMENTS" ]; then
             break
         fi
     done
+}
+
+MISSING_REQUIREMENTS=$(missing_requirements)
+if [ -n "$MISSING_REQUIREMENTS" ]; then
+    # No credential is read and no request is made.
+    blocked_report "$MISSING_REQUIREMENTS" "$@"
     exit 0
 fi
+
+# The value of one line in a result file, or the given default when the line is
+# absent or empty. The default is applied outside the pipeline that reads the
+# value, because `grep | cut || echo` binds `||` to cut, whose exit status is 0
+# even when grep matched nothing (#59).
+result_value() {
+    local file="$1" key="$2" default="$3" value
+    value=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+    printf '%s' "${value:-$default}"
+}
 
 # opencode Go's usage endpoint is undocumented. The captured response is:
 #
@@ -155,16 +173,24 @@ account_shadowed() {
     printf '%s' "$out"
 }
 
-# read_key <credentials-file> — the `opencode-go` entry's key, or empty.
+# read_key <credentials-file> — the `opencode-go` entry's key, or empty. A jq
+# that fails is reported by the exit status, not swallowed: the caller must be
+# able to tell a failed read from a file that simply lacks the key (ADR 0005).
 read_key() {
     [ -f "$1" ] || return 0
-    jq -r '."opencode-go".key // ""' "$1" 2>/dev/null || true
+    jq -r '."opencode-go".key // ""' "$1" 2>/dev/null
 }
 
-pi_key=$(read_key "$PI_AUTH")
+if ! pi_key=$(read_key "$PI_AUTH"); then
+    blocked_report "jq" "$@"
+    exit 0
+fi
 [ -n "$pi_key" ] && add_account "default" "$pi_key" "~/.pi/agent/auth.json"
 
-opencode_key=$(read_key "$OPENCODE_AUTH")
+if ! opencode_key=$(read_key "$OPENCODE_AUTH"); then
+    blocked_report "jq" "$@"
+    exit 0
+fi
 [ -n "$opencode_key" ] && add_account "default" "$opencode_key" "~/.local/share/opencode/auth.json"
 
 [ -n "${OPENCODE_GO_KEY:-}" ] && add_account "default" "$OPENCODE_GO_KEY" "OPENCODE_GO_KEY"
@@ -234,6 +260,18 @@ fetch_account_usage() {
             "$secondary_util" "$secondary_reset" "$creds_status" > "$out_file"
     }
 
+    # A failure report carries only the lines the fetch actually has: the status,
+    # and the Requirement for a Blocked one. The reading lines are left out rather
+    # than written as zero, so the aggregate's read-back defaults stand in and no
+    # fabricated reading is recorded.
+    write_failure() {
+        if [ "$creds_status" = "blocked" ]; then
+            printf 'CREDS_STATUS=blocked\nBLOCKING_REQUIREMENT=jq\n' > "$out_file"
+        else
+            printf 'CREDS_STATUS=%s\n' "$creds_status" > "$out_file"
+        fi
+    }
+
     # The key goes in Authorization as "Bearer <key>", which the endpoint
     # accepts; without one it answers 401 with an AuthError body.
     local raw http body
@@ -246,10 +284,33 @@ fetch_account_usage() {
 
     # A rejected key is the one failure the user can fix in settings. It is
     # reported as missing credentials, never as a working key sitting at 0%,
-    # because the two are different states.
+    # because the two are different states. An HTTP rejection is authoritative
+    # whatever the body says, so it is read before the body is parsed.
+    if [ "$http" = "401" ] || [ "$http" = "403" ]; then
+        creds_status="missing"
+        write_out
+        return
+    fi
+
+    # The response body separates the two jq failure modes (ADR 0005). A body
+    # that is not valid JSON is the endpoint answering with something unexpected,
+    # which is Unavailable. A jq that fails while reading a valid body is the
+    # tool's own failure, which is Blocked with jq named.
+    if ! printf '%s' "$body" | jq -e . >/dev/null 2>&1; then
+        creds_status="unavailable"
+        write_failure
+        return
+    fi
+
+    local extraction_failed=false
     local body_error
-    body_error=$(echo "$body" | jq -r '.error.type // ""' 2>/dev/null || echo "")
-    if [ "$http" = "401" ] || [ "$http" = "403" ] || [ "$body_error" = "AuthError" ]; then
+    body_error=$(printf '%s' "$body" | jq -r 'if (.error | type) == "object" then (.error.type // "") else "" end' 2>/dev/null) || extraction_failed=true
+    if [ "$extraction_failed" = true ]; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
+    if [ "$body_error" = "AuthError" ]; then
         creds_status="missing"
         write_out
         return
@@ -265,17 +326,29 @@ fetch_account_usage() {
     # `{}` for each passes a bare presence check and would then default to a
     # successful zero reading, which is exactly the fabricated reading this
     # state exists to avoid.
-    if [ "$http" != "200" ] || ! echo "$body" | jq -e '(.usage.rolling.percent != null) and (.usage.weekly.percent != null)' >/dev/null 2>&1; then
+    local windows_present
+    windows_present=$(printf '%s' "$body" | jq -r 'if ((.usage.rolling.percent != null) and (.usage.weekly.percent != null)) then "yes" else "no" end' 2>/dev/null) || extraction_failed=true
+    if [ "$extraction_failed" = true ]; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
+    if [ "$http" != "200" ] || [ "$windows_present" != "yes" ]; then
         creds_status="unavailable"
-        write_out
+        write_failure
         return
     fi
 
     creds_status="ok"
-    primary_util=$(echo "$body" | jq -r '.usage.rolling.percent // 0')
-    primary_reset=$(echo "$body" | jq -r '.usage.rolling.resetsAt // ""')
-    secondary_util=$(echo "$body" | jq -r '.usage.weekly.percent // 0')
-    secondary_reset=$(echo "$body" | jq -r '.usage.weekly.resetsAt // ""')
+    primary_util=$(printf '%s' "$body" | jq -r '.usage.rolling.percent // 0' 2>/dev/null) || extraction_failed=true
+    primary_reset=$(printf '%s' "$body" | jq -r '.usage.rolling.resetsAt // ""' 2>/dev/null) || extraction_failed=true
+    secondary_util=$(printf '%s' "$body" | jq -r '.usage.weekly.percent // 0' 2>/dev/null) || extraction_failed=true
+    secondary_reset=$(printf '%s' "$body" | jq -r '.usage.weekly.resetsAt // ""' 2>/dev/null) || extraction_failed=true
+    if [ "$extraction_failed" = true ]; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
 
     write_out
 }
@@ -314,6 +387,7 @@ ACCOUNT_PRIMARY_RESET=""
 ACCOUNT_SECONDARY_UTIL=""
 ACCOUNT_SECONDARY_RESET=""
 ACCOUNT_CREDS_STATUS=""
+BLOCKING_REQUIREMENT=""
 
 max_util() {
     awk -v a="$1" -v b="$2" 'BEGIN { print (a + 0 > b + 0) ? 1 : 0 }'
@@ -324,18 +398,22 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     aname="${ACCOUNT_NAMES[$idx]}"
     [ -f "$usage_tmpf" ] || continue
 
-    a_plan=$(grep "^PLAN_TYPE=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
-    a_pu=$(grep "^PRIMARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_pr=$(grep "^PRIMARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-    a_su=$(grep "^SECONDARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_sr=$(grep "^SECONDARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-    a_cs=$(grep "^CREDS_STATUS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "missing")
+    a_plan=$(result_value "$usage_tmpf" PLAN_TYPE unknown)
+    a_pu=$(result_value "$usage_tmpf" PRIMARY_UTIL 0)
+    a_pr=$(result_value "$usage_tmpf" PRIMARY_RESET "")
+    a_su=$(result_value "$usage_tmpf" SECONDARY_UTIL 0)
+    a_sr=$(result_value "$usage_tmpf" SECONDARY_RESET "")
+    a_cs=$(result_value "$usage_tmpf" CREDS_STATUS missing)
+    a_br=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
 
     # Plan/status come from the "default" account, falling back to the first
     # account when the user only configured named ones.
     if [ "$aname" = "default" ] || [ "$idx" -eq 0 ]; then
         PLAN_TYPE="$a_plan"
         CREDS_STATUS="$a_cs"
+        # The command list beside the status is the default Account's, because
+        # the status is: the two always describe the same report.
+        BLOCKING_REQUIREMENT="$a_br"
     fi
 
     # Windows: the highest utilisation is the binding constraint, so its reset
@@ -350,11 +428,12 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     fi
 
     # Each Account's own reading, so a rejected key cannot disappear behind a
-    # healthy default. An Unavailable Account is left out of the Window lists
-    # for the same reason the Source-level keys omit them (ADR-0002): there is
-    # no reading, and a zero would be fabricated rather than measured.
+    # healthy default. A Blocked or Unavailable Account has no reading to carry,
+    # so it is left out of the Window lists for the same reason the Source-level
+    # keys omit them (ADR 0002/0005): there is no reading, and a zero would be
+    # fabricated rather than measured.
     ACCOUNT_CREDS_STATUS="${ACCOUNT_CREDS_STATUS:+${ACCOUNT_CREDS_STATUS},}${aname}:${a_cs}"
-    if [ "$a_cs" != "unavailable" ]; then
+    if [ "$a_cs" != "unavailable" ] && [ "$a_cs" != "blocked" ]; then
         ACCOUNT_PRIMARY_UTIL="${ACCOUNT_PRIMARY_UTIL:+${ACCOUNT_PRIMARY_UTIL},}${aname}:${a_pu}"
         ACCOUNT_PRIMARY_RESET="${ACCOUNT_PRIMARY_RESET:+${ACCOUNT_PRIMARY_RESET},}${aname}:${a_pr}"
         ACCOUNT_SECONDARY_UTIL="${ACCOUNT_SECONDARY_UTIL:+${ACCOUNT_SECONDARY_UTIL},}${aname}:${a_su}"
@@ -366,17 +445,23 @@ done
 
 ACCOUNTS=$(IFS=,; echo "${ACCOUNT_NAMES[*]}")
 
-# A failed endpoint reports CREDS_STATUS but no Window values at all, so the
-# widget can keep its last-good reading and label it stale rather than reading
-# the zeros below as a fresh measurement.
 echo "PLAN_TYPE=${PLAN_TYPE}"
-if [ "$CREDS_STATUS" != "unavailable" ]; then
+# A Blocked or Unavailable report carries no Window reading at all, so the keys
+# are left out rather than written as zero: the widget keeps the last-good
+# reading and labels it stale instead of reading the failure as a fresh zero
+# (ADR 0002, ADR 0005).
+if [ "$CREDS_STATUS" != "unavailable" ] && [ "$CREDS_STATUS" != "blocked" ]; then
     echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
     echo "PRIMARY_RESET=${PRIMARY_RESET}"
     echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
     echo "SECONDARY_RESET=${SECONDARY_RESET}"
 fi
 echo "CREDS_STATUS=${CREDS_STATUS}"
+# Emitted only for a Blocked report, so the other outputs are unchanged and the
+# widget's own clearing of the key removes one a previous fetch left.
+if [ "$CREDS_STATUS" = "blocked" ]; then
+    echo "BLOCKING_REQUIREMENT=${BLOCKING_REQUIREMENT}"
+fi
 echo "ACCOUNTS=${ACCOUNTS}"
 echo "ACCOUNT_PRIMARY_UTIL=${ACCOUNT_PRIMARY_UTIL}"
 echo "ACCOUNT_PRIMARY_RESET=${ACCOUNT_PRIMARY_RESET}"

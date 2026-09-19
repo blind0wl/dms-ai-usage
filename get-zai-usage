@@ -35,12 +35,14 @@ missing_requirements() {
     printf '%s' "$out"
 }
 
-MISSING_REQUIREMENTS=$(missing_requirements)
-if [ -n "$MISSING_REQUIREMENTS" ]; then
-    # No credential is read and no request is made. The empty Account list keeps
-    # the selector and the settings editor from showing a stale one.
+# The report a Script emits when it cannot read a credential: the state, the
+# commands that blocked it, and an empty Account list so a listing parses. The
+# origins and shadowed keys answer only the listing, which asks for them.
+blocked_report() {
+    local commands="$1"
+    shift
     printf 'CREDS_STATUS=blocked\n'
-    printf 'BLOCKING_REQUIREMENT=%s\n' "$MISSING_REQUIREMENTS"
+    printf 'BLOCKING_REQUIREMENT=%s\n' "$commands"
     printf 'ACCOUNTS=\n'
     for arg in "$@"; do
         if [ "$arg" = "--list-accounts" ]; then
@@ -49,8 +51,24 @@ if [ -n "$MISSING_REQUIREMENTS" ]; then
             break
         fi
     done
+}
+
+MISSING_REQUIREMENTS=$(missing_requirements)
+if [ -n "$MISSING_REQUIREMENTS" ]; then
+    # No credential is read and no request is made.
+    blocked_report "$MISSING_REQUIREMENTS" "$@"
     exit 0
 fi
+
+# The value of one line in a result file, or the given default when the line is
+# absent or empty. The default is applied outside the pipeline that reads the
+# value, because `grep | cut || echo` binds `||` to cut, whose exit status is 0
+# even when grep matched nothing (#59).
+result_value() {
+    local file="$1" key="$2" default="$3" value
+    value=$(grep "^${key}=" "$file" 2>/dev/null | cut -d= -f2-)
+    printf '%s' "${value:-$default}"
+}
 
 # Calendar week: Monday to Sunday, and month-to-date from the 1st. The API
 # takes date strings, so both windows are expressed as local calendar dates.
@@ -151,8 +169,14 @@ for arg in "$@"; do
 done
 
 PI_MODELS="${HOME}/.pi/agent/models.json"
+pi_key=""
 if [ -f "$PI_MODELS" ]; then
-    pi_key=$(jq -r '.providers.zai.apiKey // ""' "$PI_MODELS" 2>/dev/null || echo "")
+    # A jq that fails reading the config must not read as the file lacking the
+    # key: one is Blocked, the other is simply no Account there (ADR 0005).
+    if ! pi_key=$(jq -r '.providers.zai.apiKey // ""' "$PI_MODELS" 2>/dev/null); then
+        blocked_report "jq" "$@"
+        exit 0
+    fi
     [ -n "$pi_key" ] && add_account "default" "$pi_key" "~/.pi/agent/models.json"
 fi
 [ -n "${ZAI_API_KEY:-}" ] && add_account "default" "$ZAI_API_KEY" "ZAI_API_KEY"
@@ -224,6 +248,18 @@ fetch_account_usage() {
             "$daily" "$week_models" > "$out_file"
     }
 
+    # A failure report carries only the lines the fetch actually has: the status,
+    # and the Requirement for a Blocked one. The Window lines are left out rather
+    # than written as zero, and the Source-level report drops them too, so a
+    # failure is never presented as a fresh Window reading.
+    write_failure() {
+        if [ "$creds_status" = "blocked" ]; then
+            printf 'CREDS_STATUS=blocked\nBLOCKING_REQUIREMENT=jq\n' > "$out_file"
+        else
+            printf 'CREDS_STATUS=%s\n' "$creds_status" > "$out_file"
+        fi
+    }
+
     # api_get <url> -> "<http_code>\n<body>". The key goes in Authorization
     # raw, with no "Bearer " prefix: z.ai rejects the prefixed form.
     api_get() {
@@ -243,29 +279,61 @@ fetch_account_usage() {
     quota_http="${quota_resp%%$'\n'*}"
     quota_body="${quota_resp#*$'\n'}"
 
-    # A rejected key comes back as HTTP 200 carrying {"code":401,
-    # "success":false}, so the body is the authority, not the status line.
-    local body_code body_success
-    body_code=$(echo "$quota_body" | jq -r '.code // 0' 2>/dev/null || echo 0)
-    body_success=$(echo "$quota_body" | jq -r 'if has("success") then (.success|tostring) else "true" end' 2>/dev/null || echo "true")
-
-    if [ "$quota_http" = "401" ] || [ "$quota_http" = "403" ] \
-        || [ "$body_code" = "401" ] || [ "$body_code" = "403" ] || [ "$body_success" = "false" ]; then
+    # An HTTP rejection is authoritative: the key is bad whatever the body says,
+    # so it is read before the body is parsed.
+    if [ "$quota_http" = "401" ] || [ "$quota_http" = "403" ]; then
         creds_status="missing"
         write_out
         return
     fi
 
-    if ! echo "$quota_body" | jq -e '.data.limits' >/dev/null 2>&1; then
-        # Network/timeout/garbage: nothing is known about the key, so report
-        # no usage rather than inventing zeros as a confirmed reading.
+    # The response body separates the two jq failure modes (ADR 0005). A body
+    # that is not valid JSON is the endpoint answering with something unexpected,
+    # which is Unavailable. A jq that fails while reading a valid body is the
+    # tool's own failure, which is Blocked with jq named.
+    if ! printf '%s' "$quota_body" | jq -e . >/dev/null 2>&1; then
+        creds_status="unavailable"
+        write_failure
+        return
+    fi
+
+    # A rejected key can also come back as HTTP 200 carrying {"code":401,
+    # "success":false}, so there the body is the authority.
+    local body_code body_success
+    local extraction_failed=false
+    body_code=$(printf '%s' "$quota_body" | jq -r '.code // 0' 2>/dev/null) || extraction_failed=true
+    body_success=$(printf '%s' "$quota_body" | jq -r 'if has("success") then (.success|tostring) else "true" end' 2>/dev/null) || extraction_failed=true
+    if [ "$extraction_failed" = true ]; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
+
+    if [ "$body_code" = "401" ] || [ "$body_code" = "403" ] || [ "$body_success" = "false" ]; then
         creds_status="missing"
         write_out
+        return
+    fi
+
+    local limits_present
+    limits_present=$(printf '%s' "$quota_body" | jq -r 'if (.data.limits // null) == null then "no" else "yes" end' 2>/dev/null) || extraction_failed=true
+    if [ "$extraction_failed" = true ]; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
+    if [ "$limits_present" != "yes" ]; then
+        # A valid body that is not the quota shape is the endpoint answering with
+        # something the parser cannot read, not a rejected key. Nothing is known
+        # about the key, so report no usage rather than inventing zeros as a
+        # confirmed reading.
+        creds_status="unavailable"
+        write_failure
         return
     fi
 
     creds_status="ok"
-    plan_type=$(echo "$quota_body" | jq -r '.data.level // "unknown"')
+    plan_type=$(printf '%s' "$quota_body" | jq -r '.data.level // "unknown"' 2>/dev/null) || extraction_failed=true
     [ -n "$plan_type" ] || plan_type="unknown"
 
     # unit identifies the window kind (3 = rolling 5h, 6 = weekly); array
@@ -275,10 +343,10 @@ fetch_account_usage() {
     local win
     for win in 3 6; do
         local util reset
-        util=$(echo "$quota_body" | jq -r --argjson u "$win" \
-            '[.data.limits[]? | select(.unit == $u)] | if length == 0 then "" else (.[0].percentage // 0 | tostring) end' 2>/dev/null || echo "")
-        reset=$(echo "$quota_body" | jq -r --argjson u "$win" \
-            '[.data.limits[]? | select(.unit == $u)] | if length == 0 or (.[0].nextResetTime | not) then "" else (.[0].nextResetTime / 1000 | floor | tostring) end' 2>/dev/null || echo "")
+        util=$(printf '%s' "$quota_body" | jq -r --argjson u "$win" \
+            '[.data.limits[]? | select(.unit == $u)] | if length == 0 then "" else (.[0].percentage // 0 | tostring) end' 2>/dev/null) || extraction_failed=true
+        reset=$(printf '%s' "$quota_body" | jq -r --argjson u "$win" \
+            '[.data.limits[]? | select(.unit == $u)] | if length == 0 or (.[0].nextResetTime | not) then "" else (.[0].nextResetTime / 1000 | floor | tostring) end' 2>/dev/null) || extraction_failed=true
         # A window the API omits stays at UTIL=0 with an empty reset and a
         # zero length, which disables the countdown and pacing for it.
         if [ "$win" = 3 ]; then
@@ -287,6 +355,12 @@ fetch_account_usage() {
             [ -n "$util" ] && { secondary_util="$util"; secondary_reset="$reset"; secondary_window=604800; }
         fi
     done
+
+    if [ "$extraction_failed" = true ]; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
 
     local week_body month_body
     week_body=$(api_get "${API_BASE}/model-usage?startTime=${WEEK_START}+00:00:00&endTime=${TODAY}+23:59:59")
@@ -378,6 +452,7 @@ ACCOUNT_PRIMARY_RESET=""
 ACCOUNT_SECONDARY_UTIL=""
 ACCOUNT_SECONDARY_RESET=""
 ACCOUNT_CREDS_STATUS=""
+BLOCKING_REQUIREMENT=""
 
 MODELS_ACC=""
 DAILY_ARR=(0 0 0 0 0 0 0)
@@ -387,25 +462,29 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     aname="${ACCOUNT_NAMES[$idx]}"
     [ -f "$usage_tmpf" ] || continue
 
-    a_plan=$(grep "^PLAN_TYPE=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "unknown")
-    a_pu=$(grep "^PRIMARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_pr=$(grep "^PRIMARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-    a_pw=$(grep "^PRIMARY_WINDOW_SECONDS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_su=$(grep "^SECONDARY_UTIL=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_sr=$(grep "^SECONDARY_RESET=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
-    a_sw=$(grep "^SECONDARY_WINDOW_SECONDS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_cs=$(grep "^CREDS_STATUS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "missing")
-    a_wt=$(grep "^WEEK_TOKENS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_wc=$(grep "^WEEK_CALLS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_mt=$(grep "^MONTH_TOKENS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo 0)
-    a_daily=$(grep "^DAILY=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "0,0,0,0,0,0,0")
-    a_models=$(grep "^WEEK_MODELS=" "$usage_tmpf" 2>/dev/null | cut -d= -f2- || echo "")
+    a_plan=$(result_value "$usage_tmpf" PLAN_TYPE unknown)
+    a_pu=$(result_value "$usage_tmpf" PRIMARY_UTIL 0)
+    a_pr=$(result_value "$usage_tmpf" PRIMARY_RESET "")
+    a_pw=$(result_value "$usage_tmpf" PRIMARY_WINDOW_SECONDS 0)
+    a_su=$(result_value "$usage_tmpf" SECONDARY_UTIL 0)
+    a_sr=$(result_value "$usage_tmpf" SECONDARY_RESET "")
+    a_sw=$(result_value "$usage_tmpf" SECONDARY_WINDOW_SECONDS 0)
+    a_cs=$(result_value "$usage_tmpf" CREDS_STATUS missing)
+    a_br=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
+    a_wt=$(result_value "$usage_tmpf" WEEK_TOKENS 0)
+    a_wc=$(result_value "$usage_tmpf" WEEK_CALLS 0)
+    a_mt=$(result_value "$usage_tmpf" MONTH_TOKENS 0)
+    a_daily=$(result_value "$usage_tmpf" DAILY "0,0,0,0,0,0,0")
+    a_models=$(result_value "$usage_tmpf" WEEK_MODELS "")
 
     # Plan/status come from the "default" account, falling back to the first
     # account when the user only configured named ones.
     if [ "$aname" = "default" ] || [ "$idx" -eq 0 ]; then
         PLAN_TYPE="$a_plan"
         CREDS_STATUS="$a_cs"
+        # The command list beside the status is the default Account's, because
+        # the status is: the two always describe the same report.
+        BLOCKING_REQUIREMENT="$a_br"
     fi
 
     # Windows: the highest utilisation is the binding constraint, so its
@@ -435,14 +514,15 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     MODELS_ACC="${MODELS_ACC:+${MODELS_ACC},}${a_models}"
 
     # Each Account's own reading, so a rejected key cannot disappear behind a
-    # healthy default. Z.ai needs no Unavailable exception here: its endpoint is
-    # documented, so a failed call is a rejected key rather than a state the
-    # Popout must carry last-good values through (ADR-0002).
-    ACCOUNT_PRIMARY_UTIL="${ACCOUNT_PRIMARY_UTIL:+${ACCOUNT_PRIMARY_UTIL},}${aname}:${a_pu}"
-    ACCOUNT_PRIMARY_RESET="${ACCOUNT_PRIMARY_RESET:+${ACCOUNT_PRIMARY_RESET},}${aname}:${a_pr}"
-    ACCOUNT_SECONDARY_UTIL="${ACCOUNT_SECONDARY_UTIL:+${ACCOUNT_SECONDARY_UTIL},}${aname}:${a_su}"
-    ACCOUNT_SECONDARY_RESET="${ACCOUNT_SECONDARY_RESET:+${ACCOUNT_SECONDARY_RESET},}${aname}:${a_sr}"
+    # healthy default. A Blocked or Unavailable Account has no reading to carry,
+    # so it is left out of the Window lists rather than zeroed (ADR 0002/0005).
     ACCOUNT_CREDS_STATUS="${ACCOUNT_CREDS_STATUS:+${ACCOUNT_CREDS_STATUS},}${aname}:${a_cs}"
+    if [ "$a_cs" != "unavailable" ] && [ "$a_cs" != "blocked" ]; then
+        ACCOUNT_PRIMARY_UTIL="${ACCOUNT_PRIMARY_UTIL:+${ACCOUNT_PRIMARY_UTIL},}${aname}:${a_pu}"
+        ACCOUNT_PRIMARY_RESET="${ACCOUNT_PRIMARY_RESET:+${ACCOUNT_PRIMARY_RESET},}${aname}:${a_pr}"
+        ACCOUNT_SECONDARY_UTIL="${ACCOUNT_SECONDARY_UTIL:+${ACCOUNT_SECONDARY_UTIL},}${aname}:${a_su}"
+        ACCOUNT_SECONDARY_RESET="${ACCOUNT_SECONDARY_RESET:+${ACCOUNT_SECONDARY_RESET},}${aname}:${a_sr}"
+    fi
 
     rm -f "$usage_tmpf"
 done
@@ -457,13 +537,23 @@ WEEK_MODELS=$(echo "$MODELS_ACC" | tr ',' '\n' | grep '=' | awk -F= '
 ' || echo "")
 
 echo "PLAN_TYPE=${PLAN_TYPE}"
-echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
-echo "PRIMARY_RESET=${PRIMARY_RESET}"
-echo "PRIMARY_WINDOW_SECONDS=${PRIMARY_WINDOW_SECONDS}"
-echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
-echo "SECONDARY_RESET=${SECONDARY_RESET}"
-echo "SECONDARY_WINDOW_SECONDS=${SECONDARY_WINDOW_SECONDS}"
+# A Blocked or Unavailable report carries no reading, so the Window keys are left
+# out rather than written as zero: the widget keeps the last good reading for the
+# tab and draws no ring, instead of reading a failure as a fresh zero (ADR 0002).
+if [ "$CREDS_STATUS" != "blocked" ] && [ "$CREDS_STATUS" != "unavailable" ]; then
+    echo "PRIMARY_UTIL=${PRIMARY_UTIL}"
+    echo "PRIMARY_RESET=${PRIMARY_RESET}"
+    echo "PRIMARY_WINDOW_SECONDS=${PRIMARY_WINDOW_SECONDS}"
+    echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
+    echo "SECONDARY_RESET=${SECONDARY_RESET}"
+    echo "SECONDARY_WINDOW_SECONDS=${SECONDARY_WINDOW_SECONDS}"
+fi
 echo "CREDS_STATUS=${CREDS_STATUS}"
+# Emitted only for a Blocked report, so the other outputs are unchanged and the
+# widget's own clearing of the key removes one a previous fetch left.
+if [ "$CREDS_STATUS" = "blocked" ]; then
+    echo "BLOCKING_REQUIREMENT=${BLOCKING_REQUIREMENT}"
+fi
 echo "WEEK_TOKENS=${WEEK_TOKENS}"
 echo "WEEK_CALLS=${WEEK_CALLS}"
 echo "MONTH_TOKENS=${MONTH_TOKENS}"
