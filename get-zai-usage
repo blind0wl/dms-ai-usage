@@ -70,6 +70,20 @@ result_value() {
     printf '%s' "${value:-$default}"
 }
 
+# Write a result file all-or-nothing: a reader sees the whole file or none of it,
+# never a half-written one. The temporary sits beside the destination, so the
+# rename that publishes it is atomic.
+write_usage_result() {
+    local out_file="$1"
+    shift
+    local tmp="${out_file}.tmp.$$"
+    if printf '%s\n' "$@" 2>/dev/null > "$tmp"; then
+        mv -f "$tmp" "$out_file" 2>/dev/null || rm -f "$tmp"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # Calendar week: Monday to Sunday, and month-to-date from the 1st. The API
 # takes date strings, so both windows are expressed as local calendar dates.
 DOW=$(date +%u)  # 1=Monday, 7=Sunday
@@ -241,11 +255,20 @@ fetch_account_usage() {
     local daily="0,0,0,0,0,0,0" week_models=""
 
     write_out() {
-        printf 'PLAN_TYPE=%s\nPRIMARY_UTIL=%s\nPRIMARY_RESET=%s\nPRIMARY_WINDOW_SECONDS=%s\nSECONDARY_UTIL=%s\nSECONDARY_RESET=%s\nSECONDARY_WINDOW_SECONDS=%s\nCREDS_STATUS=%s\nWEEK_TOKENS=%s\nWEEK_CALLS=%s\nMONTH_TOKENS=%s\nDAILY=%s\nWEEK_MODELS=%s\n' \
-            "$plan_type" "$primary_util" "$primary_reset" "$primary_window" \
-            "$secondary_util" "$secondary_reset" "$secondary_window" \
-            "$creds_status" "$week_tokens" "$week_calls" "$month_tokens" \
-            "$daily" "$week_models" > "$out_file"
+        write_usage_result "$out_file" \
+            "PLAN_TYPE=$plan_type" \
+            "PRIMARY_UTIL=$primary_util" \
+            "PRIMARY_RESET=$primary_reset" \
+            "PRIMARY_WINDOW_SECONDS=$primary_window" \
+            "SECONDARY_UTIL=$secondary_util" \
+            "SECONDARY_RESET=$secondary_reset" \
+            "SECONDARY_WINDOW_SECONDS=$secondary_window" \
+            "CREDS_STATUS=$creds_status" \
+            "WEEK_TOKENS=$week_tokens" \
+            "WEEK_CALLS=$week_calls" \
+            "MONTH_TOKENS=$month_tokens" \
+            "DAILY=$daily" \
+            "WEEK_MODELS=$week_models"
     }
 
     # A failure report carries only the lines the fetch actually has: the status,
@@ -254,9 +277,9 @@ fetch_account_usage() {
     # failure is never presented as a fresh Window reading.
     write_failure() {
         if [ "$creds_status" = "blocked" ]; then
-            printf 'CREDS_STATUS=blocked\nBLOCKING_REQUIREMENT=jq\n' > "$out_file"
+            write_usage_result "$out_file" "CREDS_STATUS=blocked" "BLOCKING_REQUIREMENT=jq"
         else
-            printf 'CREDS_STATUS=%s\n' "$creds_status" > "$out_file"
+            write_usage_result "$out_file" "CREDS_STATUS=$creds_status"
         fi
     }
 
@@ -290,7 +313,14 @@ fetch_account_usage() {
     # The response body separates the two jq failure modes (ADR 0005). A body
     # that is not valid JSON is the endpoint answering with something unexpected,
     # which is Unavailable. A jq that fails while reading a valid body is the
-    # tool's own failure, which is Blocked with jq named.
+    # tool's own failure, which is Blocked with jq named. A known-good object is
+    # validated first, so a jq too broken to parse anything is not mistaken for a
+    # bad body.
+    if ! printf '{}' | jq -e . >/dev/null 2>&1; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
     if ! printf '%s' "$quota_body" | jq -e . >/dev/null 2>&1; then
         creds_status="unavailable"
         write_failure

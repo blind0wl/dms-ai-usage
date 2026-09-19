@@ -62,6 +62,20 @@ result_value() {
     printf '%s' "${value:-$default}"
 }
 
+# Write a result file all-or-nothing: a reader sees the whole file or none of it,
+# never a half-written one. The temporary sits beside the destination, so the
+# rename that publishes it is atomic.
+write_usage_result() {
+    local out_file="$1"
+    shift
+    local tmp="${out_file}.tmp.$$"
+    if printf '%s\n' "$@" 2>/dev/null > "$tmp"; then
+        mv -f "$tmp" "$out_file" 2>/dev/null || rm -f "$tmp"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # Cheapest possible check, before any temp dirs, network calls, or account
 # scanning: if the `codex` binary genuinely isn't installed, this Source
 # isn't just logged out, it's not present at all. Distinct from CREDS_STATUS
@@ -137,15 +151,19 @@ else
 fi
 
 # --- Decode a JWT's `exp` claim without touching the signature ---
+# A payload that carries no exp claim is a value of 0, not a failure, but a jq
+# that fails on the payload is a failure: it returns non-zero so the caller can
+# report Blocked (ADR 0005).
 jwt_exp() {
-    local token="$1" payload mod
+    local token="$1" payload mod exp
     payload=$(echo "$token" | cut -d. -f2)
     mod=$(( ${#payload} % 4 ))
     if [ "$mod" -eq 2 ]; then payload="${payload}=="
     elif [ "$mod" -eq 3 ]; then payload="${payload}="
     fi
     payload=$(echo "$payload" | tr -- '-_' '+/')
-    echo "$payload" | base64 -d 2>/dev/null | jq -r '.exp // 0' 2>/dev/null || echo 0
+    exp=$(echo "$payload" | base64 -d 2>/dev/null | jq -r '.exp // 0' 2>/dev/null) || return 1
+    printf '%s' "${exp:-0}"
 }
 
 # --- Per-account token/model stats from local rollout session files ---
@@ -304,10 +322,17 @@ fetch_account_usage() {
     local blocking=""
 
     write_out() {
-        printf 'PLAN_TYPE=%s\nPRIMARY_UTIL=%s\nPRIMARY_RESET=%s\nPRIMARY_WINDOW_SECONDS=%s\nSECONDARY_UTIL=%s\nSECONDARY_RESET=%s\nSECONDARY_WINDOW_SECONDS=%s\nCREDITS_BALANCE=%s\nCREDITS_HAS=%s\nCREDS_STATUS=%s\n' \
-            "$plan_type" "$primary_util" "$primary_reset" "$primary_window" \
-            "$secondary_util" "$secondary_reset" "$secondary_window" \
-            "$credits_balance" "$credits_has" "$creds_status" > "$out_file"
+        write_usage_result "$out_file" \
+            "PLAN_TYPE=$plan_type" \
+            "PRIMARY_UTIL=$primary_util" \
+            "PRIMARY_RESET=$primary_reset" \
+            "PRIMARY_WINDOW_SECONDS=$primary_window" \
+            "SECONDARY_UTIL=$secondary_util" \
+            "SECONDARY_RESET=$secondary_reset" \
+            "SECONDARY_WINDOW_SECONDS=$secondary_window" \
+            "CREDITS_BALANCE=$credits_balance" \
+            "CREDITS_HAS=$credits_has" \
+            "CREDS_STATUS=$creds_status"
     }
 
     # A failure report carries only the lines the fetch actually has: the status,
@@ -315,9 +340,10 @@ fetch_account_usage() {
     # than written as zero, so the aggregate's read-back defaults stand in and no
     # fabricated reading is recorded.
     write_failure() {
-        printf 'CREDS_STATUS=%s\n' "$creds_status" > "$out_file"
         if [ "$creds_status" = "blocked" ]; then
-            printf 'BLOCKING_REQUIREMENT=%s\n' "$blocking" >> "$out_file"
+            write_usage_result "$out_file" "CREDS_STATUS=blocked" "BLOCKING_REQUIREMENT=$blocking"
+        else
+            write_usage_result "$out_file" "CREDS_STATUS=$creds_status"
         fi
     }
 
@@ -360,7 +386,12 @@ fetch_account_usage() {
         [ "$age_days" -ge "$STALE_REFRESH_DAYS" ] && stale=true
     fi
     local exp
-    exp=$(jwt_exp "$token")
+    if ! exp=$(jwt_exp "$token"); then
+        creds_status="blocked"
+        blocking="jq"
+        write_failure
+        return
+    fi
     if [[ "$exp" =~ ^[0-9]+$ ]] && [ "$exp" -gt 0 ] && [ $(( exp - now_ts )) -le "$STALE_EXP_SECONDS" ]; then
         stale=true
     fi
@@ -388,10 +419,15 @@ fetch_account_usage() {
     # which is Unavailable. A jq that fails while reading a valid body is the
     # tool's own failure, which is Blocked with jq named.
     #
-    # Each extraction reports its own failure rather than swallowing it into a
-    # default: the exit status is what routes the failure, and a reading that was
-    # never obtained cannot be mistaken for one.
-    if ! printf '%s' "$api_resp" | jq -e . >/dev/null 2>&1; then
+    # A known-good object is validated first, so a jq too broken to parse
+    # anything is not mistaken for a bad body. Each extraction then reports its
+    # own failure rather than swallowing it into a default: the exit status is
+    # what routes the failure, and a reading that was never obtained cannot be
+    # mistaken for one.
+    if ! printf '{}' | jq -e . >/dev/null 2>&1; then
+        creds_status="blocked"
+        blocking="jq"
+    elif ! printf '%s' "$api_resp" | jq -e . >/dev/null 2>&1; then
         creds_status="unavailable"
     else
         local extraction_failed=false

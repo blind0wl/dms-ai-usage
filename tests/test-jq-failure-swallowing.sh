@@ -110,6 +110,21 @@ EOF
     fi
 }
 
+# A PATH whose jq cannot validate even a known-good object: it fails every
+# `jq -e .` call, which is the probe that separates a bad body from a broken
+# tool.
+make_probe_bin() {
+    local dir="$1"
+    make_bin "$dir"
+    rm -f "$dir/jq"
+    cat > "$dir/jq" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = "-e" ] && [ "\$2" = "." ]; then exit 3; fi
+exec "$REAL_JQ" "\$@"
+EOF
+    chmod +x "$dir/jq"
+}
+
 # --- Per-Script credential fixtures, one per outcome the Script must tell apart ---
 # mode: valid (a complete credential), read-fail (a complete credential under a
 # jq that fails on it), no-key (a valid file that genuinely lacks the key).
@@ -240,6 +255,21 @@ for spec in "${SPECS[@]}"; do
     assert_renderable "$OUT_RESP" "$script response extraction"
 
     # ============================================================
+    echo "=== $script: jq fails the validity probe ==="
+    # ============================================================
+    # A jq that cannot parse even a known-good object is the tool failing, not
+    # the endpoint answering with an unexpected body, so it must be Blocked.
+    BIN_PROBE="$TMPDIR_ROOT/bin-probe-$script"
+    make_probe_bin "$BIN_PROBE"
+    HOME_PROBE=$(new_home "$script-probe")
+    setup_home "$script" "$HOME_PROBE" valid
+    OUT_PROBE=$(run_script "$script" "$BIN_PROBE" "$HOME_PROBE")
+
+    assert_eq "$(val "$OUT_PROBE" CREDS_STATUS)" "blocked" "a jq that cannot parse a known-good object is Blocked, not Unavailable"
+    assert_eq "$(val "$OUT_PROBE" BLOCKING_REQUIREMENT)" "jq" "the probe failure names jq"
+    assert_renderable "$OUT_PROBE" "$script probe failure"
+
+    # ============================================================
     echo "=== $script: the body is not valid JSON ==="
     # ============================================================
     HOME_UNJ=$(new_home "$script-nonjson")
@@ -266,6 +296,17 @@ for spec in "${SPECS[@]}"; do
     assert_no_key "$OUT_NOKEY" "BLOCKING_REQUIREMENT" "a genuine absence names no command"
     assert_renderable "$OUT_NOKEY" "$script absent key"
 done
+
+# The token's own jq read is guarded too: a payload that cannot be parsed is the
+# tool failing, not a token with no expiry.
+echo "=== get-chatgpt-usage: jq fails reading the token's exp claim ==="
+BIN_JWT="$TMPDIR_ROOT/bin-jwt"
+make_bin "$BIN_JWT" ".exp"
+HOME_JWT=$(new_home "chatgpt-jwt")
+setup_home "get-chatgpt-usage" "$HOME_JWT" valid
+OUT_JWT=$(run_script "get-chatgpt-usage" "$BIN_JWT" "$HOME_JWT")
+assert_eq "$(val "$OUT_JWT" CREDS_STATUS)" "blocked" "a failed exp read is Blocked, not a token with no expiry"
+assert_eq "$(val "$OUT_JWT" BLOCKING_REQUIREMENT)" "jq" "the exp read failure names jq"
 
 # The z.ai endpoint is documented, so a valid body that is not the quota shape is
 # an unexpected body rather than a rejected key: Unavailable, never Missing.
@@ -296,6 +337,31 @@ for script in get-zai-usage get-opencode-go-usage; do
 
     assert_eq "$(val "$OUT_401" CREDS_STATUS)" "missing" "an HTTP rejection stays Missing whatever the body says"
     assert_no_key "$OUT_401" "BLOCKING_REQUIREMENT" "an HTTP rejection blames no command"
+done
+
+# ============================================================
+echo "=== the result write is all-or-nothing ==="
+# ============================================================
+# Each Script publishes a result file with a temp-then-rename, so a reader never
+# sees a half-written file. The helper is extracted and run directly, not only
+# exercised through a fetch that happened to complete.
+for script in get-chatgpt-usage get-zai-usage get-opencode-go-usage; do
+    eval "$(sed -n '/^write_usage_result() {/,/^}/p' "$SCRIPT_DIR/$script")"
+    DEST="$TMPDIR_ROOT/result-$script"
+    write_usage_result "$DEST" "CREDS_STATUS=blocked" "BLOCKING_REQUIREMENT=jq"
+    assert_eq "$(cat "$DEST")" "$(printf 'CREDS_STATUS=blocked\nBLOCKING_REQUIREMENT=jq')" \
+        "$script: the finished file carries every line it was given"
+    if [ -e "$DEST.tmp.$$" ]; then
+        fail "$script: the temporary file is removed after a successful write"
+    else
+        pass "$script: the temporary file is removed after a successful write"
+    fi
+    write_usage_result "$TMPDIR_ROOT/missing-dir-$script/result" "CREDS_STATUS=blocked"
+    if [ -e "$TMPDIR_ROOT/missing-dir-$script" ]; then
+        fail "$script: a failed write leaves no destination behind"
+    else
+        pass "$script: a failed write leaves no destination behind"
+    fi
 done
 
 echo ""

@@ -70,6 +70,20 @@ result_value() {
     printf '%s' "${value:-$default}"
 }
 
+# Write a result file all-or-nothing: a reader sees the whole file or none of it,
+# never a half-written one. The temporary sits beside the destination, so the
+# rename that publishes it is atomic.
+write_usage_result() {
+    local out_file="$1"
+    shift
+    local tmp="${out_file}.tmp.$$"
+    if printf '%s\n' "$@" 2>/dev/null > "$tmp"; then
+        mv -f "$tmp" "$out_file" 2>/dev/null || rm -f "$tmp"
+    else
+        rm -f "$tmp"
+    fi
+}
+
 # opencode Go's usage endpoint is undocumented. The captured response is:
 #
 #   {"usage":{
@@ -255,9 +269,13 @@ fetch_account_usage() {
     local creds_status="missing"
 
     write_out() {
-        printf 'PLAN_TYPE=%s\nPRIMARY_UTIL=%s\nPRIMARY_RESET=%s\nSECONDARY_UTIL=%s\nSECONDARY_RESET=%s\nCREDS_STATUS=%s\n' \
-            "$plan_type" "$primary_util" "$primary_reset" \
-            "$secondary_util" "$secondary_reset" "$creds_status" > "$out_file"
+        write_usage_result "$out_file" \
+            "PLAN_TYPE=$plan_type" \
+            "PRIMARY_UTIL=$primary_util" \
+            "PRIMARY_RESET=$primary_reset" \
+            "SECONDARY_UTIL=$secondary_util" \
+            "SECONDARY_RESET=$secondary_reset" \
+            "CREDS_STATUS=$creds_status"
     }
 
     # A failure report carries only the lines the fetch actually has: the status,
@@ -266,9 +284,9 @@ fetch_account_usage() {
     # fabricated reading is recorded.
     write_failure() {
         if [ "$creds_status" = "blocked" ]; then
-            printf 'CREDS_STATUS=blocked\nBLOCKING_REQUIREMENT=jq\n' > "$out_file"
+            write_usage_result "$out_file" "CREDS_STATUS=blocked" "BLOCKING_REQUIREMENT=jq"
         else
-            printf 'CREDS_STATUS=%s\n' "$creds_status" > "$out_file"
+            write_usage_result "$out_file" "CREDS_STATUS=$creds_status"
         fi
     }
 
@@ -295,7 +313,14 @@ fetch_account_usage() {
     # The response body separates the two jq failure modes (ADR 0005). A body
     # that is not valid JSON is the endpoint answering with something unexpected,
     # which is Unavailable. A jq that fails while reading a valid body is the
-    # tool's own failure, which is Blocked with jq named.
+    # tool's own failure, which is Blocked with jq named. A known-good object is
+    # validated first, so a jq too broken to parse anything is not mistaken for a
+    # bad body.
+    if ! printf '{}' | jq -e . >/dev/null 2>&1; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
     if ! printf '%s' "$body" | jq -e . >/dev/null 2>&1; then
         creds_status="unavailable"
         write_failure
