@@ -122,8 +122,18 @@ _Avoid_: catalogue, manifest, sources file
 
 **Not installed**:
 A Source that is not in use on this machine at all, because its CLI is absent or
-no credential exists anywhere. Not installed Sources stay hidden.
+no credential exists anywhere. Being Not installed is provisional: a Not
+installed Source is still asked, and a later report that contradicts it brings
+the Source back with no restart and no settings write.
 _Avoid_: unavailable, disabled, missing
+
+**Hidden**:
+A Source kept out of the Pill, the Popout and the Overview. A Source is hidden
+only after repeated Not installed reports, never on the strength of one, because
+a single report cannot tell a genuine absence from a transient one. The state is
+in memory, so a restart shows every enabled Source until each one reports again.
+Hidden is not disabled: a hidden Source's Script still runs.
+_Avoid_: disabled, off, removed
 
 **Missing**:
 Credentials a Source needs are absent or expired, but the Source is installed. A

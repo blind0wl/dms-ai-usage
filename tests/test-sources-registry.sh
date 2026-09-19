@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, addOutcome, listing, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, addOutcome, listing, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, HIDDEN_AFTER, nextNotInstalledCount, isHidden, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -739,13 +739,19 @@ check(reg.overviewRows([
 ])[1].missing === true,
       "an expired Source is Missing for ranking purposes");
 
-// Not installed produces no row, matching the auto-hide rule.
+// A hidden Source produces no row. The registry reads the shared hidden value
+// rather than re-deriving the rule from the status, so one Not installed report
+// that has not yet crossed the threshold still leaves the Source in the ranking.
 check(rowIds(reg.overviewRows([
     wins("claude", 10, 5),
-    overview("chatgpt", { credsStatus: "not_installed" }),
+    overview("chatgpt", { hidden: true }),
     wins("zai", 20, 5)
 ])) === "zai,claude",
-      "a Not installed Source produces no Overview row");
+      "a hidden Source produces no Overview row");
+check(reg.overviewRow(overview("chatgpt", { credsStatus: "not_installed" })) !== null,
+      "the registry hides on the hidden value, not on a single Not installed status");
+check(reg.overviewRow(overview("chatgpt", { credsStatus: "not_installed", hidden: true })) === null,
+      "a state marked hidden produces no Overview row");
 
 // The floor: a comparison of one is noise.
 check(reg.overviewRows([]).length === 0, "overviewRows returns nothing for no Sources");
@@ -753,10 +759,46 @@ check(reg.overviewRows([wins("claude", 10, 5)]).length === 0,
       "fewer than two visible Sources yields no Overview");
 check(reg.overviewRows([
     wins("claude", 10, 5),
-    overview("chatgpt", { credsStatus: "not_installed" })
+    overview("chatgpt", { hidden: true })
 ]).length === 0,
-      "one visible Source beside a Not installed one still yields no Overview");
+      "one visible Source beside a hidden one still yields no Overview");
 check(reg.overviewRows(null).length === 0, "overviewRows returns nothing for a non-array input");
+
+// --- Hidden after repeated Not installed reports ---
+// Visibility is a display concern, so its rule is a pure function over the
+// consecutive-report count and the last report. One report is not enough to
+// hide a Source: a transient absence looks exactly like a first report, and
+// hiding on it strands the Source with no way back (ADR 0004).
+check(reg.HIDDEN_AFTER === 2, "two consecutive Not installed reports is the fixed threshold");
+check(reg.nextNotInstalledCount(0, reg.NOT_INSTALLED) === 1,
+      "the first Not installed report counts one");
+check(reg.nextNotInstalledCount(1, reg.NOT_INSTALLED) === 2,
+      "a second consecutive Not installed report counts two");
+check(reg.nextNotInstalledCount(undefined, reg.NOT_INSTALLED) === 1,
+      "a Source with no count yet starts at one");
+for (const status of ["ok", "missing", "expired", "unavailable", "unknown", ""])
+    check(reg.nextNotInstalledCount(5, status) === 0,
+          `a "${status}" report resets the consecutive count`);
+
+check(reg.isHidden(0) === false && reg.isHidden(1) === false,
+      "a Source below the threshold is not hidden");
+check(reg.isHidden(2) === true && reg.isHidden(3) === true,
+      "a Source at or above the threshold is hidden");
+check(reg.isHidden(undefined) === false, "a Source with no count is not hidden");
+
+// The whole threshold rule from the two inputs that drive it: the previous
+// count and the last report.
+check(reg.isHidden(reg.nextNotInstalledCount(0, reg.NOT_INSTALLED)) === false &&
+      reg.isHidden(reg.nextNotInstalledCount(1, reg.NOT_INSTALLED)) === true,
+      "one report short of the threshold is not hidden, and the next one is");
+
+// The alternating sequence the criterion names: any good report between two
+// Not installed ones resets the count, so an alternating feed never hides.
+let consecutive = 0;
+for (const status of [reg.NOT_INSTALLED, "ok", reg.NOT_INSTALLED, "missing", reg.NOT_INSTALLED])
+    consecutive = reg.nextNotInstalledCount(consecutive, status);
+check(consecutive === 1 && reg.isHidden(consecutive) === false,
+      "an alternating sequence never reaches the threshold");
 
 console.log(results.join("\n"));
 NODE

@@ -88,16 +88,18 @@ PluginComponent {
         return out;
     }
 
-    // A Source is shown when it is enabled AND its script has not reported that
-    // it is not installed. Credentials arriving as "unknown" before the first
-    // fetch counts as shown, so the pill does not flicker.
+    // A Source is shown when it is enabled and not hidden. Hidden is the shared
+    // decision (Sources.isHidden): a Source falls out of the Pill, the Popout and
+    // the Overview only after two consecutive Not installed reports, and any
+    // other report brings it back. Before the first fetch there is no count, so
+    // the Source shows and the pill does not flicker.
     readonly property var visibleDescriptors: {
         void (sourceData);
         var out = [];
         for (var i = 0; i < enabledDescriptors.length; i++) {
             var d = enabledDescriptors[i];
             var st = sourceData[d.id];
-            if (!st || st.credsStatus !== "not_installed")
+            if (!st || st.hidden !== true)
                 out.push(d);
         }
         return out;
@@ -193,6 +195,11 @@ PluginComponent {
     function emptyState() {
         return {
             credsStatus: "unknown",
+            // Consecutive Not installed reports, and the hidden decision they
+            // drive. In-memory only: a restart clears them, so every enabled
+            // Source shows until its first fetch lands (ADR 0004).
+            notInstalledCount: 0,
+            hidden: false,
             // True once a fetch has reported a good reading. An endpoint failure
             // with nothing to fall back on shows no Window cards at all rather
             // than a fabricated zero.
@@ -406,9 +413,13 @@ PluginComponent {
         }
     }
 
-    function fetchVisible() {
-        for (var i = 0; i < root.visibleIds.length; i++)
-            root.requestFetch(root.visibleIds[i]);
+    // Every enabled Source is fetched on every scheduled cycle, whether or not
+    // it is currently shown: visibility is a display filter over data that keeps
+    // arriving, so a hidden Source whose credentials come back reappears within
+    // one cycle with no restart and no settings write (ADR 0004).
+    function fetchEnabled() {
+        for (var i = 0; i < root.sourceOrder.length; i++)
+            root.requestFetch(root.sourceOrder[i]);
     }
 
     // Refetch a Source whose Account list changed, so a newly added Account
@@ -516,11 +527,11 @@ PluginComponent {
             root.countdownNow = now;
 
             if (elapsed > 120000) {
-                root.fetchVisible();
+                root.fetchEnabled();
                 return;
             }
-            for (var i = 0; i < root.visibleIds.length; i++) {
-                var id = root.visibleIds[i];
+            for (var i = 0; i < root.sourceOrder.length; i++) {
+                var id = root.sourceOrder[i];
                 var st = root.sourceData[id];
                 if (!st)
                     continue;
@@ -536,7 +547,7 @@ PluginComponent {
         running: true
         repeat: true
         triggeredOnStart: true
-        onTriggered: root.fetchVisible()
+        onTriggered: root.fetchEnabled()
     }
 
     // --- CLI logins ---
@@ -1190,12 +1201,16 @@ PluginComponent {
 
     // --- Script output parsing ---
 
-    // Applies a CREDS_STATUS value to one Source's state. A good reading is the
+    // Applies a CREDS_STATUS value to one Source's state. This is the one place
+    // a Source-level report lands, so it is where the consecutive Not installed
+    // count and the hidden decision it drives are updated. A good reading is the
     // only thing that counts as data; an endpoint failure reports no Window
     // values, so the last good reading survives in state and the status card
     // above it marks those values as stale rather than current.
     function applyCredsStatus(st, val) {
         st.credsStatus = val;
+        st.notInstalledCount = Sources.nextNotInstalledCount(st.notInstalledCount, val);
+        st.hidden = Sources.isHidden(st.notInstalledCount);
         if (val === "ok")
             st.hasData = true;
     }

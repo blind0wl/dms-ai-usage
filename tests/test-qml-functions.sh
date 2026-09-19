@@ -761,6 +761,7 @@ echo "=== Test 10: endpoint failures keep the last good reading ==="
 CREDS_REPORT=/tmp/creds-status-report.txt
 node - "$SCRIPT_DIR/AiUsageWidget.qml" > "$CREDS_REPORT" 2>&1 <<'NODE'
 const fs = require("fs");
+const path = require("path");
 const vm = require("vm");
 const source = fs.readFileSync(process.argv[2], "utf8");
 const match = source.match(/function applyCredsStatus\(st, val\) \{[\s\S]*?\n    \}/);
@@ -768,8 +769,15 @@ if (!match) {
     console.log("FAIL\tapplyCredsStatus could not be extracted from the widget");
     process.exit(0);
 }
-const sandbox = {};
+const sandbox = { console };
 vm.createContext(sandbox);
+// applyCredsStatus now reads the shared hidden rule from the registry, so the
+// real module is loaded rather than stubbed: the count and the decision it
+// drives are exercised through the widget's own function.
+vm.runInContext(
+    fs.readFileSync(path.join(path.dirname(process.argv[2]), "sources.js"), "utf8").replace(/^\.pragma library\s*/, "") +
+        "; this.Sources = { nextNotInstalledCount, isHidden };",
+    sandbox, { filename: "sources.js" });
 vm.runInContext(match[0] + "; this.apply = applyCredsStatus;", sandbox, { filename: "applyCredsStatus" });
 const apply = sandbox.apply;
 const results = [];
@@ -800,6 +808,20 @@ check(firstFailure.hasData === false, "a first endpoint failure reports no data 
 const rejected = { credsStatus: "unknown", hasData: false };
 apply(rejected, "missing");
 check(rejected.hasData === false && rejected.credsStatus === "missing", "a rejected key is not data and is not unavailable");
+
+// A Not installed report counts toward hiding, and only a second consecutive
+// one hides the Source. Any other report resets the count, so a Source that
+// comes back reappears without a restart.
+const absent = { credsStatus: "unknown", hasData: false };
+apply(absent, "not_installed");
+check(absent.notInstalledCount === 1 && absent.hidden === false,
+      "one Not installed report counts but does not hide the Source");
+apply(absent, "not_installed");
+check(absent.notInstalledCount === 2 && absent.hidden === true,
+      "a second consecutive Not installed report hides the Source");
+apply(absent, "ok");
+check(absent.notInstalledCount === 0 && absent.hidden === false,
+      "a good report resets the count and brings the Source back");
 
 console.log(results.join("\n"));
 NODE
@@ -1112,6 +1134,57 @@ done < "$OVERVIEW_REPORT"
 
 if ! grep -q "^PASS\|^FAIL" "$OVERVIEW_REPORT"; then
     fail "overview-setting report produced no results (node failed?) see $OVERVIEW_REPORT"
+fi
+
+# ============================================================
+echo "=== Test 14: the fetch set is every enabled Source ==="
+# ============================================================
+
+# ADR 0004: visibility is a display filter, so a hidden Source is still fetched
+# and a Source whose credentials come back recovers without a restart. These
+# checks pin the separation: every fetch entry point reads the enabled list, and
+# only the display layer reads the shared hidden value.
+FETCH_REPORT=/tmp/fetch-set-report.txt
+node - "$SCRIPT_DIR" > "$FETCH_REPORT" 2>&1 <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[2];
+const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
+const results = [];
+const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
+
+const fetchEnabled = widget.match(/function fetchEnabled\(\) \{[\s\S]*?\n    \}/);
+check(!!fetchEnabled, "the widget has one fetch-everything entry point");
+check(!!fetchEnabled && /root\.sourceOrder/.test(fetchEnabled[0]),
+      "fetchEnabled iterates every enabled Source, not the visible ones");
+check((widget.match(/function fetchVisible\s*\(/g) || []).length === 0,
+      "no display-derived fetch function is left behind");
+
+// The refresh timer and the countdown tick's wake-from-sleep branch both call it.
+check(/if \(elapsed > 120000\) \{\s*root\.fetchEnabled\(\)/.test(widget),
+      "waking from sleep refetches every enabled Source");
+check(/onTriggered: root\.fetchEnabled\(\)/.test(widget),
+      "the refresh timer fetches every enabled Source");
+const countdown = widget.match(/interval: 60000[\s\S]*?\n    \}/);
+check(!!countdown && /root\.sourceOrder/.test(countdown[0]),
+      "the countdown tick's reset-expiry refetch iterates every enabled Source");
+
+// The display layer filters on the shared hidden value rather than a raw status.
+const visible = widget.match(/readonly property var visibleDescriptors: \{[\s\S]*?\n    \}/);
+check(!!visible && /st\.hidden !== true/.test(visible[0]) &&
+      !/credsStatus\s*!==\s*"not_installed"/.test(visible[0]),
+      "the Pill and Popout filter on the shared hidden value");
+
+console.log(results.join("\n"));
+NODE
+
+while IFS=$'\t' read -r status label; do
+    [ -z "${status:-}" ] && continue
+    if [ "$status" = "PASS" ]; then pass "$label"; else fail "$label"; fi
+done < "$FETCH_REPORT"
+
+if ! grep -q "^PASS\|^FAIL" "$FETCH_REPORT"; then
+    fail "fetch-set report produced no results (node failed?) see $FETCH_REPORT"
 fi
 
 echo ""
