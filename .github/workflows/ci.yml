@@ -12,13 +12,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: ShellCheck
         uses: ludeeus/action-shellcheck@2.0.0
+        # The Scripts source lib/source-script.sh, and the action checks one file
+        # at a time, so without -x every one of them reports the library as
+        # unfollowed rather than checking it. shellcheck reads this itself; the
+        # action has no input that passes options through.
+        env:
+          SHELLCHECK_OPTS: -x
         with:
           scandir: .
           additional_files: get-claude-usage
-          # The Scripts source lib/source-script.sh, and the action checks one
-          # file at a time, so without -x every one of them reports the library
-          # as unfollowed rather than checking it.
-          additional_args: -x
 
   tests:
     runs-on: ubuntu-latest

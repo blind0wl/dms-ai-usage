@@ -82,6 +82,12 @@ How much of a Window has been consumed, as a percentage of the Window's
 allowance.
 _Avoid_: usage, consumption, burn
 
+**Cost**:
+What a Source's tokens would have cost at the providers' published API rates,
+not what the subscription was paid. The figure is an estimate wherever it
+appears, and a Source may report none.
+_Avoid_: spend, bill, price paid, charges
+
 **Brand Colour**:
 The fixed colour that identifies a Source, independent of the shell theme:
 Claude's clay, ChatGPT's green, Z.ai's blue, opencode Go's violet. It is the
