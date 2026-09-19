@@ -36,7 +36,7 @@ const load = (file, suffix) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, addOutcome, listing, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, HIDDEN_AFTER, nextNotInstalledCount, isHidden, LIST_ACCOUNTS_FLAG };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, ids, reconcileList, resolveList, ACCOUNT_FIELDS, tightestWindow, overviewRow, overviewRows, accountArgs, detectedAccounts, unregisteredRows, refusedRegistration, scriptPath, scriptCommand, wirePair, splitList, nameValueMap, displacedOrigin, shadowingAccount, addOutcome, listing, CUSTOM_ORIGIN, STATUS_KEY, NOT_INSTALLED, HIDDEN_AFTER, nextNotInstalledCount, isHidden, hasReading, LIST_ACCOUNTS_FLAG };").api;
 const tr = load("translations.js", "; this.strings = strings;").strings;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -738,6 +738,23 @@ check(reg.overviewRows([
     wins("claude", 10, 5)
 ])[1].missing === true,
       "an expired Source is Missing for ranking purposes");
+
+// --- The shared reading rule ---
+// Whether a Source has a reading to draw is one rule, so the Overview and the
+// Window card cannot disagree about whether a Source has anything to render. A
+// reading is present once a fetch has reported data, and it survives a later
+// degraded report as a last-good value the surfaces draw stale rather than as a
+// fresh zero. Every state that means "nothing was read" reports none.
+check(reg.hasReading(overview("claude")) === true, "a good reading is a reading");
+check(reg.hasReading(overview("claude", { hasData: false, credsStatus: "unknown" })) === false,
+      "a Source whose first fetch has not reported data has no reading");
+for (const status of ["not_installed", "missing", "expired", "unavailable"]) {
+    check(reg.hasReading(overview("claude", { hasData: false, credsStatus: status })) === false,
+          `a ${status} Source with no fallback has no reading`);
+    check(reg.hasReading(overview("claude", { hasData: true, credsStatus: status })) === true,
+          `a ${status} Source keeps its last-good reading`);
+}
+check(reg.hasReading(null) === false, "no state at all has no reading");
 
 // A hidden Source produces no row. The registry reads the shared hidden value
 // rather than re-deriving the rule from the status, so one Not installed report

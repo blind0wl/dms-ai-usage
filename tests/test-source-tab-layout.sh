@@ -56,11 +56,24 @@ const windows = ui("WindowsSection");
 check(/model:\s*\["primary",\s*"secondary"\]/.test(windows),
       "one card holds both Windows");
 check(!/\bRing\s*\{/.test(windows), "the Windows card draws bars, not rings");
+check(/import\s+"\.\.\/sources\.js"\s+as\s+Sources/.test(windows),
+      "the Windows card reads the shared reading rule from the registry");
+check(/noFallback:.*Sources\.hasReading\(source\)/.test(windows),
+      "the Windows card drops the card when the Source has no reading");
+check(!/credsStatus\s*===\s*"unavailable"/.test(windows),
+      "the Windows card does not re-derive the reading rule from a status itself");
 check(/api\.utilisationColor\(/.test(windows), "the Windows bars and percentages wear the Brand Colour");
 check(/timeFrac/.test(windows), "each Window bar carries a pace tick at the linear-burn position");
 check(/section\.counts === true/.test(windows) && /modelData !== "secondary"/.test(windows),
       "the week's counts ride on the secondary row only");
 check(/root\.api\.tr\("Resets in"\)/.test(windows), "each Window row names its reset countdown");
+
+// --- The status card reads the same rule for its last-known copy ---
+const status = ui("StatusSection");
+check(/import\s+"\.\.\/sources\.js"\s+as\s+Sources/.test(status),
+      "the status card reads the shared reading rule rather than deriving its own");
+check(/hasData:.*Sources\.hasReading\(source\)/.test(status),
+      "the status card's last-known copy is keyed on the shared rule");
 
 // --- The Token Consumption card: figures plus the all-time line ---
 const stats = ui("StatsSection");

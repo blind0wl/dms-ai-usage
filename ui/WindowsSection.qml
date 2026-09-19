@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Common
 import qs.Widgets
+import "../sources.js" as Sources
 
 // One rate Window card holding both of a Source's Windows as bar rows in the
 // Overview's style: the Window's label, its Utilisation as a percentage, a bar
@@ -23,12 +24,16 @@ StyledRect {
     readonly property bool showPacing: ctx ? ctx.showPacing : true
     readonly property bool showCounts: section ? section.counts === true : false
 
-    // An endpoint failure with no last good reading has nothing to fall back
-    // on, so the card is dropped rather than drawing a fabricated zero. With a
-    // reading to fall back on the card stays, flagged stale by the status card
-    // that sits above it. Before the first reading there is no Source state to
-    // draw from, so the card waits rather than showing an empty shell.
-    readonly property bool noFallback: source && source.credsStatus === "unavailable" && source.hasData !== true
+    // A Source with no reading has nothing to draw, so the card is dropped
+    // rather than drawing a fabricated zero. The rule is the registry's
+    // (Sources.hasReading), so this card and the Overview cannot disagree about
+    // what a reading is: a not_installed Source in its threshold window drops
+    // the card just as an unavailable endpoint does when neither keeps a last
+    // good reading. With a reading to fall back on the card stays, flagged
+    // stale by the status card that sits above it. Before the first fetch there
+    // is no Source state to draw from, so the card waits rather than showing an
+    // empty shell.
+    readonly property bool noFallback: source !== null && !Sources.hasReading(source)
     // The Section's own intent to show. The renderer reads this rather than
     // `visible`, which QML reports as false while an ancestor is hidden.
     readonly property bool shown: source !== null && !noFallback
