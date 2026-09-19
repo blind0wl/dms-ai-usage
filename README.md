@@ -112,7 +112,21 @@ git clone https://github.com/blind0wl/dms-ai-usage \
   ~/.config/DankMaterialShell/plugins/aiUsage
 ```
 
-Then restart DMS.
+Then restart the shell:
+
+```bash
+systemctl --user restart dms
+```
+
+Two more steps follow, both in DMS Settings (`Mod + ,`), and both needed before a
+pill appears:
+
+1. **Enable the plugin** — Plugins > AI Usage. This is what loads it.
+2. **Place it on the bar** — DankBar > add AI Usage to the right side of the bar.
+   The bar stays empty until this step.
+
+They are separate actions on separate settings pages, in that order, and neither has
+a `dms plugins` equivalent.
 
 ## Configuration
 
