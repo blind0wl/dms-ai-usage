@@ -7,6 +7,7 @@ import qs.Widgets
 import qs.Modules.Plugins
 import "translations.js" as Tr
 import "sources.js" as Sources
+import "state.js" as State
 import "ui"
 
 PluginComponent {
@@ -47,7 +48,19 @@ PluginComponent {
         return out;
     }
     property var lastAccountSettings: null
-    property real usdEurRate: 0
+
+    // The currency rate the cost figures are read through. One Source's Script
+    // reports it and every Source's costs use it, so it lands on that Source's
+    // State like any other key and the one the widget formats with is derived
+    // from there rather than written into the widget mid-report.
+    readonly property real usdEurRate: {
+        for (var id in sourceData) {
+            var rate = sourceData[id] ? sourceData[id].usdEurRate : 0;
+            if (rate > 0)
+                return rate;
+        }
+        return 0;
+    }
 
     // The ordered list of enabled Sources. Order drives the pill rings and the
     // popout tabs. An absent value turns everything on; unknown ids are dropped
@@ -174,7 +187,7 @@ PluginComponent {
     // a Source whose first fetch has not landed yet yields the empty state rather
     // than nothing, so it produces a row that says it has no reading yet.
     function overviewState(id) {
-        var st = root.stateFor(id) || root.emptyState();
+        var st = root.stateFor(id) || State.empty();
         st.id = id;
         return st;
     }
@@ -192,55 +205,39 @@ PluginComponent {
 
     // --- Per-Source state ---
 
-    function emptyState() {
-        return {
-            credsStatus: "unknown",
-            // The Requirements the Script could not read past, as its
-            // BLOCKING_REQUIREMENT report left them. Empty for every state but a
-            // Blocked one, and cleared as soon as the Source reports anything else.
-            blockingRequirement: "",
-            // Consecutive Not installed reports, and the hidden decision they
-            // drive. In-memory only: a restart clears them, so every enabled
-            // Source shows until its first fetch lands (ADR 0004).
-            notInstalledCount: 0,
-            hidden: false,
-            // True once a fetch has reported a good reading. An endpoint failure
-            // with nothing to fall back on shows no Window cards at all rather
-            // than a fabricated zero.
-            hasData: false,
-            plan: "",
-            planTier: "",
-            extraUsageEnabled: false,
-            primary: { util: 0, resetMs: 0, windowSeconds: 0 },
-            secondary: { util: 0, resetMs: 0, windowSeconds: 0 },
-            weekTokens: 0,
-            monthTokens: 0,
-            weekCalls: 0,
-            weekMessages: 0,
-            weekSessions: 0,
-            todayCost: 0,
-            weekCost: 0,
-            monthCost: 0,
-            dailyTokens: [0, 0, 0, 0, 0, 0, 0],
-            dailyCosts: [0, 0, 0, 0, 0, 0, 0],
-            models: [],
-            alltime: { sessions: 0, messages: 0, firstSession: "" },
-            accounts: []
-        };
+    // One line of one Source's report, read into that Source's State. The
+    // reading itself is state.js's; what belongs here is where the State lives,
+    // because a QML property has to be reassigned for its bindings to
+    // re-evaluate.
+    function readReportLine(id, line) {
+        var read = State.readLine(root.sourceData[id], root.accountData[id], id, line);
+        if (read.state !== root.sourceData[id]) {
+            var states = Object.assign({}, root.sourceData);
+            states[id] = read.state;
+            root.sourceData = states;
+        }
+        if (read.accounts !== root.accountData[id]) {
+            var overlays = Object.assign({}, root.accountData);
+            overlays[id] = read.accounts;
+            root.accountData = overlays;
+        }
     }
 
-    function updateSource(id, mutate) {
-        var next = Object.assign({}, root.sourceData);
-        var st = Object.assign({}, next[id] || root.emptyState());
-        mutate(st);
-        next[id] = st;
-        root.sourceData = next;
-    }
+    // An Account can disappear between one report and the next. render() already
+    // refuses to draw a selection the Source no longer lists, but the Account
+    // picker reads the stored selection directly, so the widget drops it here
+    // rather than the reader reaching sideways into it mid-report.
+    onSourceDataChanged: root.dropMissingSelections()
 
-    function setWindow(st, which, field, value) {
-        var w = Object.assign({}, st[which] || { util: 0, resetMs: 0, windowSeconds: 0 });
-        w[field] = value;
-        st[which] = w;
+    function dropMissingSelections() {
+        for (var id in root.selectedAccount) {
+            var sel = root.selectedAccount[id];
+            if (!sel || sel === "all")
+                continue;
+            var st = root.sourceData[id];
+            if (st && st.accounts && st.accounts.indexOf(sel) < 0)
+                root.selectAccount(id, "all");
+        }
     }
 
     // The Source's Window length. Prefers what the script reported and falls
@@ -256,77 +253,19 @@ PluginComponent {
         return 0;
     }
 
-    // The state a Section renders: the Source's aggregate values, with the
-    // selected Account's values laid over them when one is selected.
+    // The State a Section renders. The selected Account and today's day index
+    // are the widget's to know, so they are handed over rather than parsed into
+    // the State where a midnight rollover would leave them stale.
     function stateFor(id) {
-        var base = root.sourceData[id];
-        if (!base)
-            return null;
-
-        var sel = root.selectedAccount[id] || "all";
-        var pd = sel !== "all" ? (root.accountData[id] || {})[sel] : null;
-        var st = Object.assign({}, base);
-        st.id = id;
-
-        if (pd) {
-            if (pd.weekTokens !== undefined)
-                st.weekTokens = pd.weekTokens;
-            if (pd.monthTokens !== undefined)
-                st.monthTokens = pd.monthTokens;
-            if (pd.weekMessages !== undefined)
-                st.weekMessages = pd.weekMessages;
-            if (pd.weekSessions !== undefined)
-                st.weekSessions = pd.weekSessions;
-            if (pd.todayCost !== undefined)
-                st.todayCost = pd.todayCost;
-            if (pd.weekCost !== undefined)
-                st.weekCost = pd.weekCost;
-            if (pd.monthCost !== undefined)
-                st.monthCost = pd.monthCost;
-            if (pd.subscriptionType !== undefined)
-                st.plan = pd.subscriptionType;
-            if (pd.rateLimitTier !== undefined)
-                st.planTier = pd.rateLimitTier;
-            if (pd.credsStatus !== undefined)
-                st.credsStatus = pd.credsStatus;
-            if (pd.extraUsageEnabled !== undefined)
-                st.extraUsageEnabled = pd.extraUsageEnabled;
-            st.primary = {
-                util: pd.primaryUtil !== undefined ? pd.primaryUtil : base.primary.util,
-                resetMs: pd.primaryReset !== undefined ? root.parseResetMs(pd.primaryReset) : base.primary.resetMs,
-                windowSeconds: base.primary.windowSeconds
-            };
-            st.secondary = {
-                util: pd.secondaryUtil !== undefined ? pd.secondaryUtil : base.secondary.util,
-                resetMs: pd.secondaryReset !== undefined ? root.parseResetMs(pd.secondaryReset) : base.secondary.resetMs,
-                windowSeconds: base.secondary.windowSeconds
-            };
-            // The daily chart keeps the aggregate in dailyTokens and dailyCosts,
-            // so its grey bars stay the total and the cost tooltip stays the day
-            // total, and carries the Account's own series separately for the
-            // coloured share.
-            st.accountDaily = pd.daily || [];
-            st.models = pd.weekModels || [];
-            // All-time figures are only tracked in aggregate.
-            st.alltime = { sessions: 0, messages: 0, firstSession: "" };
-        }
-
-        // The Today figure follows the selected Account when there is one, and
-        // the aggregate otherwise.
-        var todaySeries = pd && pd.daily ? pd.daily : st.dailyTokens;
-        st.todayTokens = (todaySeries && todaySeries[root.todayIndex]) || 0;
-        return st;
+        return State.render(root.sourceData[id], root.accountData[id], {
+            selected: root.selectedAccount[id] || "all",
+            todayIndex: root.todayIndex
+        });
     }
 
-    // Whether a Source has a reading the Pill can draw. Before the first fetch
-    // the state is "unknown" and the ring draws at zero so it does not flicker.
-    // Once a Source reports missing credentials or an unavailable endpoint there
-    // is no reading, so the ring goes hollow rather than showing a zero.
+    // Whether a Source has a reading the Pill can draw.
     function pillHasReading(id) {
-        var st = root.sourceData[id];
-        if (!st)
-            return true;
-        return st.credsStatus === "ok" || st.credsStatus === "unknown";
+        return State.hasCurrentReading(root.sourceData[id]);
     }
 
     function paceFor(source, which) {
@@ -496,7 +435,7 @@ PluginComponent {
             running: false
 
             stdout: SplitParser {
-                onRead: data => root.parseLine(sourceId, data.trim())
+                onRead: data => root.readReportLine(sourceId, data.trim())
             }
 
             onExited: (exitCode, exitStatus) => root.onSourceExited(sourceId, exitCode)
@@ -1098,17 +1037,6 @@ PluginComponent {
         return hours + "h " + (mins < 10 ? "0" : "") + mins + "m" + resetClockLabel(resetMs);
     }
 
-    // Unix-seconds strings are all-digit; ISO-8601 strings always contain a
-    // non-digit (dashes, "T", colons), so a digit-only test tells them apart.
-    function parseResetMs(val) {
-        if (!val)
-            return 0;
-        if (/^[0-9]+$/.test(val))
-            return parseFloat(val) * 1000;
-        var ms = new Date(val).getTime();
-        return isNaN(ms) ? 0 : ms;
-    }
-
     // `wham/usage` names its windows "primary" and "secondary" with no fixed
     // duration in the field name, but does carry each window's length, so label
     // with the real duration. genericKey covers the window before its length has
@@ -1201,273 +1129,5 @@ PluginComponent {
 
     function shellQuote(s) {
         return "'" + String(s).replace(/'/g, "'\\''") + "'";
-    }
-
-    // --- Script output parsing ---
-
-    // Applies a CREDS_STATUS value to one Source's state. This is the one place
-    // a Source-level report lands, so it is where the consecutive Not installed
-    // count and the hidden decision it drives are updated. A good reading is the
-    // only thing that counts as data; an endpoint failure reports no Window
-    // values, so the last good reading survives in state and the status card
-    // above it marks those values as stale rather than current.
-    function applyCredsStatus(st, val) {
-        st.credsStatus = val;
-        // A Blocked report is the only one that names Requirements, so any other
-        // report clears the list a previous Blocked one left behind. A restored
-        // command brings the Source back with no stale commands to name.
-        if (val !== Sources.BLOCKED)
-            st.blockingRequirement = "";
-        st.notInstalledCount = Sources.nextNotInstalledCount(st.notInstalledCount, val);
-        st.hidden = Sources.isHidden(st.notInstalledCount);
-        if (val === "ok")
-            st.hasData = true;
-    }
-
-    function parseLine(id, line) {
-        var pair = Sources.wirePair(line);
-        if (!pair)
-            return;
-        var key = pair.key;
-        var val = pair.value;
-        var d = Sources.byId(id);
-        if (!d)
-            return;
-
-        // Every key that belongs to an Account is named by the descriptor: the
-        // list of Accounts, the two Window slots' Account keys, and the rest of
-        // the Account overlay fields. They write a different map from the
-        // Source's own state, so they are dispatched before the switch below.
-        if (d.accounts && key === d.accounts.listKey) {
-            root.applyAccounts(id, val);
-            return;
-        }
-        if (root.parseWindowKey(d, id, "primary", key, val))
-            return;
-        if (root.parseWindowKey(d, id, "secondary", key, val))
-            return;
-        if (root.parseAccountKey(d, id, key, val))
-            return;
-
-        root.updateSource(id, function (st) {
-            switch (key) {
-            case "PLAN_TYPE":
-                st.plan = val;
-                break;
-            case "SUBSCRIPTION_TYPE":
-                st.plan = val;
-                break;
-            case "RATE_LIMIT_TIER":
-                st.planTier = val;
-                break;
-            case "EXTRA_USAGE_ENABLED":
-                st.extraUsageEnabled = (val === "true");
-                break;
-            case "CREDS_STATUS":
-                root.applyCredsStatus(st, val);
-                break;
-            case "BLOCKING_REQUIREMENT":
-                st.blockingRequirement = val;
-                break;
-            case "WEEK_MESSAGES":
-                st.weekMessages = parseInt(val) || 0;
-                break;
-            case "WEEK_SESSIONS":
-                st.weekSessions = parseInt(val) || 0;
-                break;
-            case "WEEK_CALLS":
-                st.weekCalls = parseInt(val) || 0;
-                break;
-            case "WEEK_TOKENS":
-                st.weekTokens = parseFloat(val) || 0;
-                break;
-            case "MONTH_TOKENS":
-                st.monthTokens = parseFloat(val) || 0;
-                break;
-            case "ALLTIME_SESSIONS":
-                st.alltime = Object.assign({}, st.alltime, { sessions: parseInt(val) || 0 });
-                break;
-            case "ALLTIME_MESSAGES":
-                st.alltime = Object.assign({}, st.alltime, { messages: parseInt(val) || 0 });
-                break;
-            case "FIRST_SESSION":
-                st.alltime = Object.assign({}, st.alltime, { firstSession: val });
-                break;
-            case "WEEK_MODELS":
-                st.models = root.parseModels(val);
-                break;
-            case "DAILY":
-                st.dailyTokens = root.parseDaily(val);
-                break;
-            case "DAILY_COSTS":
-                st.dailyCosts = root.parseDaily(val);
-                break;
-            case "TODAY_COST":
-                st.todayCost = parseFloat(val) || 0;
-                break;
-            case "WEEK_COST":
-                st.weekCost = parseFloat(val) || 0;
-                break;
-            case "MONTH_COST":
-                st.monthCost = parseFloat(val) || 0;
-                break;
-            case "USD_EUR_RATE":
-                root.usdEurRate = parseFloat(val) || 0;
-                break;
-            }
-        });
-    }
-
-    // The per-Account output keys a Source declares in its descriptor's
-    // `accounts.fields` map. The field names are the overlay's own, so no
-    // Source's Window shape leaks into this adapter. Returns true when handled.
-    function parseAccountKey(d, id, key, val) {
-        var spec = d.accounts && d.accounts.fields ? d.accounts.fields[key] : null;
-        if (!spec)
-            return false;
-        if (spec.type === "number")
-            root.applyAccountNumber(id, val, spec.field);
-        else if (spec.type === "boolean")
-            root.applyAccountBool(id, val, spec.field);
-        else if (spec.type === "series")
-            root.applyAccountList(id, val, spec.field);
-        else if (spec.type === "models")
-            root.applyAccountModels(id, val, spec.field);
-        else
-            root.applyAccountField(id, val, spec.field);
-        return true;
-    }
-
-    function parseWindowKey(d, id, which, key, val) {
-        var w = d.windows[which];
-        if (!w)
-            return false;
-        if (key === w.util) {
-            root.updateSource(id, function (st) {
-                root.setWindow(st, which, "util", parseFloat(val) || 0);
-            });
-            return true;
-        }
-        if (key === w.reset) {
-            root.updateSource(id, function (st) {
-                root.setWindow(st, which, "resetMs", root.parseResetMs(val));
-            });
-            return true;
-        }
-        if (w.windowSecondsKey && key === w.windowSecondsKey) {
-            root.updateSource(id, function (st) {
-                root.setWindow(st, which, "windowSeconds", parseFloat(val) || 0);
-            });
-            return true;
-        }
-        return false;
-    }
-
-    function parseDaily(val) {
-        var parts = val.split(",");
-        var arr = [];
-        for (var i = 0; i < 7; i++)
-            arr.push(i < parts.length ? (parseFloat(parts[i]) || 0) : 0);
-        return arr;
-    }
-
-    function parseModels(val) {
-        var out = [];
-        if (!val || val.length === 0)
-            return out;
-        var pairs = val.split(",");
-        for (var i = 0; i < pairs.length; i++) {
-            var eq = pairs[i].indexOf("=");
-            if (eq >= 0)
-                out.push({
-                    modelName: pairs[i].substring(0, eq),
-                    modelTokens: parseInt(pairs[i].substring(eq + 1)) || 0
-                });
-        }
-        return out;
-    }
-
-    // --- Per-Account overlay state ---
-
-    // "name:a,b,c|name2:..." — a per-Account 7-day series. Its entries are
-    // pipe-separated because each value is itself a comma-separated list.
-    function parseAccountSeries(val) {
-        return Sources.nameValueMap(val.split("|"), root.parseDaily);
-    }
-
-    // "name:value,name2:value2" — a per-Account scalar.
-    function parseAccountScalars(val) {
-        return Sources.nameValueMap(Sources.splitList(val));
-    }
-
-    // "name:model=123,model2=456|name2:..." — per-Account model breakdowns.
-    function parseAccountModels(val) {
-        return Sources.nameValueMap(val.split("|"), root.parseModels);
-    }
-
-    function mutateAccounts(id, mutate) {
-        var next = Object.assign({}, root.accountData);
-        var forSource = Object.assign({}, next[id] || {});
-        mutate(function (name) {
-            if (!forSource[name])
-                forSource[name] = {};
-            else
-                forSource[name] = Object.assign({}, forSource[name]);
-            return forSource[name];
-        });
-        next[id] = forSource;
-        root.accountData = next;
-    }
-
-    function applyAccounts(id, val) {
-        var names = Sources.splitList(val);
-        root.updateSource(id, function (st) {
-            st.accounts = names;
-        });
-        // Drop a selection that no longer exists so the tab falls back to the
-        // aggregate rather than showing an empty overlay.
-        var sel = root.selectedAccount[id] || "all";
-        if (sel !== "all" && names.indexOf(sel) < 0)
-            root.selectAccount(id, "all");
-    }
-
-    function applyAccountField(id, val, field) {
-        var scalars = root.parseAccountScalars(val);
-        root.mutateAccounts(id, function (acct) {
-            for (var name in scalars)
-                acct(name)[field] = scalars[name];
-        });
-    }
-
-    function applyAccountNumber(id, val, field) {
-        var scalars = root.parseAccountScalars(val);
-        root.mutateAccounts(id, function (acct) {
-            for (var name in scalars)
-                acct(name)[field] = parseFloat(scalars[name]) || 0;
-        });
-    }
-
-    function applyAccountBool(id, val, field) {
-        var scalars = root.parseAccountScalars(val);
-        root.mutateAccounts(id, function (acct) {
-            for (var name in scalars)
-                acct(name)[field] = scalars[name] === "true";
-        });
-    }
-
-    function applyAccountList(id, val, field) {
-        var series = root.parseAccountSeries(val);
-        root.mutateAccounts(id, function (acct) {
-            for (var name in series)
-                acct(name)[field] = series[name];
-        });
-    }
-
-    function applyAccountModels(id, val, field) {
-        var models = root.parseAccountModels(val);
-        root.mutateAccounts(id, function (acct) {
-            for (var name in models)
-                acct(name)[field] = models[name];
-        });
     }
 }

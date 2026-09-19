@@ -28,6 +28,14 @@ page ask the same Script the same questions, so the two cannot disagree about wh
 exists.
 _Avoid_: helper, executable, plugin binary
 
+**State**:
+What a Source's Script reports leave behind: its Window Utilisations, its
+figures, its status and the counting behind Hidden. One State per Source, built
+from the report lines and read back with the selected Account's values laid over
+it. Which Account is selected is not part of it, because that is the user's
+choice rather than the Source's answer.
+_Avoid_: data, model, store, cache
+
 **Requirement**:
 A command-line program the plugin cannot read any Source without, because every
 Script invokes it: `jq` and `curl`. The plugin declares its Requirements but
