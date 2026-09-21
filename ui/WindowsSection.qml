@@ -11,10 +11,11 @@ import "../sources.js" as Sources
 // render exactly as before, with two rows and no zero row. `counts` also
 // carries the week's session and message counts on the secondary row.
 //
-// The tertiary row shows no pacing tick and no pacing label: a 30-day linear
-// burn misleads. Session/message counts stay on the secondary row only. A
-// `captionKey` on the Section (the Go tab's quota-weighting note) renders as a
-// one-line caption under the rows, only while the tertiary row is shown.
+// Every row shows its pacing tick and pacing label, tertiary included: the
+// monthly pace line is what tells a heavy session to slow down.
+// Session/message counts stay on the secondary row only. A `captionKey` on
+// the Section (the Go tab's quota-weighting note) renders as a one-line
+// caption under the rows, only while the tertiary row is shown.
 //
 // The popout has no Ring: the Ring is the Pill's, and a Window here is a bar.
 StyledRect {
@@ -71,9 +72,9 @@ StyledRect {
                 readonly property real util: win && win.util !== undefined ? win.util : 0
                 readonly property var pace: root.api.pace(root.source, modelData)
                 readonly property string countdown: root.api.countdown(root.source, modelData)
-                // No pacing on the tertiary row: a 30-day linear burn
-                // misleads, so the tick and the label stay on the other two.
-                readonly property string pacing: (root.showPacing && modelData !== "tertiary") ? root.api.paceLabel(pace) : ""
+                // Every row names its pacing, tertiary included: the monthly
+                // pace line is what tells a heavy session to slow down.
+                readonly property string pacing: root.showPacing ? root.api.paceLabel(pace) : ""
                 readonly property string counts: {
                     if (modelData !== "secondary" || !root.showCounts || !root.source)
                         return "";
@@ -133,7 +134,7 @@ StyledRect {
                     }
 
                     Rectangle {
-                        visible: root.showPacing && row.modelData !== "tertiary" && row.pace && row.pace.status !== "unknown"
+                        visible: root.showPacing && row.pace && row.pace.status !== "unknown"
                         x: parent.width * Math.max(0, Math.min(row.pace ? row.pace.timeFrac : 0, 1)) - 1
                         y: -3
                         width: 2

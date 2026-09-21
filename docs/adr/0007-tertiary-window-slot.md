@@ -24,8 +24,8 @@ right now) does not change.
 
 The Windows Section iterates all three slots generically and drops slots with
 no reading rather than drawing zeros, so two-Window Sources render exactly as
-before. Pacing stays on primary/secondary only: the tertiary row shows no
-linear-pace tick and no pacing label, because a 30-day linear burn misleads.
+before. Every row shows its pacing tick and pacing label, tertiary included:
+the monthly pace line is what tells a heavy session to slow down.
 Session/message counts stay on the secondary row. The Go tab carries a
 one-line caption under the Windows card noting that monthly Utilisation is
 quota-weighted by model, so weekly and monthly legitimately diverge; no
@@ -44,8 +44,9 @@ last-good reading stays stale.
 iteration, but a second card shape for one allowance that still competes for
 Tightest Window, and every future third allowance would need its own card.
 
-**Showing pacing on the tertiary row.** Same component for all three rows, but
-a linear burn over ~30 days reads as a forecast the data cannot support.
+**Showing no pacing on the tertiary row.** Hides the tick and label on a 30-day
+linear burn, but the monthly pace line is what tells a heavy session to slow
+down, so it stays. Rejected in favour of pacing on all three rows.
 
 **Deriving the tertiary length from the endpoint.** The response carries reset
 times, not durations, and the resets fall on boundaries; declaring ~30 days

@@ -66,8 +66,8 @@ check(/api\.utilisationColor\(/.test(windows), "the Windows bars and percentages
 check(/timeFrac/.test(windows), "each Window bar carries a pace tick at the linear-burn position");
 check(/section\.counts === true/.test(windows) && /modelData !== "secondary"/.test(windows),
       "the week's counts ride on the secondary row only");
-check(/modelData !== "tertiary"/.test(windows),
-      "the tertiary row shows no pacing tick and no pacing label");
+check(!/modelData !== "tertiary"/.test(windows),
+      "every Window row names its pacing, tertiary included");
 check(/captionKey/.test(windows),
       "the Windows card renders the Section's one-line caption while the tertiary row is shown");
 check(/root\.api\.tr\("Resets in"\)/.test(windows), "each Window row names its reset countdown");
