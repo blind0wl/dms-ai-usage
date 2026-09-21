@@ -27,9 +27,14 @@ TODAY=$(date +%Y-%m-%d)
 MOCK_DIR="$TMPDIR_ROOT/mocks"
 mkdir -p "$MOCK_DIR"
 
-# Mock curl: picks a fixture by the API key in the Authorization header and
-# by which endpoint/date range the URL asks for, then appends the HTTP status
-# line the script requests with -w.
+# Mock curl: picks a fixture by the API key in the Authorization header.
+# The quota call has its own endpoint; the three model-usage calls (week,
+# month, today, in that order) share one URL shape whose ranges coincide
+# whenever the calendar does - on Mondays the week range is today's, on the
+# month's first day the month range is today's - so identical URLs would have
+# to serve different fixtures. The Nth usage call of each key is routed to
+# its Nth fixture instead: week, month, today. Per key, because Accounts
+# fetch in parallel; the counter resets on every run.
 cat > "$TMPDIR_ROOT/curl" << 'CURLEOF'
 #!/usr/bin/env bash
 url=""
@@ -44,12 +49,18 @@ done
 kind=week
 case "$url" in
     *quota/limit*) kind=quota ;;
-    *"startTime=${ZAI_MOCK_TODAY}+00:00:00&endTime=${ZAI_MOCK_TODAY}+"*)
-        # The today call shares its URL with the month one on the month's
-        # first day, so there the month fixture answers both and today's cost
-        # reads as the month's - the same figures the real API returns.
-        [ "$ZAI_MOCK_TODAY" = "$ZAI_MOCK_MONTH_START" ] || kind=today ;;
-    *"startTime=${ZAI_MOCK_MONTH_START}+"*) [ "$ZAI_MOCK_MONTH_START" = "$ZAI_MOCK_WEEK_START" ] || kind=month ;;
+    *)
+        calls_dir="$ZAI_MOCK_DIR/.usage-calls"
+        mkdir -p "$calls_dir"
+        nfile="$calls_dir/${key//[^A-Za-z0-9_.-]/_}"
+        n=$(cat "$nfile" 2>/dev/null || echo 0)
+        echo $((n + 1)) > "$nfile"
+        case "$n" in
+            0) kind=week ;;
+            1) kind=month ;;
+            *) kind=today ;;
+        esac
+        ;;
 esac
 
 f="$ZAI_MOCK_DIR/${key}.${kind}.json"
@@ -64,6 +75,9 @@ chmod +x "$TMPDIR_ROOT/curl"
 run_script() {
     local home_dir="$1"
     shift
+    # Fresh usage-call routing on every run: the mock counts each key's usage
+    # calls from zero, matching the Script's week, month, today order.
+    rm -rf "$MOCK_DIR/.usage-calls"
     # The pricing cache the Script reads lives under XDG_CACHE_HOME, so that
     # is pinned inside the test environment: a developer's real cache must
     # not price a fixture, and a fixture must not write into it.
