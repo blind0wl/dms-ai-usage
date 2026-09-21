@@ -41,6 +41,10 @@ function empty() {
         extraUsageEnabled: false,
         primary: { util: 0, resetMs: 0, windowSeconds: 0 },
         secondary: { util: 0, resetMs: 0, windowSeconds: 0 },
+        // The tertiary Window, reported only by opencode Go. Null until a
+        // report carries it, so two-Window Sources never draw a fabricated
+        // zero row: a missing reading is no row, not a 0% one.
+        tertiary: null,
         weekTokens: 0,
         monthTokens: 0,
         weekCalls: 0,
@@ -202,9 +206,11 @@ function applyCredsStatus(st, val) {
 }
 
 // The Window slot keys a Source declares in its descriptor. Returns the new
-// pair when the key was one of them, and null otherwise.
+// pair when the key was one of them, and null otherwise. A slot the descriptor
+// does not declare is never written, so a Source that reports no tertiary
+// Window keeps none.
 function readWindowKey(result, d, id, key, val) {
-    var slots = ["primary", "secondary"];
+    var slots = ["primary", "secondary", "tertiary"];
     for (var i = 0; i < slots.length; i++) {
         var which = slots[i];
         var w = d.windows[which];
@@ -347,6 +353,10 @@ function render(state, accounts, opts) {
         overlayScalars(st, pd);
         st.primary = overlayWindow(state.primary, pd.primaryUtil, pd.primaryReset);
         st.secondary = overlayWindow(state.secondary, pd.secondaryUtil, pd.secondaryReset);
+        // The tertiary slot overlays the same way, but stays absent when
+        // neither the Source nor the Account reported one: no reading means
+        // no row, never a fabricated zero.
+        st.tertiary = overlayWindowOptional(state.tertiary, pd.tertiaryUtil, pd.tertiaryReset);
         // The daily chart keeps the aggregate in dailyTokens and dailyCosts,
         // so its grey bars stay the total and the cost tooltip stays the day
         // total, and carries the Account's own series separately for the
@@ -398,4 +408,12 @@ function overlayWindow(base, util, reset) {
         resetMs: reset !== undefined ? parseResetMs(reset) : b.resetMs,
         windowSeconds: b.windowSeconds
     };
+}
+
+// The tertiary slot under a selection. Unlike the other two it may not exist
+// at all, and then it stays absent unless the Account brings its own reading.
+function overlayWindowOptional(base, util, reset) {
+    if (!base && util === undefined && reset === undefined)
+        return null;
+    return overlayWindow(base, util, reset);
 }

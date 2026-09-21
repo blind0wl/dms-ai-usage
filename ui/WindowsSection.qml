@@ -3,11 +3,18 @@ import qs.Common
 import qs.Widgets
 import "../sources.js" as Sources
 
-// One rate Window card holding both of a Source's Windows as bar rows in the
-// Overview's style: the Window's label, its Utilisation as a percentage, a bar
-// with a pace tick at the linear-burn position, and a line naming its pacing and
-// reset countdown. `counts` also carries the week's session and message counts
-// on the secondary row.
+// One rate Window card holding up to three of a Source's Windows as bar rows
+// in the Overview's style: the Window's label, its Utilisation as a
+// percentage, a bar with a pace tick at the linear-burn position, and a line
+// naming its pacing and reset countdown. Only opencode Go reports the third
+// (tertiary) Window, its monthly allowance; Sources with no tertiary reading
+// render exactly as before, with two rows and no zero row. `counts` also
+// carries the week's session and message counts on the secondary row.
+//
+// The tertiary row shows no pacing tick and no pacing label: a 30-day linear
+// burn misleads. Session/message counts stay on the secondary row only. A
+// `captionKey` on the Section (the Go tab's quota-weighting note) renders as a
+// one-line caption under the rows, only while the tertiary row is shown.
 //
 // The popout has no Ring: the Ring is the Pill's, and a Window here is a bar.
 StyledRect {
@@ -38,6 +45,10 @@ StyledRect {
     // `visible`, which QML reports as false while an ancestor is hidden.
     readonly property bool shown: source !== null && !noFallback
 
+    // Whether the tertiary row has a reading to draw. A Source with no
+    // tertiary reading draws no third row rather than a fabricated zero.
+    readonly property bool tertiaryShown: !!(root.source && root.source.tertiary)
+
     width: parent.width
     visible: shown
     height: card.implicitHeight + Theme.spacingS * 2
@@ -50,7 +61,7 @@ StyledRect {
         spacing: Theme.spacingXS
 
         Repeater {
-            model: ["primary", "secondary"]
+            model: ["primary", "secondary", "tertiary"]
 
             delegate: Column {
                 id: row
@@ -60,7 +71,9 @@ StyledRect {
                 readonly property real util: win && win.util !== undefined ? win.util : 0
                 readonly property var pace: root.api.pace(root.source, modelData)
                 readonly property string countdown: root.api.countdown(root.source, modelData)
-                readonly property string pacing: root.showPacing ? root.api.paceLabel(pace) : ""
+                // No pacing on the tertiary row: a 30-day linear burn
+                // misleads, so the tick and the label stay on the other two.
+                readonly property string pacing: (root.showPacing && modelData !== "tertiary") ? root.api.paceLabel(pace) : ""
                 readonly property string counts: {
                     if (modelData !== "secondary" || !root.showCounts || !root.source)
                         return "";
@@ -120,7 +133,7 @@ StyledRect {
                     }
 
                     Rectangle {
-                        visible: root.showPacing && row.pace && row.pace.status !== "unknown"
+                        visible: root.showPacing && row.modelData !== "tertiary" && row.pace && row.pace.status !== "unknown"
                         x: parent.width * Math.max(0, Math.min(row.pace ? row.pace.timeFrac : 0, 1)) - 1
                         y: -3
                         width: 2
@@ -146,6 +159,17 @@ StyledRect {
                     }
                 }
             }
+        }
+
+        // The Section's one-line caption (the Go tab's quota-weighting note),
+        // shown only while the tertiary row it explains is drawn.
+        StyledText {
+            visible: root.tertiaryShown && !!(root.section && root.section.captionKey)
+            width: card.width
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            text: root.section && root.section.captionKey ? root.api.tr(root.section.captionKey) : ""
         }
     }
 }

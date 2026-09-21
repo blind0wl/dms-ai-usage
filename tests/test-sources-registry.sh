@@ -59,6 +59,7 @@ if (stateBlock) {
 }
 stateKeys.add("primary");
 stateKeys.add("secondary");
+stateKeys.add("tertiary");
 
 // Section types SourceTab can render.
 const implemented = new Set();
@@ -95,6 +96,16 @@ for (const d of reg.SOURCES) {
         check(hasLength, `${tag} ${which} declares a window length or the key for one`);
         if (w.labelKey)
             check(tr[w.labelKey] !== undefined, `${tag} ${which} label "${w.labelKey}" is translated`);
+    }
+    // The tertiary slot is generic but Go-only: a descriptor that declares it
+    // names its own keys, its Monthly label and its ~30d length.
+    const t = d.windows && d.windows.tertiary;
+    if (t !== undefined) {
+        check(typeof t.util === "string" && t.util.length > 0, `${tag} tertiary names a util key`);
+        check(typeof t.reset === "string" && t.reset.length > 0, `${tag} tertiary names a reset key`);
+        check(typeof t.windowSeconds === "number" && t.windowSeconds > 0, `${tag} tertiary declares a window length`);
+        if (t.labelKey)
+            check(tr[t.labelKey] !== undefined, `${tag} tertiary label "${t.labelKey}" is translated`);
     }
 
     check(Array.isArray(d.sections) && d.sections.length > 0, `${tag} has sections`);
@@ -189,9 +200,12 @@ for (const d of reg.SOURCES) {
         }
         // Selecting an Account moves the Window card's readings, so the overlay
         // slots the card reads have to be covered by the fields the descriptor
-        // lists.
+        // lists. A descriptor with a tertiary Window covers its slots too.
         for (const slot of ["primaryUtil", "primaryReset", "secondaryUtil", "secondaryReset"])
             check(declaredFields.has(slot), `${tag} account fields cover the ${slot} overlay slot`);
+        if (d.windows && d.windows.tertiary)
+            for (const slot of ["tertiaryUtil", "tertiaryReset"])
+                check(declaredFields.has(slot), `${tag} account fields cover the ${slot} overlay slot`);
         check(tr[d.accounts.titleKey] !== undefined, `${tag} account title is translated`);
         check(tr[d.accounts.descriptionKey] !== undefined, `${tag} account description is translated`);
         check(tr[d.accounts.fieldLabelKey] !== undefined, `${tag} account field label is translated`);
@@ -673,6 +687,31 @@ check(reg.tightestWindow(wins("claude", 10, 80)).resetMs === 2000,
       "tightestWindow reports the winning Window's reset");
 check(reg.tightestWindow(null) === null, "tightestWindow returns null for a missing state");
 
+// The tertiary Window competes for Tightest Window, with ties to primary, and
+// a missing tertiary reading binds nothing.
+const wins3 = (id, p, s, t, over) => overview(id, Object.assign({
+    primary: { util: p, resetMs: 1000, windowSeconds: 18000 },
+    secondary: { util: s, resetMs: 2000, windowSeconds: 604800 },
+    tertiary: { util: t, resetMs: 3000, windowSeconds: 2592000 }
+}, over || {}));
+check(reg.tightestWindow(wins3("opencode", 10, 20, 90)).window === "tertiary",
+      "tightestWindow names the tertiary Window when it has the highest Utilisation");
+check(reg.tightestWindow(wins3("opencode", 10, 20, 90)).util === 90 &&
+      reg.tightestWindow(wins3("opencode", 10, 20, 90)).resetMs === 3000,
+      "tightestWindow reports the tertiary Window's Utilisation and reset");
+check(reg.tightestWindow(wins3("opencode", 40, 40, 40)).window === "primary",
+      "tightestWindow breaks a three-way tie with the primary Window");
+check(reg.tightestWindow(wins3("opencode", 10, 90, 90)).window === "secondary",
+      "tightestWindow keeps the earlier slot when tertiary ties a non-primary Window");
+check(reg.tightestWindow(wins("claude", 10, 80)).window === "secondary",
+      "a two-Window Source ranks exactly as before with no tertiary reading");
+check(reg.tightestWindow(overview("claude", {
+    primary: { util: 10, resetMs: 1000, windowSeconds: 18000 },
+    secondary: { util: 20, resetMs: 2000, windowSeconds: 604800 },
+    tertiary: null
+})).window === "secondary",
+      "a null tertiary reading binds nothing");
+
 // A row carries everything the Overview renders, so #40 can be a dumb repeater.
 const sampleRow = reg.overviewRows([wins("claude", 10, 80), wins("chatgpt", 5, 5)])[0];
 for (const field of ["id", "labelKey", "window", "windowLabelKey", "windowSeconds", "util", "resetMs", "ranked", "stale", "missing", "unavailable", "degraded"])
@@ -687,6 +726,11 @@ check(sampleRow.ranked === true && sampleRow.stale === false && sampleRow.degrad
       "a healthy Overview row is ranked, not stale and not degraded");
 check(reg.overviewRows([wins("chatgpt", 10, 80), wins("claude", 5, 5)])[0].windowLabelKey === null,
       "an Overview row leaves windowLabelKey null when its descriptor names no label");
+const goRow = reg.overviewRows([wins3("opencode", 10, 20, 90), wins("claude", 5, 5)])[0];
+check(goRow.id === "opencode" && goRow.window === "tertiary" && goRow.windowLabelKey === "Monthly Window",
+      "an Overview row names the Monthly Window when the tertiary binds");
+check(goRow.util === 90 && goRow.resetMs === 3000,
+      "an Overview row carries the tertiary Window's Utilisation and reset");
 
 // Ranked before unranked, by Utilisation descending.
 check(rowIds(reg.overviewRows([wins("claude", 40, 10), wins("chatgpt", 90, 20)])) === "chatgpt,claude",

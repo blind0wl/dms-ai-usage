@@ -111,6 +111,14 @@ echo 200 > "$MOCK_DIR/kempty.code"
 echo '{"nope":true}' > "$MOCK_DIR/kgarbage.json"
 echo 200 > "$MOCK_DIR/kgarbage.code"
 
+# HTTP 200 carrying only the two modelled Windows: older or partial responses
+# may not carry the monthly entry, and then no tertiary reading is reported
+# rather than a fabricated zero.
+cat > "$MOCK_DIR/knm.json" << 'EOF'
+{"usage":{"rolling":{"status":"ok","percent":1,"resetsAt":"2026-09-16T15:31:05.155Z"},"weekly":{"status":"ok","percent":6,"resetsAt":"2026-09-21T00:00:00.155Z"}}}
+EOF
+echo 200 > "$MOCK_DIR/knm.code"
+
 # ============================================================
 echo "=== Test 1: The captured response drives the two modelled Windows ==="
 # ============================================================
@@ -118,22 +126,38 @@ H1=$(new_home home1)
 write_pi_key "$H1" k1
 OUT1=$(run_script "$H1")
 
-for key in PLAN_TYPE PRIMARY_UTIL PRIMARY_RESET SECONDARY_UTIL SECONDARY_RESET CREDS_STATUS ACCOUNTS; do
+for key in PLAN_TYPE PRIMARY_UTIL PRIMARY_RESET SECONDARY_UTIL SECONDARY_RESET TERTIARY_UTIL TERTIARY_RESET CREDS_STATUS ACCOUNTS; do
     if echo "$OUT1" | grep -q "^${key}="; then pass "key $key present"; else fail "key $key missing"; fi
 done
 
 assert_eq "$(val "$OUT1" CREDS_STATUS)" "ok" "CREDS_STATUS=ok on a successful usage call"
 assert_eq "$(val "$OUT1" PRIMARY_UTIL)" "1" "PRIMARY_UTIL from rolling.percent"
 assert_eq "$(val "$OUT1" SECONDARY_UTIL)" "6" "SECONDARY_UTIL from weekly.percent"
+assert_eq "$(val "$OUT1" TERTIARY_UTIL)" "3" "TERTIARY_UTIL from monthly.percent"
 assert_eq "$(val "$OUT1" PRIMARY_RESET)" "2026-09-16T15:31:05.155Z" "PRIMARY_RESET is rolling.resetsAt, ISO-8601 unconverted"
 assert_eq "$(val "$OUT1" SECONDARY_RESET)" "2026-09-21T00:00:00.155Z" "SECONDARY_RESET is weekly.resetsAt"
+assert_eq "$(val "$OUT1" TERTIARY_RESET)" "2026-10-16T05:20:21.155Z" "TERTIARY_RESET is monthly.resetsAt"
 assert_eq "$(val "$OUT1" ACCOUNTS)" "default" "ACCOUNTS lists the discovered key as default"
 assert_eq "$(val "$OUT1" PLAN_TYPE)" "unknown" "PLAN_TYPE=unknown: the response carries no plan name"
 
-# `monthly` is returned but not modelled, so it must not surface as a third
-# Window or overwrite the weekly one.
-assert_no_key "$OUT1" "MONTHLY_UTIL" "the response's monthly Window stays unreported (no MONTHLY_UTIL)"
+# `monthly` is the tertiary Window: it surfaces under its own key pair and
+# never overwrites the weekly one.
 assert_eq "$(val "$OUT1" SECONDARY_UTIL)" "6" "monthly.percent does not overwrite the weekly Window"
+
+# ============================================================
+echo "=== Test 1b: A response without the monthly entry reports no tertiary ==="
+# ============================================================
+# No reading means no third row, never a fabricated zero; the two modelled
+# Windows are unaffected.
+H1B=$(new_home home1b)
+write_pi_key "$H1B" knm
+OUT1B=$(run_script "$H1B")
+assert_eq "$(val "$OUT1B" CREDS_STATUS)" "ok" "a response without monthly still reports ok"
+assert_eq "$(val "$OUT1B" PRIMARY_UTIL)" "1" "primary still reported without a monthly entry"
+assert_eq "$(val "$OUT1B" SECONDARY_UTIL)" "6" "weekly still reported without a monthly entry"
+assert_no_key "$OUT1B" "TERTIARY_UTIL" "no monthly entry means no TERTIARY_UTIL"
+assert_no_key "$OUT1B" "TERTIARY_RESET" "no monthly entry means no TERTIARY_RESET"
+assert_no_key "$OUT1B" "MONTHLY_UTIL" "the monthly entry never surfaces under a MONTHLY key"
 
 # ============================================================
 echo "=== Test 2: Rejected key — HTTP 401 ==="
@@ -145,6 +169,7 @@ OUT2=$(run_script "$H2")
 assert_eq "$(val "$OUT2" CREDS_STATUS)" "missing" "CREDS_STATUS=missing when the endpoint rejects the key"
 assert_eq "$(val "$OUT2" PRIMARY_UTIL)" "0" "PRIMARY_UTIL=0 for a rejected key"
 assert_eq "$(val "$OUT2" SECONDARY_UTIL)" "0" "SECONDARY_UTIL=0 for a rejected key"
+assert_eq "$(val "$OUT2" TERTIARY_UTIL)" "0" "TERTIARY_UTIL=0 for a rejected key, like the other Windows"
 
 # A rejected key is a missing-credentials state, not a confirmed zero reading:
 # a working key must still be able to report a real 0.
@@ -182,6 +207,8 @@ for name in 404 500 timeout garbage empty; do
     assert_no_key "$OUT" "PRIMARY_RESET" "a failed endpoint ($name) reports no PRIMARY_RESET"
     assert_no_key "$OUT" "SECONDARY_UTIL" "a failed endpoint ($name) reports no SECONDARY_UTIL"
     assert_no_key "$OUT" "SECONDARY_RESET" "a failed endpoint ($name) reports no SECONDARY_RESET"
+    assert_no_key "$OUT" "TERTIARY_UTIL" "a failed endpoint ($name) reports no TERTIARY_UTIL"
+    assert_no_key "$OUT" "TERTIARY_RESET" "a failed endpoint ($name) reports no TERTIARY_RESET"
 
     # The key was still discovered, and the run still reports its shape.
     assert_eq "$(val "$OUT" ACCOUNTS)" "default" "a failed endpoint ($name) still reports the discovered Account"
@@ -269,6 +296,8 @@ assert_eq "$(val "$OUT5" PRIMARY_UTIL)" "80" "PRIMARY_UTIL is the max across Acc
 assert_eq "$(val "$OUT5" PRIMARY_RESET)" "2026-09-17T00:00:00.000Z" "PRIMARY_RESET comes from the Account holding the max"
 assert_eq "$(val "$OUT5" SECONDARY_UTIL)" "6" "SECONDARY_UTIL is the max across Accounts"
 assert_eq "$(val "$OUT5" SECONDARY_RESET)" "2026-09-21T00:00:00.155Z" "SECONDARY_RESET comes from the Account holding the max"
+assert_eq "$(val "$OUT5" TERTIARY_UTIL)" "9" "TERTIARY_UTIL is the max across Accounts"
+assert_eq "$(val "$OUT5" TERTIARY_RESET)" "2026-10-17T00:00:00.000Z" "TERTIARY_RESET comes from the Account holding the max"
 # ============================================================
 echo "=== Test 6: Per-Account Window readings ==="
 # ============================================================
@@ -278,6 +307,8 @@ assert_eq "$(val "$OUT5" ACCOUNT_PRIMARY_UTIL)" "default:1,work:80" "ACCOUNT_PRI
 assert_eq "$(val "$OUT5" ACCOUNT_PRIMARY_RESET)" "default:2026-09-16T15:31:05.155Z,work:2026-09-17T00:00:00.000Z" "ACCOUNT_PRIMARY_RESET carries each Account's own reset"
 assert_eq "$(val "$OUT5" ACCOUNT_SECONDARY_UTIL)" "default:6,work:2" "ACCOUNT_SECONDARY_UTIL carries each Account's own weekly.percent"
 assert_eq "$(val "$OUT5" ACCOUNT_SECONDARY_RESET)" "default:2026-09-21T00:00:00.155Z,work:2026-09-22T00:00:00.000Z" "ACCOUNT_SECONDARY_RESET carries each Account's own reset"
+assert_eq "$(val "$OUT5" ACCOUNT_TERTIARY_UTIL)" "default:3,work:9" "ACCOUNT_TERTIARY_UTIL carries each Account's own monthly.percent"
+assert_eq "$(val "$OUT5" ACCOUNT_TERTIARY_RESET)" "default:2026-10-16T05:20:21.155Z,work:2026-10-17T00:00:00.000Z" "ACCOUNT_TERTIARY_RESET carries each Account's own reset"
 assert_eq "$(val "$OUT5" ACCOUNT_CREDS_STATUS)" "default:ok,work:ok" "ACCOUNT_CREDS_STATUS carries each Account's own status"
 
 # ============================================================
@@ -296,6 +327,7 @@ assert_eq "$(val "$OUT7" CREDS_STATUS)" "ok" "the Source-level status still foll
 # Account whose key was rejected, because the settings Section is what explains
 # the zero.
 assert_eq "$(val "$OUT7" ACCOUNT_PRIMARY_UTIL)" "default:1,work:0" "the Account whose key was rejected reports its own zero, not the healthy Account's reading"
+assert_eq "$(val "$OUT7" ACCOUNT_TERTIARY_UTIL)" "default:3,work:0" "the Account whose key was rejected reports its own tertiary zero too"
 
 # ============================================================
 echo "=== Test 8: An unavailable Account reports no Window reading ==="
@@ -310,8 +342,10 @@ OUT8=$(run_script "$H8" "work=k404")
 assert_eq "$(val "$OUT8" ACCOUNT_CREDS_STATUS)" "default:ok,work:unavailable" "an unavailable Account keeps its own status"
 assert_eq "$(val "$OUT8" ACCOUNT_PRIMARY_UTIL)" "default:1" "an unavailable Account is omitted from ACCOUNT_PRIMARY_UTIL"
 assert_eq "$(val "$OUT8" ACCOUNT_SECONDARY_UTIL)" "default:6" "an unavailable Account is omitted from ACCOUNT_SECONDARY_UTIL"
+assert_eq "$(val "$OUT8" ACCOUNT_TERTIARY_UTIL)" "default:3" "an unavailable Account is omitted from ACCOUNT_TERTIARY_UTIL"
 assert_eq "$(val "$OUT8" ACCOUNT_PRIMARY_RESET)" "default:2026-09-16T15:31:05.155Z" "an unavailable Account is omitted from ACCOUNT_PRIMARY_RESET"
 assert_eq "$(val "$OUT8" ACCOUNT_SECONDARY_RESET)" "default:2026-09-21T00:00:00.155Z" "an unavailable Account is omitted from ACCOUNT_SECONDARY_RESET"
+assert_eq "$(val "$OUT8" ACCOUNT_TERTIARY_RESET)" "default:2026-10-16T05:20:21.155Z" "an unavailable Account is omitted from ACCOUNT_TERTIARY_RESET"
 
 # ============================================================
 echo "=== Test 9: Listing mode reports every Account and where it came from ==="

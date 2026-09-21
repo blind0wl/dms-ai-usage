@@ -40,7 +40,9 @@ var ACCOUNT_FIELDS = {
     PRIMARY_UTIL: { field: "primaryUtil", type: "number" },
     PRIMARY_RESET: { field: "primaryReset", type: "text" },
     SECONDARY_UTIL: { field: "secondaryUtil", type: "number" },
-    SECONDARY_RESET: { field: "secondaryReset", type: "text" }
+    SECONDARY_RESET: { field: "secondaryReset", type: "text" },
+    TERTIARY_UTIL: { field: "tertiaryUtil", type: "number" },
+    TERTIARY_RESET: { field: "tertiaryReset", type: "text" }
 };
 
 // Builds a descriptor's wire-key map from the bare suffixes its script emits.
@@ -615,9 +617,11 @@ var SOURCES = [
         brandColor: "#A78BFA",
         script: "get-opencode-go-usage",
         // The endpoint reports ISO-8601 reset times and no window length, so
-        // the fixed 5h and 7d lengths are declared here for Pacing. Its two
-        // windows are the response's `rolling` and `weekly` entries; the
-        // response's `monthly` entry is not modelled.
+        // the fixed 5h, 7d and ~30d lengths are declared here for Pacing. Its
+        // three windows are the response's `rolling`, `weekly` and `monthly`
+        // entries; the monthly entry is the tertiary Window no other Source
+        // reports. The resets fall on boundaries rather than as rolling
+        // spans, so the lengths are declared rather than derived.
         windows: {
             primary: {
                 util: "PRIMARY_UTIL",
@@ -630,6 +634,12 @@ var SOURCES = [
                 reset: "SECONDARY_RESET",
                 windowSeconds: 604800,
                 labelKey: "Weekly Window"
+            },
+            tertiary: {
+                util: "TERTIARY_UTIL",
+                reset: "TERTIARY_RESET",
+                windowSeconds: 2592000,
+                labelKey: "Monthly Window"
             }
         },
         accounts: {
@@ -647,7 +657,8 @@ var SOURCES = [
             fields: pickFields("opencode", [
                 "CREDS_STATUS",
                 "PRIMARY_UTIL", "PRIMARY_RESET",
-                "SECONDARY_UTIL", "SECONDARY_RESET"
+                "SECONDARY_UTIL", "SECONDARY_RESET",
+                "TERTIARY_UTIL", "TERTIARY_RESET"
             ])
         },
         login: {
@@ -667,13 +678,16 @@ var SOURCES = [
         },
         planStyle: "plan",
         // The response carries no plan name and no spend, so the tab holds the
-        // Source name and its two Window cards, with no stats, chart or models.
+        // Source name and its Window cards, with no stats, chart or models.
+        // The caption under the Windows card says why the weekly and monthly
+        // Windows legitimately diverge: the monthly allowance is
+        // quota-weighted by model.
         sections: [
             { type: "header" },
             { type: "accounts" },
             { type: "login" },
             { type: "status" },
-            { type: "windows" }
+            { type: "windows", captionKey: "Monthly Utilisation is quota-weighted by model" }
         ]
     },
     {
@@ -835,18 +849,19 @@ function resolveList(stored, known) {
     return enabled;
 }
 
-// The Source's Tightest Window: whichever of its Windows carries the highest
-// Utilisation, so the limit that will stop the user first is the one a row
-// names. Which Window that is varies by Source and over time, so callers read
-// `window` rather than assuming a slot. A tie goes to the primary Window, the
-// slot the Pill's Ring already draws.
+// The Source's Tightest Window: whichever of its reported Windows carries the
+// highest Utilisation, so the limit that will stop the user first is the one a
+// row names. Which Window that is varies by Source and over time, so callers
+// read `window` rather than assuming a slot. A tie goes to the primary Window,
+// the slot the Pill's Ring already draws. A Source with no tertiary reading
+// carries none there, so two-Window Sources rank exactly as before.
 //
 // Returns { window, util, resetMs }, or null when the state carries no Window
 // reading at all.
 function tightestWindow(state) {
     if (!state)
         return null;
-    var slots = ["primary", "secondary"];
+    var slots = ["primary", "secondary", "tertiary"];
     var best = null;
     for (var i = 0; i < slots.length; i++) {
         var w = state[slots[i]];

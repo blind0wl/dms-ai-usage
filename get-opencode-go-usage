@@ -32,11 +32,11 @@ require_requirements "$@"
 #
 # `rolling` is the 5-hour Window and `weekly` the weekly one, each a percentage
 # of that Window's own allowance. `resetsAt` is ISO-8601, so the widget parses
-# it without any unit conversion. `monthly` is returned but not modelled,
-# because the registry gives every Source two Window slots and the Go console
-# surfaces exactly these two. Window lengths are declared in the descriptor, not
-# derived here, because the resets fall on boundaries rather than as rolling
-# spans.
+# it without any unit conversion. `monthly` is the tertiary (monthly) Window,
+# reported under its own key pair so it never overwrites the weekly one, and
+# omitted entirely when the endpoint does not carry it. Window lengths are
+# declared in the descriptor, not derived here, because the resets fall on
+# boundaries rather than as rolling spans.
 API_URL="https://opencode.ai/zen/go/v1/usage"
 
 # Credential discovery order, first hit wins:
@@ -94,6 +94,8 @@ PRIMARY_UTIL=0
 PRIMARY_RESET=
 SECONDARY_UTIL=0
 SECONDARY_RESET=
+TERTIARY_UTIL=0
+TERTIARY_RESET=
 CREDS_STATUS=not_installed
 ACCOUNTS=
 ACCOUNT_ORIGINS=
@@ -112,16 +114,30 @@ fetch_account_usage() {
     local plan_type="unknown"
     local primary_util=0 primary_reset=""
     local secondary_util=0 secondary_reset=""
+    local tertiary_util=0 tertiary_reset=""
+    # Whether this Account reported a tertiary (monthly) reading. Set for a
+    # rejected key (its own zero, like the other Windows) and for a good
+    # response carrying the monthly entry; left empty when the endpoint did
+    # not carry it, so no zero is fabricated for it.
+    local tertiary_reported=""
     local creds_status="missing"
 
     write_out() {
-        write_usage_result "$out_file" \
-            "PLAN_TYPE=$plan_type" \
-            "PRIMARY_UTIL=$primary_util" \
-            "PRIMARY_RESET=$primary_reset" \
-            "SECONDARY_UTIL=$secondary_util" \
-            "SECONDARY_RESET=$secondary_reset" \
-            "CREDS_STATUS=$creds_status"
+        local args=(
+            "PLAN_TYPE=$plan_type"
+            "PRIMARY_UTIL=$primary_util"
+            "PRIMARY_RESET=$primary_reset"
+            "SECONDARY_UTIL=$secondary_util"
+            "SECONDARY_RESET=$secondary_reset"
+        )
+        if [ -n "$tertiary_reported" ]; then
+            args+=(
+                "TERTIARY_UTIL=$tertiary_util"
+                "TERTIARY_RESET=$tertiary_reset"
+            )
+        fi
+        args+=("CREDS_STATUS=$creds_status")
+        write_usage_result "$out_file" "${args[@]}"
     }
 
     # A failure report carries only the lines the fetch actually has: the status,
@@ -152,6 +168,7 @@ fetch_account_usage() {
     # whatever the body says, so it is read before the body is parsed.
     if [ "$http" = "401" ] || [ "$http" = "403" ]; then
         creds_status="missing"
+        tertiary_reported=1
         write_out
         return
     fi
@@ -183,6 +200,7 @@ fetch_account_usage() {
     fi
     if [ "$body_error" = "AuthError" ]; then
         creds_status="missing"
+        tertiary_reported=1
         write_out
         return
     fi
@@ -221,6 +239,27 @@ fetch_account_usage() {
         return
     fi
 
+    # The monthly entry is optional: older or partial responses may not carry
+    # it, and then no tertiary reading is reported rather than a zero. A
+    # genuine 0% monthly reading still counts, because the entry is present.
+    local monthly_present="no"
+    monthly_present=$(printf '%s' "$body" | jq -r 'if (.usage.monthly.percent != null) then "yes" else "no" end' 2>/dev/null) || extraction_failed=true
+    if [ "$extraction_failed" = true ]; then
+        creds_status="blocked"
+        write_failure
+        return
+    fi
+    if [ "$monthly_present" = "yes" ]; then
+        tertiary_util=$(printf '%s' "$body" | jq -r '.usage.monthly.percent // 0' 2>/dev/null) || extraction_failed=true
+        tertiary_reset=$(printf '%s' "$body" | jq -r '.usage.monthly.resetsAt // ""' 2>/dev/null) || extraction_failed=true
+        if [ "$extraction_failed" = true ]; then
+            creds_status="blocked"
+            write_failure
+            return
+        fi
+        tertiary_reported=1
+    fi
+
     write_out
 }
 
@@ -248,6 +287,11 @@ PRIMARY_UTIL=0
 PRIMARY_RESET=""
 SECONDARY_UTIL=0
 SECONDARY_RESET=""
+TERTIARY_UTIL=0
+TERTIARY_RESET=""
+# Set once any Account reports a tertiary reading, so the aggregate emits the
+# tertiary pair only then and never fabricates a zero for it.
+TERTIARY_REPORTED=""
 CREDS_STATUS="missing"
 
 # Per-Account lists, in the "name:value,name2:value2" form the Claude and
@@ -257,6 +301,8 @@ ACCOUNT_PRIMARY_UTIL=""
 ACCOUNT_PRIMARY_RESET=""
 ACCOUNT_SECONDARY_UTIL=""
 ACCOUNT_SECONDARY_RESET=""
+ACCOUNT_TERTIARY_UTIL=""
+ACCOUNT_TERTIARY_RESET=""
 ACCOUNT_CREDS_STATUS=""
 BLOCKING_REQUIREMENT=""
 
@@ -274,8 +320,16 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     a_pr=$(result_value "$usage_tmpf" PRIMARY_RESET "")
     a_su=$(result_value "$usage_tmpf" SECONDARY_UTIL 0)
     a_sr=$(result_value "$usage_tmpf" SECONDARY_RESET "")
+    a_tu=$(result_value "$usage_tmpf" TERTIARY_UTIL "")
+    a_tr=$(result_value "$usage_tmpf" TERTIARY_RESET "")
     a_cs=$(result_value "$usage_tmpf" CREDS_STATUS missing)
     a_br=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
+    # Whether this Account carried a tertiary reading at all. An absent key
+    # is no reading, not a zero; a genuine 0% monthly reading still counts.
+    a_has_tertiary=""
+    if grep -q "^TERTIARY_UTIL=" "$usage_tmpf" 2>/dev/null; then
+        a_has_tertiary=1
+    fi
 
     # Plan/status come from the "default" account, falling back to the first
     # account when the user only configured named ones.
@@ -297,6 +351,16 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
         SECONDARY_UTIL="$a_su"
         SECONDARY_RESET="$a_sr"
     fi
+    # Tertiary binds the same way: the highest monthly Utilisation wins, and
+    # its reset is the one the countdown shows. An Account with no monthly
+    # reading binds nothing.
+    if [ -n "$a_has_tertiary" ] && [ -n "$a_tr" ] && { [ -z "$TERTIARY_RESET" ] || [ "$(max_util "$a_tu" "$TERTIARY_UTIL")" = "1" ]; }; then
+        TERTIARY_UTIL="$a_tu"
+        TERTIARY_RESET="$a_tr"
+    fi
+    if [ -n "$a_has_tertiary" ]; then
+        TERTIARY_REPORTED=1
+    fi
 
     # Each Account's own reading, so a rejected key cannot disappear behind a
     # healthy default. A Blocked or Unavailable Account has no reading to carry,
@@ -309,6 +373,12 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
         ACCOUNT_PRIMARY_RESET="${ACCOUNT_PRIMARY_RESET:+${ACCOUNT_PRIMARY_RESET},}${aname}:${a_pr}"
         ACCOUNT_SECONDARY_UTIL="${ACCOUNT_SECONDARY_UTIL:+${ACCOUNT_SECONDARY_UTIL},}${aname}:${a_su}"
         ACCOUNT_SECONDARY_RESET="${ACCOUNT_SECONDARY_RESET:+${ACCOUNT_SECONDARY_RESET},}${aname}:${a_sr}"
+        # No monthly reading means no tertiary entries for this Account,
+        # matching the aggregate: nothing reported, nothing fabricated.
+        if [ -n "$a_has_tertiary" ]; then
+            ACCOUNT_TERTIARY_UTIL="${ACCOUNT_TERTIARY_UTIL:+${ACCOUNT_TERTIARY_UTIL},}${aname}:${a_tu}"
+            ACCOUNT_TERTIARY_RESET="${ACCOUNT_TERTIARY_RESET:+${ACCOUNT_TERTIARY_RESET},}${aname}:${a_tr}"
+        fi
     fi
 
     rm -f "$usage_tmpf"
@@ -326,6 +396,13 @@ if [ "$CREDS_STATUS" != "unavailable" ] && [ "$CREDS_STATUS" != "blocked" ]; the
     echo "PRIMARY_RESET=${PRIMARY_RESET}"
     echo "SECONDARY_UTIL=${SECONDARY_UTIL}"
     echo "SECONDARY_RESET=${SECONDARY_RESET}"
+    # The tertiary pair is emitted only when some Account reported a monthly
+    # reading: a failed endpoint and a response without the entry both leave
+    # the widget's last-good reading in place rather than a fresh zero.
+    if [ -n "$TERTIARY_REPORTED" ]; then
+        echo "TERTIARY_UTIL=${TERTIARY_UTIL}"
+        echo "TERTIARY_RESET=${TERTIARY_RESET}"
+    fi
 fi
 echo "CREDS_STATUS=${CREDS_STATUS}"
 # Emitted only for a Blocked report, so the other outputs are unchanged and the
@@ -338,4 +415,6 @@ echo "ACCOUNT_PRIMARY_UTIL=${ACCOUNT_PRIMARY_UTIL}"
 echo "ACCOUNT_PRIMARY_RESET=${ACCOUNT_PRIMARY_RESET}"
 echo "ACCOUNT_SECONDARY_UTIL=${ACCOUNT_SECONDARY_UTIL}"
 echo "ACCOUNT_SECONDARY_RESET=${ACCOUNT_SECONDARY_RESET}"
+echo "ACCOUNT_TERTIARY_UTIL=${ACCOUNT_TERTIARY_UTIL}"
+echo "ACCOUNT_TERTIARY_RESET=${ACCOUNT_TERTIARY_RESET}"
 echo "ACCOUNT_CREDS_STATUS=${ACCOUNT_CREDS_STATUS}"

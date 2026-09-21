@@ -52,7 +52,7 @@ const nameKey = (key) => {
 };
 for (const d of registry.api.SOURCES) {
     nameKey(d.labelKey);
-    for (const which of ["primary", "secondary"]) {
+    for (const which of ["primary", "secondary", "tertiary"]) {
         const w = d.windows ? d.windows[which] : null;
         if (w)
             nameKey(w.labelKey);

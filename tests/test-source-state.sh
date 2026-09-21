@@ -151,6 +151,22 @@ check(report("claude", ["FIVE_HOUR_RESET=not a date"]).state.primary.resetMs ===
 check(report("chatgpt", ["PRIMARY_WINDOW_SECONDS=18000"]).state.primary.windowSeconds === 18000,
       "a Source that reports its own Window length keeps it on the slot");
 
+// --- The tertiary Window is Go-only and absent until reported ---
+check(State.empty().tertiary === null,
+      "the empty State carries no tertiary Window, so two-Window Sources draw no third row");
+const tertiary = report("opencode", [
+    "TERTIARY_UTIL=42.5",
+    "TERTIARY_RESET=2099-01-01T00:00:00Z"
+]).state;
+check(tertiary.tertiary !== null && tertiary.tertiary.util === 42.5,
+      "the tertiary slot reads the key the Go descriptor names");
+check(tertiary.tertiary.resetMs === Date.parse("2099-01-01T00:00:00Z"),
+      "a tertiary ISO-8601 reset is normalised to epoch milliseconds");
+check(report("claude", ["TERTIARY_UTIL=99"]).state.tertiary === null,
+      "a tertiary key for a Source whose descriptor declares none is ignored");
+check(report("opencode", ["PRIMARY_UTIL=10"]).state.tertiary === null,
+      "a Go report without the monthly entry leaves no tertiary reading, never a zero");
+
 // --- The credential status, and the counting behind Hidden ---
 const blocked = report("claude", ["BLOCKING_REQUIREMENT=jq,curl", "CREDS_STATUS=blocked"]).state;
 check(blocked.credsStatus === "blocked" && blocked.blockingRequirement === "jq,curl",
@@ -242,6 +258,33 @@ check(spare.primary.util === acct.state.primary.util,
 const omitted = report("claude", ["ACCOUNT_FIVE_HOUR_UTIL=home:9"], acct);
 check(omitted.accounts.work.primaryUtil === 60,
       "an Account omitted from a run keeps its last good reading rather than reading the silence as zero");
+
+// The tertiary overlay follows the same rules: per-Account readings lay over
+// the Source's own, and an Account with none shows the Source's.
+const goAcct = report("opencode", [
+    "ACCOUNTS=default,work",
+    "ACCOUNT_PRIMARY_UTIL=default:1,work:80",
+    "ACCOUNT_TERTIARY_UTIL=default:3,work:9",
+    "ACCOUNT_TERTIARY_RESET=default:2026-10-16T05:20:21.155Z,work:2026-10-17T00:00:00.000Z",
+    "TERTIARY_UTIL=9",
+    "TERTIARY_RESET=2026-10-17T00:00:00.000Z"
+]);
+const goSel = State.render(goAcct.state, goAcct.accounts, { selected: "work", todayIndex: 0 });
+check(goSel.tertiary !== null && goSel.tertiary.util === 9,
+      "a selected Account's tertiary Utilisation lays over the Source's own");
+check(goSel.tertiary.resetMs === Date.parse("2026-10-17T00:00:00.000Z"),
+      "a selected Account's tertiary reset lays over the Source's own");
+check(goSel.tertiary.windowSeconds === goAcct.state.tertiary.windowSeconds,
+      "the tertiary length stays the Source's under a selection");
+const goSparse = report("opencode", ["ACCOUNT_CREDS_STATUS=spare:missing"], goAcct);
+const goSpare = State.render(
+    report("opencode", ["ACCOUNTS=default,work,spare"], goSparse).state,
+    goSparse.accounts, { selected: "spare", todayIndex: 0 });
+check(goSpare.tertiary.util === goAcct.state.tertiary.util,
+      "an Account with no tertiary reading of its own shows the Source's");
+const goMissing = State.render(goAcct.state, goAcct.accounts, { selected: "all", todayIndex: 0 });
+check(goMissing.tertiary !== null && goMissing.tertiary.util === 9,
+      "with no Account selected the aggregate tertiary renders");
 
 const ghost = State.render(acct.state, acct.accounts, { selected: "deleted-one", todayIndex: 0 });
 check(ghost.weekTokens === acct.state.weekTokens && ghost.accountDaily === undefined,

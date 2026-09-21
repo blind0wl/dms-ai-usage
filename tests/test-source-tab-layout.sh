@@ -51,10 +51,10 @@ check(/ctx\.descriptor\.planStyle/.test(header), "the header still reads the pla
 check(!/api\.tr\("Plan"\)/.test(header) && !/api\.tr\("Subscription"\)/.test(header),
       "the plan chip shows the plan itself, not a Plan:/Subscription: prefix");
 
-// --- The Windows card: both Windows as bar rows, no Ring ---
+// --- The Windows card: up to three Windows as bar rows, no Ring ---
 const windows = ui("WindowsSection");
-check(/model:\s*\["primary",\s*"secondary"\]/.test(windows),
-      "one card holds both Windows");
+check(/model:\s*\["primary",\s*"secondary",\s*"tertiary"\]/.test(windows),
+      "one card holds all three Windows, dropping slots with no reading");
 check(!/\bRing\s*\{/.test(windows), "the Windows card draws bars, not rings");
 check(/import\s+"\.\.\/sources\.js"\s+as\s+Sources/.test(windows),
       "the Windows card reads the shared reading rule from the registry");
@@ -66,7 +66,23 @@ check(/api\.utilisationColor\(/.test(windows), "the Windows bars and percentages
 check(/timeFrac/.test(windows), "each Window bar carries a pace tick at the linear-burn position");
 check(/section\.counts === true/.test(windows) && /modelData !== "secondary"/.test(windows),
       "the week's counts ride on the secondary row only");
+check(/modelData !== "tertiary"/.test(windows),
+      "the tertiary row shows no pacing tick and no pacing label");
+check(/captionKey/.test(windows),
+      "the Windows card renders the Section's one-line caption while the tertiary row is shown");
 check(/root\.api\.tr\("Resets in"\)/.test(windows), "each Window row names its reset countdown");
+
+// --- The tertiary Window is Go-only ---
+const opencodeDesc = byId("opencode");
+check(opencodeDesc.windows.tertiary !== undefined, "opencode Go declares a tertiary Window");
+check(opencodeDesc.windows.tertiary.labelKey === "Monthly Window", "the tertiary Window is labelled Monthly Window");
+check(opencodeDesc.windows.tertiary.windowSeconds === 2592000, "the tertiary Window declares about 30 days");
+check(opencodeDesc.windows.tertiary.util === "TERTIARY_UTIL" && opencodeDesc.windows.tertiary.reset === "TERTIARY_RESET",
+      "the tertiary Window names its own report keys, never the weekly ones");
+for (const d of sources) {
+    if (d.id === "opencode") continue;
+    check(d.windows.tertiary === undefined, `descriptor "${d.id}" declares no tertiary Window and renders two rows`);
+}
 
 // --- The status card reads the same rule for its last-known copy ---
 const status = ui("StatusSection");

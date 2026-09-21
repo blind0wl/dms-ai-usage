@@ -297,7 +297,9 @@ PluginComponent {
     // (ChatGPT, Z.ai) falls back to the length itself, and a Window whose length
     // has not arrived yet falls back to its slot's generic name.
     function windowLabelForLength(seconds, which) {
-        var generic = which === "primary" ? "Primary Window" : "Secondary Window";
+        // One generic fallback per slot; only Sources whose descriptor names
+        // no label get here (ChatGPT, Z.ai), so tertiary's is defensive.
+        var generic = which === "primary" ? "Primary Window" : which === "tertiary" ? "Tertiary Window" : "Secondary Window";
         return root.formatWindowLabel(seconds, generic);
     }
 
@@ -478,7 +480,11 @@ PluginComponent {
                 var st = root.sourceData[id];
                 if (!st)
                     continue;
-                var expired = (st.primary.resetMs && st.primary.resetMs <= now) || (st.secondary.resetMs && st.secondary.resetMs <= now);
+                // A Window whose reset has passed refetches rather than sitting
+                // on "Resetting...". Tertiary needs its own presence guard: it
+                // is null until a report carries it, while the other two slots
+                // always exist.
+                var expired = (st.primary.resetMs && st.primary.resetMs <= now) || (st.secondary.resetMs && st.secondary.resetMs <= now) || (st.tertiary && st.tertiary.resetMs && st.tertiary.resetMs <= now);
                 if (expired)
                     root.requestFetch(id);
             }

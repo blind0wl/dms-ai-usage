@@ -83,9 +83,11 @@ _Avoid_: scan, inventory, detection pass, probe
 
 **Window**:
 A rate-limited period a Source allows usage in, with a length, a Utilisation and
-a reset time. A Source has up to two, called primary and secondary. A length
-follows the provider: 5 hours and 7 days for Claude, Z.ai and opencode Go,
-whatever the API reports for ChatGPT.
+a reset time. A Source has up to three, called primary, secondary and tertiary.
+Only opencode Go reports a tertiary Window, its monthly one; the others report
+at most two. A length follows the provider: 5 hours and 7 days for Claude, Z.ai
+and opencode Go's primary and secondary, about 30 days for opencode Go's
+tertiary, whatever the API reports for ChatGPT.
 _Avoid_: period, limit, quota, bucket
 
 **Utilisation**:
@@ -110,7 +112,7 @@ _Avoid_: accent, tint, source colour, theme colour
 
 **Tightest Window**:
 The one of a Source's Windows with the highest Utilisation: the limit that will
-stop the user first. Which of the two it is varies by Source and over time.
+stop the user first. Which of them it is varies by Source and over time.
 _Avoid_: worst, nearest, critical, primary
 
 **Pacing**:

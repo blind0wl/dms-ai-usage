@@ -37,6 +37,12 @@ var strings = {
         { fr: "Fenêtre principale", es: "Ventana principal" },
     "Secondary Window":
         { fr: "Fenêtre secondaire", es: "Ventana secundaria" },
+    "Tertiary Window":
+        { fr: "Fenêtre tertiaire", es: "Ventana terciaria" },
+    "Monthly Window":
+        { fr: "Fenêtre mensuelle", es: "Ventana mensual" },
+    "Monthly Utilisation is quota-weighted by model":
+        { fr: "L'utilisation mensuelle est pondérée par modèle", es: "El uso mensual está ponderado por modelo" },
     "5h Window":
         { fr: "Fenêtre de 5 h", es: "Ventana de 5 h" },
     "Weekly Window":
