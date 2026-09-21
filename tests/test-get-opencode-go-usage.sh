@@ -231,6 +231,8 @@ OUT3=$(run_script "$H3")
 assert_eq "$(val "$OUT3" CREDS_STATUS)" "not_installed" "CREDS_STATUS=not_installed with no key from any source"
 assert_eq "$(val "$OUT3" ACCOUNTS)" "" "ACCOUNTS empty when not installed"
 assert_eq "$(val "$OUT3" PRIMARY_UTIL)" "0" "PRIMARY_UTIL=0 when not installed, but hidden by the status"
+assert_eq "$(val "$OUT3" TERTIARY_UTIL)" "0" "TERTIARY_UTIL=0 when not installed, like the other Windows"
+assert_eq "$(val "$OUT3" TERTIARY_RESET)" "" "TERTIARY_RESET empty when not installed, like the other Windows"
 
 # An empty key field is not a credential.
 H3B=$(new_home home3b)
@@ -360,6 +362,8 @@ LIST9=$(run_script "$H9" --list-accounts)
 assert_eq "$(val "$LIST9" ACCOUNTS)" "default" "listing mode lists the detected Account"
 assert_eq "$(val "$LIST9" ACCOUNT_ORIGINS)" "default:~/.pi/agent/auth.json" "listing mode names the pi auth store as the origin"
 assert_eq "$(echo "$LIST9" | wc -l)" "3" "listing mode returns the Account, origin and refused lists and nothing else"
+assert_no_key "$LIST9" "TERTIARY_UTIL" "listing mode carries no tertiary reading, so opening settings costs no monthly fetch"
+assert_no_key "$LIST9" "TERTIARY_RESET" "listing mode carries no tertiary reset"
 LIST9B=$(run_script "$(new_home home9b)" --list-accounts)
 assert_eq "$(echo "$LIST9B" | grep "^CREDS_STATUS=" | cut -d= -f2)" "not_installed" "an empty listing says the Source is not installed, rather than leaving the page to blame the rows"
 

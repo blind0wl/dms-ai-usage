@@ -137,6 +137,8 @@ for script in $SCRIPTS; do
     done
     assert_no_key "$OUT" "PLAN_TYPE" "the guard returns before the Script reports a plan"
     assert_no_key "$OUT" "PRIMARY_UTIL" "the guard returns before any Window reading"
+    assert_no_key "$OUT" "TERTIARY_UTIL" "the guard returns before the tertiary Window reading too"
+    assert_no_key "$OUT" "TERTIARY_RESET" "the guard returns before the tertiary Window reset too"
 
     if [ -s "$CURL_LOG" ]; then
         fail "no request may be made while a Requirement is absent"
