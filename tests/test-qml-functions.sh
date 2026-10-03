@@ -103,10 +103,45 @@ check(cmd[2].indexOf("CLAUDE_CONFIG_DIR='/home/u/.ccp/work'") === 0, "Claude's l
 check(cmd[2].indexOf("exec claude 'auth' 'login' '--claudeai'") >= 0, "the login program and args come from the descriptor");
 check(cmd[2].indexOf("exec claude auth login") < 0, "descriptor args are shell-quoted, not concatenated raw");
 const cmdCg = widget.loginCommandFor(Sources.byId("chatgpt"), "chatgpt");
-check(cmdCg[2].indexOf("CLAUDE_CONFIG_DIR=") < 0, "a login with no declared environment exports nothing");
+check(cmdCg[2].indexOf("CLAUDE_CONFIG_DIR=") < 0, "ChatGPT login does not export Claude's config directory");
 check(cmdCg[2].indexOf("exec codex 'login'") >= 0, "ChatGPT's login program comes from its descriptor");
 widget.selectedAccount = { claude: "all" };
 check(widget.loginCommandFor(Sources.byId("claude"), "claude")[2].indexOf("CLAUDE_CONFIG_DIR=") < 0, "the aggregate selection leaves the CLI's own default in place");
+
+// Execute the generated shell command with a stand-in for the interactive
+// Codex CLI. This observes the directory passed to login without authenticating
+// or touching real credentials. Missing routing or literal ~/ paths break it.
+const os = require("os");
+const childProcess = require("child_process");
+const loginDir = fs.mkdtempSync(path.join(os.tmpdir(), "chatgpt-login-"));
+try {
+    fs.writeFileSync(path.join(loginDir, "codex"), '#!/bin/sh\nprintf "%s" "$CODEX_HOME"\n', { mode: 0o755 });
+    const loginHome = (name, accountPath) => {
+        widget.accountSettings = { customChatgptAccounts: [{ name: "work", path: accountPath }] };
+        widget.selectedAccount = { chatgpt: name };
+        const command = widget.loginCommandFor(Sources.byId("chatgpt"), "chatgpt");
+        return childProcess.execFileSync(command[0], command.slice(1), {
+            encoding: "utf8",
+            env: Object.assign({}, process.env, {
+                PATH: loginDir + ":" + process.env.PATH,
+                HOME: "/home/test-user",
+                CODEX_HOME: "/inherited/default"
+            })
+        });
+    };
+    check(loginHome("work", "/accounts/second") === "/accounts/second",
+          "ChatGPT login uses the selected second Account's auth directory");
+    check(loginHome("work", "~/.codex-work") === "/home/test-user/.codex-work",
+          "ChatGPT login expands a home-relative Account directory");
+    check(loginHome("work", "/accounts/work's folder") === "/accounts/work's folder",
+          "ChatGPT login preserves spaces and quotes in the Account directory");
+    check(loginHome("default", "/accounts/second") === "/inherited/default",
+          "ChatGPT default login preserves the inherited CODEX_HOME");
+    check(loginHome("all", "/accounts/second") === "/inherited/default",
+          "ChatGPT aggregate login preserves the inherited CODEX_HOME");
+} finally {
+    fs.rmSync(loginDir, { recursive: true, force: true });
+}
 
 // An arg with a space or a quote is the extension point this schema exists to
 // create, so it must survive into the bash string intact.

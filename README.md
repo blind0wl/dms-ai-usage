@@ -156,6 +156,9 @@ an auto-detected profile is skipped.
 Add additional accounts under **Custom ChatGPT Accounts** the same way, with a name and an
 auth directory (the folder containing `auth.json`, i.e. whatever `~/.codex` is by default).
 
+Select an account in the ChatGPT tab before pressing **Log in** to authenticate
+that account's directory. The **All** selection logs into the default account.
+
 ### Custom Z.ai Accounts
 
 Z.ai has no local config directory, so its accounts are registered by API key instead of by
