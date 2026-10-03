@@ -28,6 +28,7 @@ function create(pluginDirectory, pluginId, descriptor) {
     // answer standing beside the failed flag.
     var listing = {
         names: "", origins: "", shadowed: "",
+        itemsSignature: "",
         answered: false, absent: false, blocked: false,
         requirement: "", failed: false
     };
@@ -38,6 +39,7 @@ function create(pluginDirectory, pluginId, descriptor) {
     var listPending = false;
     var listQueued = false;
     var pendingList = blankAnswer();
+    var pendingItemsSignature = "";
 
     // The Add guard's two questions: 0 idle, 1 the list as it stands asked,
     // 2 the list with the candidate row asked. `asked` snapshots the row and
@@ -69,6 +71,7 @@ function create(pluginDirectory, pluginId, descriptor) {
             return { kind: "queued" };
         }
         pendingList = blankAnswer();
+        pendingItemsSignature = JSON.stringify(list || []);
         listPending = true;
         return { kind: "run", command: command(Sources.accountArgs(descriptor, list)) };
     }
@@ -137,6 +140,7 @@ function create(pluginDirectory, pluginId, descriptor) {
             return { kind: "failed", rerun: rerun };
         }
         listing.names = pendingList.names;
+        listing.itemsSignature = pendingItemsSignature;
         listing.origins = pendingList.origins;
         listing.shadowed = pendingList.shadowed;
         listing.answered = pendingList.answered;
