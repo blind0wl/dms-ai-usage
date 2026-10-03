@@ -58,6 +58,38 @@ const Listing = load("listing.js", "; this.api = { create };", { Sources }).api;
 const results = [];
 const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
 
+// Drive the editor's actual warning binding with a listing from before a
+// Custom Account was added. An old answer must not judge the new row, including
+// when the subsequent refresh fails and the previous listing is retained.
+const editorSource = fs.readFileSync(path.join(root, "ui/AccountsEditor.qml"), "utf8");
+const editorSources = load("sources.js", "; this.api = { unregisteredRows };").api;
+const editorRoot = {
+    items: [], sourceAbsent: false, listFailed: false,
+    listedAccounts: "default", listedOrigins: "default:~/.codex",
+    listedItemsSignature: "[]", listingAnswered: true
+};
+const editorSandbox = { root: editorRoot, Sources: editorSources };
+vm.createContext(editorSandbox);
+const currentBinding = editorSource.match(/readonly property bool listingCurrent:\s*([^\n]+)/);
+Object.defineProperty(editorRoot, "listingCurrent", {
+    get: () => currentBinding ? vm.runInContext(currentBinding[1], editorSandbox) : true
+});
+const unregisteredBinding = editorSource.match(/readonly property var unregistered:([\s\S]*?)\n\n/)[1];
+const warnings = () => vm.runInContext("(" + unregisteredBinding + ")", editorSandbox);
+editorRoot.items = [{ name: "second", path: "~/.codex-second" }];
+check(warnings().length === 0, "an older listing does not mark a newly added Account unused");
+editorRoot.listFailed = true;
+check(warnings().length === 0, "a failed refresh does not turn an older listing into an Account verdict");
+editorRoot.listFailed = false;
+editorRoot.listedItemsSignature = JSON.stringify(editorRoot.items);
+check(warnings().length === 1, "a current listing can still warn about a genuinely refused Account");
+editorRoot.listFailed = true;
+check(warnings().length === 0, "a failed refresh suppresses Account verdicts even when the settings list matches");
+editorRoot.listFailed = false;
+editorRoot.listedAccounts = "default,second";
+editorRoot.listedOrigins = "default:~/.codex,second:custom";
+check(warnings().length === 0, "a registered second Account has no unused warning");
+
 // A fake Descriptor: only the wiring the conversation reads is declared. The
 // command assertions lean on scriptCommand's shape:
 // ["timeout", "120", "bash", <script path>, ...args].
@@ -82,6 +114,8 @@ machine.onListLine(Sources.ORIGINS_KEY + "=work:~/.claude,home:custom");
 machine.onListLine(Sources.STATUS_KEY + "=ok");
 
 const firstExit = machine.onListExit(0);
+check(machine.listing.itemsSignature === '[{"name":"a","path":"/x"}]',
+      "a committed listing identifies the Custom Account list the Script answered");
 check(firstExit.kind === "committed" && firstExit.rerun === true,
       "a listing that lands while another was asked commits and says to re-ask");
 check(machine.listing.names === "work,home" &&

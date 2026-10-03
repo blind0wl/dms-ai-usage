@@ -37,6 +37,8 @@ Column {
     property string listedAccounts: ""
     property string listedOrigins: ""
     property string listedShadowed: ""
+    property string listedItemsSignature: ""
+    readonly property bool listingCurrent: root.listedItemsSignature === JSON.stringify(root.items)
 
     // Set once the Script has answered with its Account list, so a Source whose
     // Script registered nothing still marks the rows it registered nothing for. A
@@ -87,7 +89,7 @@ Column {
     // and their row here does nothing. The listing is the only thing that can say
     // which rows those are, so it says nothing until it has answered with an
     // Account: an uninstalled Source leaves every row unmarked.
-    readonly property var unregistered: root.sourceAbsent
+    readonly property var unregistered: root.sourceAbsent || root.listFailed || !root.listingCurrent
         ? []
         : Sources.unregisteredRows(root.listedAccounts, root.listedOrigins, root.items, root.listingAnswered)
 
@@ -283,6 +285,10 @@ Column {
     // config directory that does not exist. The copy speaks of the Source, which
     // is the user's word for what stops working, not of the Script that runs it.
     function customRowStatus(index, name) {
+        // A retained answer to an older settings list cannot judge today's
+        // rows. Failed refreshes are reported separately from Account warnings.
+        if (!root.listingCurrent || root.listFailed)
+            return "";
         if (root.unregistered.indexOf(index) < 0) {
             var replaced = Sources.displacedOrigin(root.detected, name);
             if (replaced === null)
@@ -350,6 +356,7 @@ Column {
         root.listedAccounts = l.names;
         root.listedOrigins = l.origins;
         root.listedShadowed = l.shadowed;
+        root.listedItemsSignature = l.itemsSignature;
         root.listingAnswered = l.answered;
         root.sourceAbsent = l.absent;
         root.blocked = l.blocked;
