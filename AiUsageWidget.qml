@@ -513,8 +513,17 @@ PluginComponent {
         var cmd = "";
         if (d.login.env && d.login.env.accountField) {
             var value = root.accountFieldFor(id, root.selectedAccount[id] || "all", d.login.env.accountField);
-            if (value)
-                cmd = d.login.env.variable + "=" + root.shellQuote(value) + " ";
+            if (value) {
+                // Quoting a settings path keeps spaces safe but prevents the
+                // shell from expanding ~. Match the Scripts' ~/ handling and
+                // expand only HOME, leaving the rest of the path literal.
+                var quotedValue = root.shellQuote(value);
+                if (value === "~")
+                    quotedValue = '"$HOME"';
+                else if (value.indexOf("~/") === 0)
+                    quotedValue = '"$HOME"' + root.shellQuote(value.slice(1));
+                cmd = d.login.env.variable + "=" + quotedValue + " ";
+            }
         }
         cmd += 'PATH="$PATH:' + root.cliSearchPathAdditions + '" exec ' + d.login.program;
         var args = d.login.args || [];

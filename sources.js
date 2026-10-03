@@ -565,7 +565,11 @@ var SOURCES = [
         login: {
             kind: "cli",
             program: "codex",
-            args: ["login"]
+            args: ["login"],
+            env: {
+                variable: "CODEX_HOME",
+                accountField: "path"
+            }
         },
         status: {
             titleKey: "Usage endpoint unavailable",
