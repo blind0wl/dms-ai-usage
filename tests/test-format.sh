@@ -46,6 +46,8 @@ const load = (file, suffix, extra) => {
 };
 
 const Tr = load("translations.js", "; this.api = { tr };").api;
+const Sources = load("sources.js", "; this.api = { spendUtilisation };").api;
+const State = load("state.js", "; this.api = { hasCurrentReading };", { Sources }).api;
 
 // resetClockLabel formats through Qt.formatDateTime, which exists only under
 // QML. This shim models the engine for the three patterns format.js uses; it
@@ -63,8 +65,19 @@ const Qt = {
 };
 
 const Format = load("format.js",
-    "; this.api = { formatTokens, formatCost, paceInfo, formatCountdown, resetClockLabel, formatWindowLabel, formatTier, formatSubscription, paceLabel, shortModelName, todayIndex };",
+    "; this.api = { formatTokens, formatCost, paceInfo, calendarMonthPaceInfo, formatCountdown, resetClockLabel, formatWindowLabel, formatTier, formatSubscription, paceLabel, shortModelName, todayIndex };",
     { Tr: Tr, Qt: Qt }).api;
+
+// Exercise the production widget adapter against the real State and Sources
+// modules, while pinning its live clock for repeatable monthly-boundary cases.
+const widgetSource = read("AiUsageWidget.qml");
+const monthlySpendPaceSource = widgetSource.match(/^    function monthlySpendPace\(source, spend\) \{[\s\S]*?^    \}/m);
+if (!monthlySpendPaceSource)
+    throw new Error("AiUsageWidget.qml monthlySpendPace function not found");
+const widgetApi = { Sources, State, Format, countdownNow: Date.parse("2026-03-16T12:00:00Z") };
+vm.createContext(widgetApi);
+vm.runInContext(monthlySpendPaceSource[0].replace(/^    /gm, "") + "; this.api = { monthlySpendPace };", widgetApi);
+const Widget = widgetApi.api;
 
 const results = [];
 const check = (ok, label) => results.push(`${ok ? "PASS" : "FAIL"}\t${label}`);
@@ -116,6 +129,52 @@ eqj(Format.paceInfo(50, NOW - 60000, FIVE_H, NOW),
     { timeFrac: 1, delta: -50, status: "under" }, "a reset already past clamps the elapsed fraction at 1");
 eqj(Format.paceInfo(10, NOW + FIVE_H + 60000, FIVE_H, NOW),
     { timeFrac: 0, delta: 10, status: "over" }, "an unstarted Window clamps the elapsed fraction at 0");
+
+// --- calendarMonthPaceInfo: Claude Enterprise's documented UTC month ---
+const leapFebMid = Date.parse("2024-02-15T00:00:00Z");
+const leapFeb = Format.calendarMonthPaceInfo(50, leapFebMid);
+eq(leapFeb.timeFrac, 14 / 29, "leap February uses its 29 UTC calendar days");
+eq(leapFeb.status, "on", "a leap-February spend close to linear pace reads on pace");
+const thirtyDayMid = Format.calendarMonthPaceInfo(70, Date.parse("2026-04-16T00:00:00Z"));
+eq(thirtyDayMid.timeFrac, 0.5, "April's 30-day period is half elapsed on April 16 UTC");
+eq(thirtyDayMid.status, "over", "monthly spend ahead of the elapsed fraction reads over pace");
+const thirtyOneDayMid = Format.calendarMonthPaceInfo(40, Date.parse("2026-03-16T12:00:00Z"));
+eq(thirtyOneDayMid.timeFrac, 0.5, "March's 31-day period is half elapsed at March 16 noon UTC");
+eq(thirtyOneDayMid.status, "under", "monthly spend behind the elapsed fraction reads under pace");
+const janLastUtc = Date.parse("2026-01-31T23:30:00Z");
+const janLastPace = Format.calendarMonthPaceInfo(99, janLastUtc);
+eq(janLastPace.timeFrac,
+    (janLastUtc - Date.UTC(2026, 0, 1)) / (Date.UTC(2026, 1, 1) - Date.UTC(2026, 0, 1)),
+    "UTC month selection keeps Jan 31 UTC in January even if local time is already February");
+eq(Format.calendarMonthPaceInfo(10, Date.parse("2026-02-01T00:00:00Z")).timeFrac,
+    0, "the first instant of a new UTC month starts at zero pace");
+eq(Format.calendarMonthPaceInfo(50, Date.parse("2025-02-28T00:00:00Z")).timeFrac,
+    27 / 28, "ordinary February uses its 28 UTC calendar days");
+eq(Format.calendarMonthPaceInfo(99, Date.parse("2025-12-31T23:30:00Z")).timeFrac,
+    (Date.parse("2025-12-31T23:30:00Z") - Date.UTC(2025, 11, 1)) / (Date.UTC(2026, 0, 1) - Date.UTC(2025, 11, 1)),
+    "December pace ends at the UTC year boundary");
+eq(Format.calendarMonthPaceInfo(null, leapFebMid), null, "no budget percentage has no monthly pace");
+eq(Format.calendarMonthPaceInfo(-1, leapFebMid), null, "a negative percentage has no monthly pace");
+eq(Format.calendarMonthPaceInfo(50, NaN), null, "an invalid clock has no monthly pace");
+
+const currentSource = { credsStatus: "ok", hasData: true };
+const finiteSpend = { enabled: true, limitKind: "finite", limitMinor: 20000, usedMinor: 10000 };
+eqj(Widget.monthlySpendPace(currentSource, finiteSpend),
+    { timeFrac: 0.5, delta: 0, status: "on" },
+    "the current Enterprise budget uses its finite allowance and the live widget clock");
+const zeroSpend = Object.assign({}, finiteSpend, { usedMinor: 0 });
+eq(Widget.monthlySpendPace(currentSource, zeroSpend).status, "under",
+    "a valid zero-spend reading still gets monthly pacing");
+for (const [label, spend] of [
+    ["disabled credits", Object.assign({}, finiteSpend, { enabled: false })],
+    ["zero allowance", Object.assign({}, finiteSpend, { limitMinor: 0 })],
+    ["unknown allowance", Object.assign({}, finiteSpend, { limitKind: "unknown" })],
+    ["unlimited allowance", Object.assign({}, finiteSpend, { limitKind: "unlimited" })]
+]) {
+    eq(Widget.monthlySpendPace(currentSource, spend), null, label + " has no monthly pace");
+}
+eq(Widget.monthlySpendPace({ credsStatus: "unavailable", hasData: true }, finiteSpend), null,
+    "a stale last-known reading has no inferred monthly pace");
 
 // --- formatCountdown and resetClockLabel ---
 eq(Format.formatCountdown(0, "en", NOW), "", "a zero reset is empty");

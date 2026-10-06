@@ -24,9 +24,9 @@ The Overview is the Popout's first tab. It ranks the Sources you have visible by
 ## Features
 
 - **Taskbar pill** with a circular progress ring per enabled Source (Claude, ChatGPT, Z.ai, opencode Go), each showing its nearest-to-reset rate window
-- **Pacing indicator** on every Source, showing whether you're over or under a linear burn rate for each window (e.g. "6% over pace", "25% under pace")
+- **Pacing indicator** on every rate Window, showing whether you're over or under its linear burn rate (e.g. "6% over pace", "25% under pace"); Claude Enterprise's Monthly Budget also gets a labelled UTC calendar-month pace line
 - **Popout tabs**, the Overview first and then one tab per visible Source:
-  - **Claude**: 5-hour and 7-day rate window utilization with countdown timers and pacing; usage-based Enterprise accounts show reported monthly spend, allowance and remaining funds
+  - **Claude**: 5-hour and 7-day rate window utilization with countdown timers and pacing; usage-based Enterprise accounts show reported monthly spend, allowance, remaining funds and UTC calendar-month pacing
   - **ChatGPT**: primary and secondary rate windows (lengths reported by the API) with countdown timers and pacing
   - **Z.ai**: 5-hour and weekly rate windows with countdown timers and pacing, plus weekly model-call count
   - **opencode Go**: 5-hour and weekly rate windows with countdown timers and pacing. The usage endpoint carries no plan name and no spend figures, so this tab shows no token, cost, chart or model breakdown
@@ -77,9 +77,13 @@ No organisation Admin API key is needed. When Claude reports a monetary allowanc
 the tab shows reported spend, allowance and remaining funds in the original billing
 currency. If rate Windows are absent, the Pill and Overview use the monthly budget
 percentage. Disabled credits, a zero allowance, unlimited and unknown allowances
-show no invented percentage. The endpoint supplies no reset or freshness timestamp,
-so the budget has no countdown or pacing tick. Reported spend is separate from the
-local Claude Code token Cost estimate and is never calculated from it.
+show no invented percentage or pace. The spend line compares that percentage with
+the elapsed share of the documented UTC calendar month; it is labelled as such,
+shown only for a current reading, and has no reset countdown. The endpoint supplies
+no freshness timestamp, so a recently cached successful response can briefly carry
+last month's amount into the new month until a live fetch replaces it. Reported
+spend is separate from the local Claude Code token Cost estimate and is never
+calculated from it.
 
 The member OAuth endpoint is undocumented. The Script supports both its `spend`
 and `extra_usage` monetary shapes, respects currency/exponent metadata, and treats

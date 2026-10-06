@@ -879,8 +879,9 @@ function tightestWindow(state) {
     return best;
 }
 
-// Monetary budgets do not pretend to be rate Windows: no reset or pacing
-// is known. Only an enabled, positive finite allowance has a percentage.
+// Monetary budgets do not pretend to be rate Windows: only an enabled,
+// positive finite allowance has a percentage. Claude's Monthly Budget pace is
+// derived separately from the documented UTC calendar-month boundary.
 function spendUtilisation(spend) {
     if (!spend || !spend.enabled || spend.limitKind !== "finite" || !(spend.limitMinor > 0))
         return null;

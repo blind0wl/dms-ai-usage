@@ -650,6 +650,10 @@ PluginComponent {
             return root.paceFor(source, which);
         }
 
+        function monthlySpendPace(source, spend) {
+            return root.monthlySpendPace(source, spend);
+        }
+
         function countdown(source, which) {
             return root.countdownFor(source, which);
         }
@@ -974,6 +978,18 @@ PluginComponent {
 
     function paceInfo(util, resetMs, windowMs) {
         return Format.paceInfo(util, resetMs, windowMs, countdownNow);
+    }
+
+    // Enterprise spend carries no reset/freshness timestamp. Use the
+    // documented UTC calendar month only for a finite allowance on a current
+    // reading; an unavailable or stale State must not acquire an inferred pace.
+    function monthlySpendPace(source, spend) {
+        if (!State.hasCurrentReading(source))
+            return null;
+        var util = Sources.spendUtilisation(spend);
+        if (util === null)
+            return null;
+        return Format.calendarMonthPaceInfo(util, countdownNow);
     }
 
     function paceLabel(p) {

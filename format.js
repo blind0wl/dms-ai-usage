@@ -61,6 +61,25 @@ function paceInfo(util, resetMs, windowMs, now) {
     };
 }
 
+// The Claude Enterprise spend endpoint reports a monthly amount but no reset
+// timestamp. Its documented period is the UTC calendar month, so pace that
+// amount against the elapsed fraction from this month's UTC start to next
+// month's UTC start. The caller supplies its live clock so QML bindings can
+// recompute on the widget's countdown tick.
+function calendarMonthPaceInfo(util, now) {
+    if (typeof util !== "number" || !isFinite(util) || util < 0 ||
+            typeof now !== "number" || !isFinite(now))
+        return null;
+    var date = new Date(now);
+    var year = date.getUTCFullYear();
+    var month = date.getUTCMonth();
+    if (!isFinite(year) || !isFinite(month))
+        return null;
+    var monthStart = Date.UTC(year, month, 1);
+    var nextMonthStart = Date.UTC(year, month + 1, 1);
+    return paceInfo(util, nextMonthStart, nextMonthStart - monthStart, now);
+}
+
 function paceLabel(p, lang) {
     if (!p)
         return "";

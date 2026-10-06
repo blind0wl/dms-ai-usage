@@ -4,7 +4,9 @@ import qs.Widgets
 import "../sources.js" as Sources
 
 // Reported spend retains its billing currency. It is independent of the
-// local transcript Cost and carries no invented reset time or pace tick.
+// local transcript Cost. Enterprise's documented UTC monthly period gives a
+// calendar-month pace line, but the endpoint's missing freshness timestamp
+// means stale readings suppress that inferred pace.
 StyledRect {
     id: root
     property var ctx: null
@@ -13,6 +15,8 @@ StyledRect {
     readonly property var api: ctx ? ctx.api : null
     readonly property var spend: source ? source.spend : null
     readonly property var util: Sources.spendUtilisation(spend)
+    readonly property bool showPacing: ctx ? ctx.showPacing !== false : true
+    readonly property var pace: showPacing && source && api ? api.monthlySpendPace(source, spend) : null
     readonly property bool shown: !!(source && spend && Sources.hasReading(source))
 
     width: parent.width
@@ -65,18 +69,43 @@ StyledRect {
             }
         }
 
-        Rectangle {
+        Item {
             visible: root.util !== null
             width: parent.width
             height: 6
-            radius: height / 2
-            color: Theme.surfaceVariant
+
+            Rectangle {
+                anchors.fill: parent
+                radius: height / 2
+                color: Theme.surfaceVariant
+            }
+
             Rectangle {
                 width: parent.width * Math.max(0, Math.min((root.util || 0) / 100, 1))
                 height: parent.height
-                radius: parent.radius
+                radius: height / 2
                 color: root.api && root.source ? root.api.utilisationColor(root.source.id, root.util || 0) : Theme.surfaceText
             }
+
+            Rectangle {
+                visible: root.pace && root.pace.status !== "unknown"
+                x: parent.width * Math.max(0, Math.min(root.pace ? root.pace.timeFrac : 0, 1)) - 1
+                y: -3
+                width: 2
+                height: parent.height + 6
+                color: Theme.surfaceText
+            }
+        }
+
+        StyledText {
+            visible: !!root.pace
+            width: parent.width
+            wrapMode: Text.WordWrap
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            text: root.pace && root.api
+                ? root.api.paceLabel(root.pace) + " · " + root.api.tr("UTC calendar-month basis")
+                : ""
         }
 
         StyledText {
@@ -100,7 +129,7 @@ StyledRect {
             wrapMode: Text.WordWrap
             font.pixelSize: Theme.fontSizeSmall - 1
             color: Theme.surfaceVariantText
-            text: root.api ? root.api.tr("Spend reported by Claude; reset time unavailable") : ""
+            text: root.api ? root.api.tr("Claude reports spend without a reset or freshness timestamp") : ""
         }
     }
 }

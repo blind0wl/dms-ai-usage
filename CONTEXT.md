@@ -109,7 +109,11 @@ minor units. It is separate from Cost, which remains a local API-rate estimate.
 Claude's reported monthly monetary allowance and Reported Spend. Its Utilisation
 is Reported Spend divided by a positive enabled allowance. A disabled, zero,
 unlimited or unknown allowance has no percentage. With no rate Windows, it supplies
-the Pill's Ring and Overview ranking. No reset or Pacing is inferred.
+the Pill's Ring and Overview ranking. Pacing uses the elapsed share of the documented
+UTC calendar month and is labelled on the bar; it is shown only for a current
+reading. No reset countdown is inferred. The OAuth response has no freshness
+timestamp, so a recently cached successful response can briefly carry the prior
+month's amount over the UTC boundary until a live fetch replaces it.
 
 **Brand Colour**:
 The fixed colour that identifies a Source, independent of the shell theme:
@@ -126,8 +130,9 @@ stop the user first. Which of them it is varies by Source and over time.
 _Avoid_: worst, nearest, critical, primary
 
 **Pacing**:
-Whether a Window's Utilisation is ahead of or behind the linear burn rate for the
-elapsed part of that Window. Being ahead is over pace.
+Whether a Window or Monthly Budget's Utilisation is ahead of or behind its linear
+burn rate for the elapsed part of that Window or UTC calendar month. Being ahead
+is over pace.
 _Avoid_: rate, speed, forecast
 
 **Ring**:
