@@ -141,8 +141,8 @@ echo "=== jq present and working emits no command list ==="
 # ============================================================
 HOME_WORKING=$(setup_home "working")
 run_script "$BIN_OK" "$HOME_WORKING" '{}'
-assert_eq "$(val "$OUT" CREDS_STATUS)" "expired" "a live fetch with no reading is expired"
-assert_no_key "$OUT" BLOCKING_REQUIREMENT "an expired report names no command"
+assert_eq "$(val "$OUT" CREDS_STATUS)" "unavailable" "a live fetch with no reading is unavailable"
+assert_no_key "$OUT" BLOCKING_REQUIREMENT "an unavailable report names no command"
 
 HOME_NOCREDS="$TMPDIR_ROOT/no-creds"
 mkdir -p "$HOME_NOCREDS/.claude/projects/test-project"

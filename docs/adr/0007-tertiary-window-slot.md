@@ -60,3 +60,12 @@ report no tertiary keys, so older or partial responses render two rows with no
 fabricated zero. Upstream quota arithmetic (visible cost scaled by
 model allowance) is not reimplemented; the plugin reports the endpoint
 percentages as-is and only captions their existence.
+
+## Enterprise monetary fallback
+
+A Claude Enterprise Monthly Budget is not a tertiary rate Window: the member endpoint
+reports monetary amounts but no reset boundary. The Ring keeps primary Utilisation
+when a primary Window exists, uses secondary when it is the only reported rate
+Window, and falls back to the Monthly Budget only with no rate Windows. Overview
+follows the same monetary fallback after considering all rate Windows. Disabled,
+zero, unlimited and unknown allowances do not invent a percentage or Pacing.

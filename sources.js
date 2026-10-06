@@ -28,6 +28,7 @@ var ACCOUNT_FIELDS = {
     TODAY_COST: { field: "todayCost", type: "number" },
     WEEK_COST: { field: "weekCost", type: "number" },
     MONTH_COST: { field: "monthCost", type: "number" },
+    SPEND: { field: "spend", type: "spend" },
     EXTRA_USAGE: { field: "extraUsageEnabled", type: "boolean" },
     DAILY: { field: "daily", type: "series" },
     DAILY_COSTS: { field: "dailyCosts", type: "series" },
@@ -471,7 +472,7 @@ var SOURCES = [
                 "SUBSCRIPTION", "TIER", "CREDS_STATUS",
                 "WEEK_TOKENS", "MONTH_TOKENS", "WEEK_MESSAGES",
                 "WEEK_SESSIONS", "TODAY_COST", "WEEK_COST",
-                "MONTH_COST", "EXTRA_USAGE", "DAILY",
+                "MONTH_COST", "EXTRA_USAGE", "SPEND", "DAILY",
                 "DAILY_COSTS", "WEEK_MODELS",
                 "FIVE_HOUR_UTIL", "FIVE_HOUR_RESET",
                 "SEVEN_DAY_UTIL", "SEVEN_DAY_RESET"
@@ -500,6 +501,7 @@ var SOURCES = [
             { type: "login" },
             { type: "status" },
             { type: "windows", counts: true },
+            { type: "spend" },
             {
                 type: "stats",
                 captionKey: "At API rates, not what you pay",
@@ -869,12 +871,30 @@ function tightestWindow(state) {
     var best = null;
     for (var i = 0; i < slots.length; i++) {
         var w = state[slots[i]];
-        if (!w || typeof w.util !== "number")
+        if (!w || w.reported === false || typeof w.util !== "number")
             continue;
         if (best === null || w.util > best.util)
             best = { window: slots[i], util: w.util, resetMs: w.resetMs || 0 };
     }
     return best;
+}
+
+// Monetary budgets do not pretend to be rate Windows: no reset or pacing
+// is known. Only an enabled, positive finite allowance has a percentage.
+function spendUtilisation(spend) {
+    if (!spend || !spend.enabled || spend.limitKind !== "finite" || !(spend.limitMinor > 0))
+        return null;
+    return spend.usedMinor / spend.limitMinor * 100;
+}
+
+function pillUtilisation(state) {
+    if (!state)
+        return null;
+    if (state.primary && state.primary.reported !== false)
+        return state.primary.util;
+    if (state.secondary && state.secondary.reported !== false)
+        return state.secondary.util;
+    return spendUtilisation(state.spend);
 }
 
 // Whether a Source's state holds a reading a surface can draw. A fetch reports
@@ -919,6 +939,7 @@ function overviewRow(state) {
     var blocked = state.credsStatus === BLOCKED;
     var reading = hasReading(state);
     var tightest = reading && !blocked ? tightestWindow(state) : null;
+    var budgetUtil = !tightest && reading ? spendUtilisation(state.spend) : null;
     var which = tightest ? tightest.window : null;
     var declared = which && d && d.windows[which] ? d.windows[which] : null;
     var win = which ? state[which] || {} : {};
@@ -931,12 +952,12 @@ function overviewRow(state) {
         // label follows the Window; when the descriptor names none, windowSeconds
         // lets the renderer fall back to its own duration formatting.
         window: which,
-        windowLabelKey: declared && declared.labelKey ? declared.labelKey : null,
+        windowLabelKey: budgetUtil !== null ? "Monthly budget" : declared && declared.labelKey ? declared.labelKey : null,
         windowSeconds: win.windowSeconds || (declared && declared.windowSeconds) || 0,
-        util: tightest ? tightest.util : 0,
+        util: tightest ? tightest.util : budgetUtil !== null ? budgetUtil : 0,
         resetMs: tightest ? tightest.resetMs : 0,
         // Ranked means the row holds a current-enough reading to sort by.
-        ranked: reading && !missing && !blocked,
+        ranked: reading && !missing && !blocked && (!!tightest || budgetUtil !== null),
         // Stale marks an Unavailable Source's last known reading as not current.
         stale: reading && unavailable,
         // Missing, Blocked and Unavailable are the three degraded states, and

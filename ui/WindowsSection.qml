@@ -44,7 +44,7 @@ StyledRect {
     readonly property bool noFallback: source !== null && !Sources.hasReading(source)
     // The Section's own intent to show. The renderer reads this rather than
     // `visible`, which QML reports as false while an ancestor is hidden.
-    readonly property bool shown: source !== null && !noFallback
+    readonly property bool shown: source !== null && !noFallback && !!Sources.tightestWindow(source)
 
     // Whether the tertiary row has a reading to draw. A Source with no
     // tertiary reading draws no third row rather than a fabricated zero.
@@ -86,7 +86,7 @@ StyledRect {
                     return parts.join(" · ");
                 }
 
-                visible: win !== null
+                visible: win !== null && win.reported !== false
                 width: card.width
                 spacing: Theme.spacingXS
 
