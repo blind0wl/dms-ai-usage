@@ -502,7 +502,7 @@ sed "s|$ENV18/.claude/.credentials.json|$ENV18/old-profile/.credentials.json|" \
 mv "$ENV18/.claude/usage-cache-other.json" "$ENV18/.claude/usage-cache.json"
 OUTPUT18B=$(run_script "$ENV18")
 FIVE18B=$(echo "$OUTPUT18B" | grep "^FIVE_HOUR_UTIL=" | cut -d= -f2)
-assert_eq "$FIVE18B" "0" "Fresh cache from another profile is ignored"
+assert_eq "$FIVE18B" "keep" "Fresh cache from another profile is ignored"
 
 # ============================================================
 echo "=== Test 19: Stats cache parsing ==="
@@ -778,9 +778,9 @@ CACHEEOF
 
 OUTPUT28B=$(run_script "$ENV28")
 FIVE28B=$(echo "$OUTPUT28B" | grep "^FIVE_HOUR_UTIL=" | cut -d= -f2)
-assert_eq "$FIVE28B" "0" "Ancient cache is refused as fallback, not served as live"
+assert_eq "$FIVE28B" "keep" "Ancient cache is refused as fallback, not served as live"
 CREDS28B=$(echo "$OUTPUT28B" | grep "^CREDS_STATUS=" | cut -d= -f2)
-assert_eq "$CREDS28B" "expired" "Ancient fallback reports CREDS_STATUS=expired, not ok"
+assert_eq "$CREDS28B" "unavailable" "Ancient fallback reports CREDS_STATUS=unavailable, not ok"
 
 # ============================================================
 echo "=== Test 29: Listing mode reports every Profile and where it came from ==="

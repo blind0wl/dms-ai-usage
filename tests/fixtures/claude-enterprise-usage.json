@@ -1,0 +1,20 @@
+{
+  "five_hour": null,
+  "seven_day": null,
+  "limits": [],
+  "extra_usage": {
+    "is_enabled": true,
+    "monthly_limit": 20000,
+    "used_credits": 811,
+    "utilization": 4.055,
+    "currency": "USD",
+    "decimal_places": 2
+  },
+  "spend": {
+    "enabled": true,
+    "used": { "amount_minor": 811, "currency": "USD", "exponent": 2 },
+    "limit": { "amount_minor": 20000, "currency": "USD", "exponent": 2 },
+    "percent": 4
+  },
+  "member_dashboard_available": true
+}

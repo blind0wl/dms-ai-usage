@@ -39,6 +39,7 @@ function empty() {
         plan: "",
         planTier: "",
         extraUsageEnabled: false,
+        spend: null,
         primary: { util: 0, resetMs: 0, windowSeconds: 0 },
         secondary: { util: 0, resetMs: 0, windowSeconds: 0 },
         // The tertiary Window, reported only by opencode Go. Null until a
@@ -131,6 +132,10 @@ function readSourceKey(st, key, val) {
         break;
     case "EXTRA_USAGE_ENABLED":
         st.extraUsageEnabled = (val === "true");
+        break;
+    case "SPEND":
+        if (val !== "keep")
+            st.spend = parseSpend(val);
         break;
     case "CREDS_STATUS":
         applyCredsStatus(st, val);
@@ -230,10 +235,14 @@ function readWindowKey(result, d, id, key, val) {
         }
         if (!field)
             continue;
+        if (val === "keep")
+            return result;
         return {
             state: withState(result.state, id, function (st) {
                 st[which] = Object.assign({ util: 0, resetMs: 0, windowSeconds: 0 }, st[which]);
                 st[which][field] = value;
+                if (field === "util")
+                    st[which].reported = val !== "none";
             }),
             accounts: result.accounts
         };
@@ -251,7 +260,9 @@ function readAccountKey(result, d, key, val) {
         return null;
 
     var values;
-    if (spec.type === "series")
+    if (spec.type === "spend")
+        values = Sources.nameValueMap(val.split("|"));
+    else if (spec.type === "series")
         values = Sources.nameValueMap(val.split("|"), parseDaily);
     else if (spec.type === "models")
         values = Sources.nameValueMap(val.split("|"), parseModels);
@@ -262,19 +273,45 @@ function readAccountKey(result, d, key, val) {
     for (var name in result.accounts)
         next[name] = result.accounts[name];
     for (var who in values) {
+        if (values[who] === "keep")
+            continue;
         var overlay = Object.assign({}, next[who] || {});
         overlay[spec.field] = readAccountValue(spec.type, values[who]);
+        if (spec.field === "credsStatus" && overlay.credsStatus === "ok")
+            overlay.hasData = true;
         next[who] = overlay;
     }
     return { state: result.state, accounts: next };
 }
 
 function readAccountValue(type, value) {
+    if (type === "spend")
+        return parseSpend(value);
+    if (value === "none" && type === "number")
+        return null;
     if (type === "number")
         return parseFloat(value) || 0;
     if (type === "boolean")
         return value === "true";
     return value;
+}
+
+// Complete records replace one another, so switching plans or losing a cap
+// cannot retain a previous allowance. An explicit null clears a spend reading.
+function parseSpend(value) {
+    var s;
+    try { s = JSON.parse(value); } catch (e) { return null; }
+    if (!s || typeof s.enabled !== "boolean" || typeof s.usedMinor !== "number"
+            || !isFinite(s.usedMinor) || s.usedMinor < 0
+            || typeof s.currency !== "string" || !/^[A-Z]{3}$/.test(s.currency)
+            || typeof s.exponent !== "number" || s.exponent < 0 || s.exponent > 6
+            || Math.floor(s.exponent) !== s.exponent
+            || ["finite", "unlimited", "unknown"].indexOf(s.limitKind) < 0)
+        return null;
+    if (s.limitKind === "finite" && (typeof s.limitMinor !== "number"
+            || !isFinite(s.limitMinor) || s.limitMinor < 0))
+        return null;
+    return s;
 }
 
 // --- Wire value readers ---
@@ -351,8 +388,14 @@ function render(state, accounts, opts) {
 
     if (pd) {
         overlayScalars(st, pd);
-        st.primary = overlayWindow(state.primary, pd.primaryUtil, pd.primaryReset);
-        st.secondary = overlayWindow(state.secondary, pd.secondaryUtil, pd.secondaryReset);
+        // An Account with no successful reading must not borrow the default
+        // Account's budget or Windows. Last-good values live on its own overlay.
+        st.spend = pd.spend !== undefined ? pd.spend : null;
+        if (pd.credsStatus !== undefined)
+            st.hasData = pd.hasData === true;
+        var noAccountReading = pd.credsStatus !== undefined && !st.hasData;
+        st.primary = overlayWindow(state.primary, noAccountReading ? null : pd.primaryUtil, pd.primaryReset);
+        st.secondary = overlayWindow(state.secondary, noAccountReading ? null : pd.secondaryUtil, pd.secondaryReset);
         // The tertiary slot overlays the same way, but stays absent when
         // neither the Source nor the Account reported one: no reading means
         // no row, never a fabricated zero.
@@ -387,7 +430,9 @@ var OVERLAY_SCALARS = [
     { from: "subscriptionType", to: "plan" },
     { from: "rateLimitTier", to: "planTier" },
     { from: "credsStatus", to: "credsStatus" },
-    { from: "extraUsageEnabled", to: "extraUsageEnabled" }
+    { from: "extraUsageEnabled", to: "extraUsageEnabled" },
+    { from: "spend", to: "spend" },
+    { from: "hasData", to: "hasData" }
 ];
 
 function overlayScalars(st, pd) {
@@ -404,7 +449,8 @@ function overlayScalars(st, pd) {
 function overlayWindow(base, util, reset) {
     var b = base || { util: 0, resetMs: 0, windowSeconds: 0 };
     return {
-        util: util !== undefined ? util : b.util,
+        reported: util === null ? false : util !== undefined ? true : b.reported,
+        util: util !== undefined ? (util === null ? 0 : util) : b.util,
         resetMs: reset !== undefined ? parseResetMs(reset) : b.resetMs,
         windowSeconds: b.windowSeconds
     };

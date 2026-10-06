@@ -265,13 +265,20 @@ PluginComponent {
 
     // Whether a Source has a reading the Pill can draw.
     function pillHasReading(id) {
-        return State.hasCurrentReading(root.sourceData[id]);
+        var state = root.stateFor(id);
+        return State.hasCurrentReading(state) && Sources.pillUtilisation(state) !== null;
+    }
+
+    function pillUtilisation(id) {
+        return Sources.pillUtilisation(root.stateFor(id)) || 0;
     }
 
     function paceFor(source, which) {
         if (!source)
             return null;
         var w = source[which] || {};
+        if (w.reported === false)
+            return null;
         return root.paceInfo(w.util || 0, w.resetMs || 0, root.windowSeconds(source.id, which) * 1000);
     }
 
@@ -615,6 +622,10 @@ PluginComponent {
             return root.formatTokens(n);
         }
 
+        function formatMoney(minor, currency, exponent) {
+            return currency + " " + (minor / Math.pow(10, exponent)).toFixed(exponent);
+        }
+
         function formatCost(usd) {
             return root.formatCost(usd);
         }
@@ -741,7 +752,7 @@ PluginComponent {
                         width: root.iconSize
                         height: root.iconSize
                         anchors.verticalCenter: parent.verticalCenter
-                        percent: root.stateFor(hGroup.modelData.id) ? root.stateFor(hGroup.modelData.id).primary.util : 0
+                        percent: root.pillUtilisation(hGroup.modelData.id)
                         pace: root.paceFor(root.stateFor(hGroup.modelData.id), "primary")
                         hasReading: root.pillHasReading(hGroup.modelData.id)
                         showPaceTick: false
@@ -755,7 +766,7 @@ PluginComponent {
                             var st = root.stateFor(hGroup.modelData.id);
                             var p = root.paceFor(st, "primary");
                             var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
-                            return Math.round(st ? st.primary.util : 0) + "%" + (over ? " ↑" : "");
+                            return Math.round(Sources.pillUtilisation(st) || 0) + "%" + (over ? " ↑" : "");
                         }
                         font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                         color: {
@@ -798,7 +809,7 @@ PluginComponent {
                         width: root.iconSize
                         height: root.iconSize
                         anchors.horizontalCenter: parent.horizontalCenter
-                        percent: root.stateFor(vGroup.modelData.id) ? root.stateFor(vGroup.modelData.id).primary.util : 0
+                        percent: root.pillUtilisation(vGroup.modelData.id)
                         pace: root.paceFor(root.stateFor(vGroup.modelData.id), "primary")
                         hasReading: root.pillHasReading(vGroup.modelData.id)
                         showPaceTick: false
@@ -812,7 +823,7 @@ PluginComponent {
                             var st = root.stateFor(vGroup.modelData.id);
                             var p = root.paceFor(st, "primary");
                             var over = root.showPacing && p && (p.status === "over" || p.status === "over_quota");
-                            return Math.round(st ? st.primary.util : 0) + "%" + (over ? " ↑" : "");
+                            return Math.round(Sources.pillUtilisation(st) || 0) + "%" + (over ? " ↑" : "");
                         }
                         font.pixelSize: Theme.barTextSize(root.barThickness, root.barConfig?.fontScale, root.barConfig?.maximizeWidgetText)
                         color: {

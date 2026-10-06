@@ -16,3 +16,13 @@ field prices at models.dev rates, which would mix two rate sources inside one
 widget, and reading the database would make `sqlite3` a Requirement of every
 Script for one Source's benefit (ADR 0005). It stays a percentages-only Source.
 Revisit if its endpoint ever reports tokens.
+
+## Enterprise Reported Spend
+
+Usage-based Claude Enterprise adds a separate Reported Spend reading from the member
+OAuth usage endpoint. Cost keeps its existing notional meaning and wire keys. A
+Monthly Budget Section displays server-reported spend and allowance in the billing
+currency; it does not convert local transcript Cost into billed usage. Complete spend
+records replace previous ones so allowance and billing-mode changes cannot keep an
+old cap. Absent rate Windows clear their readings; endpoint failures preserve the
+last-good records and mark them stale.

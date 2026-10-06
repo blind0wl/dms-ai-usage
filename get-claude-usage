@@ -49,6 +49,7 @@ FIVE_HOUR_RESET=
 SEVEN_DAY_UTIL=0
 SEVEN_DAY_RESET=
 EXTRA_USAGE_ENABLED=false
+SPEND=null
 CREDS_STATUS=not_installed
 WEEK_MESSAGES=0
 WEEK_SESSIONS=0
@@ -82,6 +83,7 @@ ACCOUNT_SEVEN_DAY_UTIL=
 ACCOUNT_FIVE_HOUR_RESET=
 ACCOUNT_SEVEN_DAY_RESET=
 ACCOUNT_EXTRA_USAGE=
+ACCOUNT_SPEND=
 ACCOUNT_CREDS_STATUS=
 ACCOUNT_ORIGINS=
 ACCOUNT_SHADOWED=
@@ -118,6 +120,7 @@ FIVE_HOUR_RESET=""
 SEVEN_DAY_UTIL=0
 SEVEN_DAY_RESET=""
 EXTRA_USAGE_ENABLED="false"
+SPEND="null"
 CREDS_STATUS="missing"
 
 WEEK_TOKENS=0
@@ -327,7 +330,7 @@ count_profile_tokens() {
 }
 
 # The full reading a Profile reports when one was obtained: every field present.
-# Usage: write_full_usage_result <out_file> <sub> <tier> <5u> <5r> <7u> <7r> <extra> <creds>
+# Usage: write_full_usage_result <out_file> <sub> <tier> <5u> <5r> <7u> <7r> <extra> <creds> <spend>
 write_full_usage_result() {
     local out_file="$1"
     write_usage_result "$out_file" \
@@ -339,7 +342,17 @@ write_full_usage_result() {
         "SEVEN_DAY_RESET=$7" \
         "EXTRA_USAGE_ENABLED=$8" \
         "CREDS_STATUS=$9" \
+        "SPEND=${10}" \
         "BLOCKING_REQUIREMENT="
+}
+
+# One validator for cache acceptance and readback, including monetary-only
+# Enterprise responses. The normalized spend keeps currency and minor units.
+normalize_claude_usage() {
+    jq -c -f "$SCRIPT_DIR/lib/claude-usage.jq" 2>/dev/null
+}
+valid_claude_usage_body() {
+    normalize_claude_usage | jq -e '.valid' >/dev/null 2>&1
 }
 
 # --- Per-profile credentials + API usage fetcher ---
@@ -358,15 +371,16 @@ fetch_profile_usage() {
     local tier="unknown"
     local five_util=0 five_reset="" seven_util=0 seven_reset="" extra="false"
     # CREDS_STATUS: "ok" once a usage response is confirmed fresh (live fetch or
-    # matching cache), "expired" when a token exists but the API call and any
-    # cache both failed to produce one, "missing" when there's no credentials
+    # matching cache), "expired" on explicit authentication rejection,
+    # "unavailable" on endpoint failure, "missing" when there's no credentials
     # file (or no usable token in it) to even try. Drives the widget's login action.
+    local spend="null" http_status=""
     local creds_status="unknown"
 
     if [ ! -f "$creds_file" ]; then
         creds_status="missing"
         write_full_usage_result "$out_file" "$sub_type" "$tier" "$five_util" "$five_reset" \
-            "$seven_util" "$seven_reset" "$extra" "$creds_status"
+            "$seven_util" "$seven_reset" "$extra" "$creds_status" "$spend"
         return
     fi
 
@@ -438,7 +452,8 @@ fetch_profile_usage() {
                 token=$(jq -r '.claudeAiOauth.accessToken // ""' "$creds_file" 2>/dev/null || echo "$token")
             fi
             local header_tmp="${TMPDIR_ROOT}/usage-headers.$$.tmp"
-            api_resp=$(curl -s --max-time 5 -D "$header_tmp" \
+            local response_with_status
+            response_with_status=$(curl -s --max-time 5 -D "$header_tmp" -w '\n%{http_code}' \
                 -H "Authorization: Bearer $token" \
                 -H "Accept: application/json" \
                 -H "Content-Type: application/json" \
@@ -446,7 +461,13 @@ fetch_profile_usage() {
                 -H "anthropic-beta: oauth-2025-04-20" \
                 "https://api.anthropic.com/api/oauth/usage" 2>/dev/null || echo '{}')
 
-            if echo "$api_resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+            if [[ "$response_with_status" =~ $'\n'([0-9]{3})$ ]]; then
+                http_status="${BASH_REMATCH[1]}"
+                api_resp="${response_with_status%$'\n'*}"
+            else
+                api_resp="$response_with_status"
+            fi
+            if [[ "$http_status" != 4* && "$http_status" != 5* ]] && printf '%s' "$api_resp" | valid_claude_usage_body; then
                 # Write atomically: overlapping widget refreshes both target the
                 # same cache file, and a plain `> "$cache_file"` interleaves their
                 # output into corrupt JSON. Write to a per-PID temp then rename.
@@ -463,8 +484,9 @@ fetch_profile_usage() {
                 # a single failed live fetch (e.g. a network blip right after
                 # boot) would keep re-serving arbitrarily old data as "ok" on
                 # every refresh until a live call finally succeeds again.
-                if [ "$cache_matches" = true ] && [ "$age" -lt "$USAGE_CACHE_STALE_FALLBACK_TTL" ]; then
+                if [ "$http_status" != "401" ] && [ "$http_status" != "403" ] && [ "$cache_matches" = true ] && [ "$age" -lt "$USAGE_CACHE_STALE_FALLBACK_TTL" ]; then
                     api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
+                    http_status=""
                 fi
 
                 # If the response carried a Retry-After, remember it so
@@ -501,27 +523,35 @@ fetch_profile_usage() {
     # unguarded failure would abort this subshell before the result write. The
     # exit status is what routes the failure instead.
     local blocking=""
-    if ! printf '%s' "$api_resp" | jq -e . >/dev/null 2>&1; then
+    if [ "$http_status" = "401" ] || [ "$http_status" = "403" ]; then
+        creds_status="expired"
+    elif [[ "$http_status" == 4* || "$http_status" == 5* ]]; then
+        creds_status="unavailable"
+    elif ! printf '%s' "$api_resp" | jq -e . >/dev/null 2>&1; then
+        creds_status="unavailable"
+    elif ! printf '%s' "$api_resp" | jq -e 'type == "object"' >/dev/null 2>&1; then
         creds_status="unavailable"
     else
         local extraction_failed=false
-        five_util=$(printf '%s' "$api_resp" | jq -r '.five_hour.utilization // 0' 2>/dev/null) || extraction_failed=true
-        five_reset=$(printf '%s' "$api_resp" | jq -r '.five_hour.resets_at // ""' 2>/dev/null) || extraction_failed=true
-        seven_util=$(printf '%s' "$api_resp" | jq -r '.seven_day.utilization // 0' 2>/dev/null) || extraction_failed=true
-        seven_reset=$(printf '%s' "$api_resp" | jq -r '.seven_day.resets_at // ""' 2>/dev/null) || extraction_failed=true
-        extra=$(printf '%s' "$api_resp" | jq -r '.extra_usage.is_enabled // false' 2>/dev/null) || extraction_failed=true
+        five_util=$(printf '%s' "$api_resp" | jq -r 'if ((try .five_hour.utilization catch null) | type) == "number" and .five_hour.utilization >= 0 then .five_hour.utilization else "none" end' 2>/dev/null) || extraction_failed=true
+        five_reset=$(printf '%s' "$api_resp" | jq -r 'try (.five_hour.resets_at // "") catch ""' 2>/dev/null) || extraction_failed=true
+        seven_util=$(printf '%s' "$api_resp" | jq -r 'if ((try .seven_day.utilization catch null) | type) == "number" and .seven_day.utilization >= 0 then .seven_day.utilization else "none" end' 2>/dev/null) || extraction_failed=true
+        seven_reset=$(printf '%s' "$api_resp" | jq -r 'try (.seven_day.resets_at // "") catch ""' 2>/dev/null) || extraction_failed=true
+        extra=$(printf '%s' "$api_resp" | jq -r 'try (.extra_usage.is_enabled // false) catch false' 2>/dev/null) || extraction_failed=true
+
+        local normalized
+        normalized=$(printf '%s' "$api_resp" | normalize_claude_usage) || extraction_failed=true
+        spend=$(printf '%s' "$normalized" | jq -c '.spend // null' 2>/dev/null) || extraction_failed=true
 
         if [ "$extraction_failed" = true ]; then
             creds_status="blocked"
             blocking="jq"
-        elif printf '%s' "$api_resp" | jq -e '.five_hour' >/dev/null 2>&1; then
+        elif printf '%s' "$normalized" | jq -e '.valid' >/dev/null 2>&1; then
             creds_status="ok"
         elif [ "$creds_status" != "missing" ]; then
-            # A credentials file exists and had a token, but no usage data
-            # could be obtained for it (live fetch failed and no matching cache
-            # to fall back on) — the token is present but no longer good,
-            # distinct from no token at all ("missing", set above).
-            creds_status="expired"
+            # An unknown response is an endpoint failure, not evidence that
+            # the token expired. Keep the last-good reading instead of zeros.
+            creds_status="unavailable"
         fi
     fi
 
@@ -534,7 +564,7 @@ fetch_profile_usage() {
         write_usage_result "$out_file" "CREDS_STATUS=$creds_status"
     else
         write_full_usage_result "$out_file" "$sub_type" "$tier" "$five_util" "$five_reset" \
-            "$seven_util" "$seven_reset" "$extra" "$creds_status"
+            "$seven_util" "$seven_reset" "$extra" "$creds_status" "$spend"
     fi
 }
 
@@ -668,6 +698,7 @@ PROF_FIVE_HOUR_RESET_LIST=""
 PROF_SEVEN_DAY_RESET_LIST=""
 PROF_EXTRA_USAGE_LIST=""
 PROF_CREDS_STATUS_LIST=""
+PROF_SPEND_LIST=""
 BLOCKING_REQUIREMENTS=""
 
 for idx in "${!TMPFILES[@]}"; do
@@ -702,6 +733,12 @@ for idx in "${!TMPFILES[@]}"; do
     p_7r=$(result_value "$usage_tmpf" SEVEN_DAY_RESET "")
     p_extra=$(result_value "$usage_tmpf" EXTRA_USAGE_ENABLED false)
     p_creds=$(result_value "$usage_tmpf" CREDS_STATUS missing)
+    p_spend=$(result_value "$usage_tmpf" SPEND null)
+    # keep means this refresh obtained no reading; none means a successful
+    # response explicitly had no Window. Both are distinct from a real 0%.
+    if [ "$p_creds" = "unavailable" ]; then
+        p_5u="keep"; p_5r="keep"; p_7u="keep"; p_7r="keep"; p_spend="keep"
+    fi
     p_blocking=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
 
     # Default profile drives the top-level aggregate fields
@@ -713,6 +750,7 @@ for idx in "${!TMPFILES[@]}"; do
         SEVEN_DAY_UTIL="$p_7u"
         SEVEN_DAY_RESET="$p_7r"
         EXTRA_USAGE_ENABLED="$p_extra"
+        SPEND="$p_spend"
         CREDS_STATUS="$p_creds"
         # The command list beside the status is the default Profile's, because
         # the status is: the two always describe the same report.
@@ -765,6 +803,7 @@ for idx in "${!TMPFILES[@]}"; do
     PROF_SEVEN_DAY_RESET_LIST="${PROF_SEVEN_DAY_RESET_LIST:+${PROF_SEVEN_DAY_RESET_LIST},}${pname}:${p_7r}"
     PROF_EXTRA_USAGE_LIST="${PROF_EXTRA_USAGE_LIST:+${PROF_EXTRA_USAGE_LIST},}${pname}:${p_extra}"
     PROF_CREDS_STATUS_LIST="${PROF_CREDS_STATUS_LIST:+${PROF_CREDS_STATUS_LIST},}${pname}:${p_creds}"
+    PROF_SPEND_LIST="${PROF_SPEND_LIST:+${PROF_SPEND_LIST}|}${pname}:${p_spend}"
 
     rm -f "$tmpf" "$usage_tmpf"
 done
@@ -792,6 +831,7 @@ echo "FIVE_HOUR_RESET=${FIVE_HOUR_RESET}"
 echo "SEVEN_DAY_UTIL=${SEVEN_DAY_UTIL}"
 echo "SEVEN_DAY_RESET=${SEVEN_DAY_RESET}"
 echo "EXTRA_USAGE_ENABLED=${EXTRA_USAGE_ENABLED}"
+echo "SPEND=${SPEND}"
 echo "CREDS_STATUS=${CREDS_STATUS}"
 # Emitted only for a Blocked report, so the ok, missing and expired outputs are
 # unchanged and the widget's own clearing of the key on any other status is what
@@ -831,4 +871,5 @@ echo "ACCOUNT_SEVEN_DAY_UTIL=${PROF_SEVEN_DAY_UTIL}"
 echo "ACCOUNT_FIVE_HOUR_RESET=${PROF_FIVE_HOUR_RESET_LIST}"
 echo "ACCOUNT_SEVEN_DAY_RESET=${PROF_SEVEN_DAY_RESET_LIST}"
 echo "ACCOUNT_EXTRA_USAGE=${PROF_EXTRA_USAGE_LIST}"
+echo "ACCOUNT_SPEND=${PROF_SPEND_LIST}"
 echo "ACCOUNT_CREDS_STATUS=${PROF_CREDS_STATUS_LIST}"

@@ -46,6 +46,8 @@ Column {
             return statusComponent;
         case "windows":
             return windowsComponent;
+        case "spend":
+            return spendComponent;
         case "stats":
             return statsComponent;
         case "chart":
@@ -123,6 +125,11 @@ Column {
     Component {
         id: windowsComponent
         WindowsSection {}
+    }
+
+    Component {
+        id: spendComponent
+        SpendSection {}
     }
 
     Component {

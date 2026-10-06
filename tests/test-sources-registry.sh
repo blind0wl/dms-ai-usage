@@ -195,7 +195,7 @@ for (const d of reg.SOURCES) {
                 continue;
             }
             check(typeof spec.field === "string" && spec.field.length > 0, `${tag} account field "${key}" names an overlay field`);
-            check(["text", "number", "boolean", "series", "models"].indexOf(spec.type) >= 0, `${tag} account field "${key}" has a known reader`);
+            check(["text", "number", "boolean", "series", "models", "spend"].indexOf(spec.type) >= 0, `${tag} account field "${key}" has a known reader`);
             declaredFields.add(spec.field);
         }
         // Selecting an Account moves the Window card's readings, so the overlay

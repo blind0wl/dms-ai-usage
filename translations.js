@@ -1,6 +1,15 @@
 .pragma library
 
 var strings = {
+    "Monthly budget": { fr: "Budget mensuel", es: "Presupuesto mensual" },
+    "Unlimited": { fr: "Illimité", es: "Sin límite" },
+    "Allowance unavailable": { fr: "Budget indisponible", es: "Presupuesto no disponible" },
+    "Usage credits disabled": { fr: "Crédits d’utilisation désactivés", es: "Créditos de uso desactivados" },
+    "remaining": { fr: "restants", es: "restantes" },
+    "Spend reported by Claude; reset time unavailable": {
+        fr: "Dépenses rapportées par Claude ; date de réinitialisation indisponible",
+        es: "Gasto informado por Claude; fecha de reinicio no disponible"
+    },
     "AI Usage Monitor":
         { fr: "Moniteur d'utilisation de l'IA", es: "Monitor de uso de IA" },
     "Sources":

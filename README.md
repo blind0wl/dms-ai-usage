@@ -26,7 +26,7 @@ The Overview is the Popout's first tab. It ranks the Sources you have visible by
 - **Taskbar pill** with a circular progress ring per enabled Source (Claude, ChatGPT, Z.ai, opencode Go), each showing its nearest-to-reset rate window
 - **Pacing indicator** on every Source, showing whether you're over or under a linear burn rate for each window (e.g. "6% over pace", "25% under pace")
 - **Popout tabs**, the Overview first and then one tab per visible Source:
-  - **Claude**: 5-hour and 7-day rate window utilization with countdown timers and pacing
+  - **Claude**: 5-hour and 7-day rate window utilization with countdown timers and pacing; usage-based Enterprise accounts show reported monthly spend, allowance and remaining funds
   - **ChatGPT**: primary and secondary rate windows (lengths reported by the API) with countdown timers and pacing
   - **Z.ai**: 5-hour and weekly rate windows with countdown timers and pacing, plus weekly model-call count
   - **opencode Go**: 5-hour and weekly rate windows with countdown timers and pacing. The usage endpoint carries no plan name and no spend figures, so this tab shows no token, cost, chart or model breakdown
@@ -71,6 +71,19 @@ and each heading is the slug that link builds from the Source's name.
 
 An active [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installation with OAuth
 credentials.
+
+Usage-based **Claude Enterprise** Accounts work with the same member OAuth login.
+No organisation Admin API key is needed. When Claude reports a monetary allowance,
+the tab shows reported spend, allowance and remaining funds in the original billing
+currency. If rate Windows are absent, the Pill and Overview use the monthly budget
+percentage. Disabled credits, a zero allowance, unlimited and unknown allowances
+show no invented percentage. The endpoint supplies no reset or freshness timestamp,
+so the budget has no countdown or pacing tick. Reported spend is separate from the
+local Claude Code token Cost estimate and is never calculated from it.
+
+The member OAuth endpoint is undocumented. The Script supports both its `spend`
+and `extra_usage` monetary shapes, respects currency/exponent metadata, and treats
+an unrecognised response as Unavailable while preserving last-known readings.
 
 ### ChatGPT
 
@@ -182,7 +195,7 @@ Source. The Overview runs no script of its own, ranking what those four already 
 
 **Claude** (`get-claude-usage`):
 1. Reads your OAuth token from `~/.claude/.credentials.json`
-2. Queries the Anthropic usage API for current rate limit status
+2. Queries the Anthropic usage API for current rate limit status and reported spend allowances
 3. Scans `<config dir>/projects/` for every discovered profile (see above) for token consumption statistics — each profile is processed in parallel
 4. Fetches model pricing from LiteLLM and USD/EUR exchange rate from ECB (cached daily in `~/.claude/pricing-cache.json`)
 

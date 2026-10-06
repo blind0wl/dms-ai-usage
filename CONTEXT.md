@@ -1,6 +1,6 @@
 # AI Usage
 
-A DMS taskbar plugin that reports subscription usage for the AI coding agents on
+A DMS taskbar plugin that reports subscription and Enterprise budget usage for the AI coding agents on
 this machine. Each provider it tracks is a Source, and every Source is optional.
 
 ## Language
@@ -100,6 +100,16 @@ What a Source's tokens would have cost at the providers' published API rates,
 not what the subscription was paid. The figure is an estimate wherever it
 appears, and a Source may report none.
 _Avoid_: spend, bill, price paid, charges
+
+**Reported Spend**:
+A monetary reading supplied by Claude for an Account, in its billing currency and
+minor units. It is separate from Cost, which remains a local API-rate estimate.
+
+**Monthly Budget**:
+Claude's reported monthly monetary allowance and Reported Spend. Its Utilisation
+is Reported Spend divided by a positive enabled allowance. A disabled, zero,
+unlimited or unknown allowance has no percentage. With no rate Windows, it supplies
+the Pill's Ring and Overview ranking. No reset or Pacing is inferred.
 
 **Brand Colour**:
 The fixed colour that identifies a Source, independent of the shell theme:
