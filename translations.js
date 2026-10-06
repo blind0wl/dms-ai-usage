@@ -6,9 +6,13 @@ var strings = {
     "Allowance unavailable": { fr: "Budget indisponible", es: "Presupuesto no disponible" },
     "Usage credits disabled": { fr: "Crédits d’utilisation désactivés", es: "Créditos de uso desactivados" },
     "remaining": { fr: "restants", es: "restantes" },
-    "Spend reported by Claude; reset time unavailable": {
-        fr: "Dépenses rapportées par Claude ; date de réinitialisation indisponible",
-        es: "Gasto informado por Claude; fecha de reinicio no disponible"
+    "Claude reports spend without a reset or freshness timestamp": {
+        fr: "Claude indique les dépenses sans date de réinitialisation ni indication de fraîcheur",
+        es: "Claude informa del gasto sin fecha de reinicio ni indicación de actualidad"
+    },
+    "UTC calendar-month basis": {
+        fr: "base du mois civil UTC",
+        es: "base del mes calendario UTC"
     },
     "AI Usage Monitor":
         { fr: "Moniteur d'utilisation de l'IA", es: "Monitor de uso de IA" },
