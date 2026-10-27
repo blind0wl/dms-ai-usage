@@ -62,7 +62,10 @@ function empty() {
         dailyCosts: [0, 0, 0, 0, 0, 0, 0],
         models: [],
         alltime: { sessions: 0, messages: 0, firstSession: "" },
-        accounts: []
+        accounts: [],
+        // Whether the last report came from cli-proxy rather than the local
+        // credentials (ADR 0009), which decides where a sign-in goes.
+        cliProxy: false
     };
 }
 
@@ -143,6 +146,9 @@ function readSourceKey(st, key, val) {
     case "BLOCKING_REQUIREMENT":
         st.blockingRequirement = val;
         break;
+    case "CLIPROXY":
+        st.cliProxy = val === "true";
+        break;
     case "WEEK_MESSAGES":
         st.weekMessages = parseInt(val) || 0;
         break;
@@ -208,6 +214,8 @@ function applyCredsStatus(st, val) {
     st.hidden = Sources.isHidden(st.notInstalledCount);
     if (val === "ok")
         st.hasData = true;
+    else if (val === Sources.DISABLED)
+        st.hasData = false;
 }
 
 // The Window slot keys a Source declares in its descriptor. Returns the new
@@ -279,6 +287,10 @@ function readAccountKey(result, d, key, val) {
         overlay[spec.field] = readAccountValue(spec.type, values[who]);
         if (spec.field === "credsStatus" && overlay.credsStatus === "ok")
             overlay.hasData = true;
+        // A disabled Account has no reading, so a last-good one is dropped
+        // rather than drawn beside "Disabled in cli-proxy" (ADR 0009).
+        if (spec.field === "credsStatus" && overlay.credsStatus === Sources.DISABLED)
+            overlay.hasData = false;
         next[who] = overlay;
     }
     return { state: result.state, accounts: next };

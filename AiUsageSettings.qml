@@ -59,6 +59,14 @@ PluginSettings {
         root.saveValue("sourcesKnown", Sources.ids());
     }
 
+    // The environment the Account editors start their Scripts with: the same
+    // cli-proxy settings the widget fetches with (ADR 0009).
+    function cliProxyEnvironment() {
+        return Sources.cliProxyEnvironment(root.loadValue("cliProxyEnabled", false) === true,
+                                           root.loadValue("cliProxyUrl", ""),
+                                           root.loadValue("cliProxyKey", ""));
+    }
+
     function isEnabled(id) {
         return sourceOrder.indexOf(id) >= 0;
     }
@@ -162,6 +170,85 @@ PluginSettings {
         label: root.tr("Show pacing")
         description: root.tr("Show whether usage is ahead of or behind the time window")
         defaultValue: true
+    }
+
+    Rectangle {
+        width: parent.width
+        height: 1
+        color: Theme.outline
+        opacity: 0.3
+    }
+
+    // cli-proxy (CLIProxyAPI) as the source of truth for Claude, ChatGPT and
+    // opencode Go: its auths become their Accounts, and the local credentials
+    // are the fallback whenever it cannot answer (ADR 0009).
+    ToggleSetting {
+        settingKey: "cliProxyEnabled"
+        label: root.tr("Use cli-proxy")
+        description: root.tr("Read Claude, ChatGPT and opencode Go usage from cli-proxy, using the accounts it holds. The local credentials are used whenever cli-proxy cannot answer.")
+        defaultValue: false
+    }
+
+    StringSetting {
+        settingKey: "cliProxyUrl"
+        label: root.tr("cli-proxy URL")
+        description: root.tr("The address cli-proxy serves its management API on.")
+        placeholder: "http://localhost:8317"
+    }
+
+    // A StringSetting would show the key in clear text, so the field is the
+    // same one with its input masked.
+    Column {
+        width: parent.width
+        spacing: Theme.spacingS
+
+        StyledText {
+            text: root.tr("Management key")
+            font.pixelSize: Theme.fontSizeMedium
+            font.weight: Font.Medium
+            color: Theme.surfaceText
+        }
+
+        StyledText {
+            width: parent.width
+            text: root.tr("cli-proxy's management key: the plain value behind management secret-key in its config.yaml.")
+            font.pixelSize: Theme.fontSizeSmall
+            color: Theme.surfaceVariantText
+            wrapMode: Text.WordWrap
+        }
+
+        DankTextField {
+            id: cliProxyKeyField
+            width: parent.width
+            echoMode: TextInput.Password
+            placeholderText: root.tr("Management key")
+
+            function reload() {
+                if (!activeFocus)
+                    text = root.loadValue("cliProxyKey", "");
+            }
+
+            function commit() {
+                if (text !== root.loadValue("cliProxyKey", ""))
+                    root.saveValue("cliProxyKey", text);
+            }
+
+            Component.onCompleted: Qt.callLater(reload)
+            onEditingFinished: commit()
+            onActiveFocusChanged: {
+                if (!activeFocus)
+                    commit();
+            }
+
+            // The store is not readable until DMS hands the page its
+            // pluginService, so the key is read again once it is.
+            Connections {
+                target: root
+                function onPluginServiceChanged() {
+                    cliProxyKeyField.reload();
+                }
+            }
+        }
     }
 
     Rectangle {

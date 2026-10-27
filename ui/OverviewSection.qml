@@ -190,6 +190,17 @@ Column {
                     wrapMode: Text.WordWrap
                 }
 
+                // A row whose every cli-proxy Account is disabled says so, rather
+                // than leaving an empty bar to explain itself.
+                StyledText {
+                    width: parent.width
+                    visible: modelData.disabled === true
+                    text: root.api.tr("Disabled in cli-proxy")
+                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.surfaceVariantText
+                    wrapMode: Text.WordWrap
+                }
+
                 // A Blocked row's own line, where a ranked row names its Window.
                 // It names the commands rather than a fix in settings, because
                 // no plugin setting supplies a Requirement (ADR 0005).

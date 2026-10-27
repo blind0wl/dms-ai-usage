@@ -138,6 +138,17 @@ Column {
         }
     }
 
+    // The cli-proxy environment the Scripts are started with, the same one the
+    // widget fetches with, so the page lists the Accounts the widget shows. The
+    // one last asked with is kept to tell when it changes.
+    property string askedEnvironment: ""
+
+    function environment() {
+        var env = root.settingsRoot ? root.settingsRoot.cliProxyEnvironment() : {};
+        root.askedEnvironment = JSON.stringify(env);
+        return env;
+    }
+
     function loadValue() {
         if (!settingsRoot || !settingKey)
             return;
@@ -155,6 +166,10 @@ Column {
     function reloadFromStore(askAnyway) {
         if (!settingsRoot || !settingKey)
             return;
+        // cli-proxy switched on or off replaces the Accounts the Script lists,
+        // so the listing is asked again even though the list did not move.
+        if (JSON.stringify(settingsRoot.cliProxyEnvironment()) !== root.askedEnvironment)
+            askAnyway = true;
         var stored = settingsRoot.loadValue(settingKey, []);
         if (JSON.stringify(stored) === JSON.stringify(root.items)) {
             if (askAnyway)
@@ -192,6 +207,7 @@ Column {
         var act = root.machine.askAdd(name, value, root.askedList);
         if (act.kind === "run") {
             probeProcess.command = act.command;
+            probeProcess.environment = root.environment();
             probeProcess.running = true;
         }
     }
@@ -343,6 +359,7 @@ Column {
         if (act.kind === "run") {
             root.listFailed = false;
             listProcess.command = act.command;
+            listProcess.environment = root.environment();
             listProcess.running = true;
         }
         // A queued ask is remembered by the machine; the exit handler re-asks
@@ -390,6 +407,7 @@ Column {
                     return;
                 }
                 probeProcess.command = act.command;
+                probeProcess.environment = root.environment();
                 probeProcess.running = true;
             } else if (act.kind === "outcome") {
                 var handled = root.handleOutcome(act);

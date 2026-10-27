@@ -152,6 +152,34 @@ toggle pacing indicators and turn the Overview on or off. The same page enables 
 disables each Source, sets the order of the pill rings and popout tabs, and registers
 custom profiles/accounts.
 
+### cli-proxy
+
+If you route your subscriptions through [cli-proxy](https://github.com/router-for-me/CLIProxyAPI)
+(CLIProxyAPI), it can be the source of truth for Claude, ChatGPT and opencode Go. Turn on
+**Use cli-proxy**, then enter its **URL** (for example `http://cliproxy.local:8317`) and its
+**Management key**, the plain value behind `management.secret-key` in its `config.yaml`.
+cli-proxy's management API has to be reachable from this machine, so on a remote host set
+`allow-remote: true`.
+
+The plugin then asks cli-proxy for the auths it holds on every refresh:
+
+- **Each auth becomes an Account**, named by its email and listed under the `cli-proxy`
+  origin in the settings page. Local and custom Accounts for that Source are not used.
+- **Usage is read through cli-proxy's `api-call` route**, which signs the request with the
+  auth's own token, so the plugin never sees a credential.
+- **A disabled auth stays listed**, dimmed and marked *Disabled in cli-proxy*, and is not
+  asked for usage. With every auth disabled the Source has no reading. A removed auth
+  disappears.
+- **An expired auth** gets a **Log in** button that opens cli-proxy's management page,
+  where the auth is signed in again.
+- **The local setup is the fallback.** If cli-proxy is unreachable, rejects the key, or
+  holds no auth for a Source, that Source reads its local credentials for that refresh.
+  Z.ai is not routed through cli-proxy and always reads locally.
+
+Token counts, costs, the weekly chart and per-model usage still come from the local
+session logs, totalled for the Source rather than split by cli-proxy auth. The Source's
+ring and Overview row use the first enabled auth's reading.
+
 ### Custom Claude Profiles
 
 If you use a profile manager the plugin doesn't detect automatically, add it under

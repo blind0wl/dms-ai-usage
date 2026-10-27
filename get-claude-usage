@@ -18,11 +18,19 @@ if ! . "$SCRIPT_DIR/lib/source-script.sh" 2>/dev/null; then
     printf 'BLOCKING_REQUIREMENT=%s\n' 'lib/source-script.sh'
     exit 0
 fi
+if ! . "$SCRIPT_DIR/lib/cli-proxy.sh" 2>/dev/null; then
+    blocked_report 'lib/cli-proxy.sh' "$@"
+    exit 0
+fi
 
 # Before anything else: with a Requirement absent nothing downstream can be read,
 # so a swallowed jq failure would report a credential verdict instead of naming
 # the real cause (ADR 0005). Reports Blocked and ends the Script.
 require_requirements "$@"
+
+# cli-proxy, when configured, is asked first: Accounts it holds put the Source in
+# use on this machine whether or not the claude CLI is installed (ADR 0009).
+cliproxy_read claude
 
 # Cheapest possible check, before any temp dirs, network calls, or profile
 # scanning: if the `claude` binary genuinely isn't installed, this Source
@@ -39,7 +47,7 @@ require_requirements "$@"
 # locations, and treat an existing credentials file as proof of installation
 # regardless of PATH (if it's there, `claude` was run to create it).
 CLI_SEARCH_PATH="${PATH}:${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/bin:${HOME}/go/bin:${HOME}/.cargo/bin:${HOME}/.volta/bin:${HOME}/.claude/local"
-if ! PATH="$CLI_SEARCH_PATH" command -v claude >/dev/null 2>&1 \
+if [ "$CLIPROXY_ACTIVE" -eq 0 ] && ! PATH="$CLI_SEARCH_PATH" command -v claude >/dev/null 2>&1 \
     && [ ! -f "${HOME}/.claude/.credentials.json" ]; then
     cat <<'NOTINSTALLED'
 SUBSCRIPTION_TYPE=unknown
@@ -377,7 +385,12 @@ fetch_profile_usage() {
     local spend="null" http_status=""
     local creds_status="unknown"
 
-    if [ ! -f "$creds_file" ]; then
+    # A cli-proxy Account has no credentials file here: cli-proxy holds the
+    # token and puts it in the request itself.
+    local via_cliproxy=false
+    [[ "$creds_file" == "$CLIPROXY_VALUE_PREFIX"* ]] && via_cliproxy=true
+
+    if [ "$via_cliproxy" = false ] && [ ! -f "$creds_file" ]; then
         creds_status="missing"
         write_full_usage_result "$out_file" "$sub_type" "$tier" "$five_util" "$five_reset" \
             "$seven_util" "$seven_reset" "$extra" "$creds_status" "$spend"
@@ -429,7 +442,12 @@ fetch_profile_usage() {
         api_resp=$(jq -r '.data // {}' "$cache_file" 2>/dev/null || echo '{}')
     else
         local token
-        token=$(jq -r '.claudeAiOauth.accessToken // ""' "$creds_file" 2>/dev/null || echo "")
+        if [ "$via_cliproxy" = true ]; then
+            # Only needs to be non-empty: cli-proxy substitutes the real one.
+            token="cli-proxy"
+        else
+            token=$(jq -r '.claudeAiOauth.accessToken // ""' "$creds_file" 2>/dev/null || echo "")
+        fi
         [ -z "$token" ] && creds_status="missing"
         if [ -n "$token" ]; then
             # The stored access token is short-lived and the CLI itself refreshes
@@ -444,7 +462,8 @@ fetch_profile_usage() {
             # `claude doctor`, a fast non-interactive command confirmed to
             # trigger the CLI's normal startup refresh, then reread the token.
             local exp_ms now_ms
-            exp_ms=$(jq -r '.claudeAiOauth.expiresAt // 0' "$creds_file" 2>/dev/null || echo 0)
+            exp_ms=0
+            [ "$via_cliproxy" = true ] || exp_ms=$(jq -r '.claudeAiOauth.expiresAt // 0' "$creds_file" 2>/dev/null || echo 0)
             [[ "$exp_ms" =~ ^[0-9]+$ ]] || exp_ms=0
             now_ms=$(( $(date +%s) * 1000 ))
             if [ "$exp_ms" -gt 0 ] && [ $(( (exp_ms - now_ms) / 1000 )) -le "$STALE_EXP_SECONDS" ]; then
@@ -453,13 +472,19 @@ fetch_profile_usage() {
             fi
             local header_tmp="${TMPDIR_ROOT}/usage-headers.$$.tmp"
             local response_with_status
-            response_with_status=$(curl -s --max-time 5 -D "$header_tmp" -w '\n%{http_code}' \
-                -H "Authorization: Bearer $token" \
-                -H "Accept: application/json" \
-                -H "Content-Type: application/json" \
-                -H "User-Agent: claude-code/${CLAUDE_VERSION}" \
-                -H "anthropic-beta: oauth-2025-04-20" \
-                "https://api.anthropic.com/api/oauth/usage" 2>/dev/null || echo '{}')
+            if [ "$via_cliproxy" = true ]; then
+                response_with_status=$(cliproxy_call "$creds_file" "https://api.anthropic.com/api/oauth/usage" \
+                    "$(jq -cn --arg ua "claude-code/${CLAUDE_VERSION}" '{"Authorization": "Bearer $TOKEN$", "Accept": "application/json", "Content-Type": "application/json", "User-Agent": $ua, "anthropic-beta": "oauth-2025-04-20"}')" \
+                    "$header_tmp")
+            else
+                response_with_status=$(curl -s --max-time 5 -D "$header_tmp" -w '\n%{http_code}' \
+                    -H "Authorization: Bearer $token" \
+                    -H "Accept: application/json" \
+                    -H "Content-Type: application/json" \
+                    -H "User-Agent: claude-code/${CLAUDE_VERSION}" \
+                    -H "anthropic-beta: oauth-2025-04-20" \
+                    "https://api.anthropic.com/api/oauth/usage" 2>/dev/null || echo '{}')
+            fi
 
             if [[ "$response_with_status" =~ $'\n'([0-9]{3})$ ]]; then
                 http_status="${BASH_REMATCH[1]}"
@@ -627,6 +652,10 @@ for arg in "$@"; do
     esac
 done
 
+# With cli-proxy holding Claude auths, they are the Profiles and the local ones
+# above are kept aside for their transcripts alone (ADR 0009).
+cliproxy_take_registry
+
 # The settings page's Profile editor asks for the list on its own, with the same
 # name=value arguments the widget fetches with so that the two agree about which
 # Profile a name refers to. This returns before the first request: opening the
@@ -659,8 +688,22 @@ for idx in "${!ACCOUNT_VALUES[@]}"; do
     pname="${ACCOUNT_NAMES[$idx]}"
     if [ "$pname" = "default" ]; then
         prof_cache="$USAGE_CACHE"
+    elif [ "$CLIPROXY_ACTIVE" -eq 1 ]; then
+        prof_cache="${CLAUDE_DIR}/usage-cache-cliproxy-${pname}.json"
     else
         prof_cache="${CLAUDE_DIR}/usage-cache-${pname}.json"
+    fi
+
+    # A cli-proxy Profile has no transcripts of its own to count, and one
+    # cli-proxy holds disabled is not asked for a reading at all.
+    if [ "$CLIPROXY_ACTIVE" -eq 1 ]; then
+        if cliproxy_disabled "$pname"; then
+            write_usage_result "$usage_tmpf" "CREDS_STATUS=disabled"
+            continue
+        fi
+        fetch_profile_usage "${ACCOUNT_VALUES[$idx]}" "$prof_cache" "$usage_tmpf" &
+        PIDS+=("$!")
+        continue
     fi
 
     (
@@ -670,8 +713,19 @@ for idx in "${!ACCOUNT_VALUES[@]}"; do
     PIDS+=("$!")
 done
 
-for pid in "${PIDS[@]}"; do
-    wait "$pid" || true
+# The token history is still the local transcripts', counted once per local
+# Profile into the Source's totals, since no cli-proxy Profile maps onto one.
+LOCAL_TMPFILES=()
+for value in "${LOCAL_ACCOUNT_VALUES[@]:-}"; do
+    [ -n "$value" ] || continue
+    tmpf=$(mktemp "$TMPDIR_ROOT/local_XXXXXX")
+    LOCAL_TMPFILES+=("$tmpf")
+    count_profile_tokens "${value}/projects" "$tmpf" &
+    PIDS+=("$!")
+done
+
+for pid in "${PIDS[@]:-}"; do
+    [ -n "$pid" ] && wait "$pid" || true
 done
 
 # --- Read per-profile results and build aggregate + per-profile output vars ---
@@ -701,11 +755,11 @@ PROF_CREDS_STATUS_LIST=""
 PROF_SPEND_LIST=""
 BLOCKING_REQUIREMENTS=""
 
-for idx in "${!TMPFILES[@]}"; do
-    tmpf="${TMPFILES[$idx]}"
-    usage_tmpf="${USAGE_TMPFILES[$idx]}"
-    pname="${ACCOUNT_NAMES[$idx]}"
-
+# Reads one token stats file into the p_* values and adds them to the Source's
+# totals. The per-Profile loop and the local transcripts cli-proxy Profiles sit
+# beside both call it, so the two cannot total differently.
+add_token_totals() {
+    local tmpf="$1"
     # Read per-profile token stats. result_value defaults every line the file
     # does not carry, so an empty or partial file contributes its documented
     # defaults rather than an empty value to the arithmetic below.
@@ -719,43 +773,6 @@ for idx in "${!TMPFILES[@]}"; do
     p_tc=$(result_value "$tmpf" TODAY_COST "0.00")
     p_wc=$(result_value "$tmpf" WEEK_COST "0.00")
     p_mc=$(result_value "$tmpf" MONTH_COST "0.00")
-
-    # Read per-profile usage/subscription. An absent file — a fetch that aborted
-    # before its result write — is a failed fetch, not an empty reading: every
-    # field falls back to its documented default, so CREDS_STATUS is never empty.
-    # The defaults are reachable because each is applied after the read, outside
-    # the pipeline that produced the value.
-    p_sub=$(result_value "$usage_tmpf" SUBSCRIPTION_TYPE unknown)
-    p_tier=$(result_value "$usage_tmpf" RATE_LIMIT_TIER unknown)
-    p_5u=$(result_value "$usage_tmpf" FIVE_HOUR_UTIL 0)
-    p_5r=$(result_value "$usage_tmpf" FIVE_HOUR_RESET "")
-    p_7u=$(result_value "$usage_tmpf" SEVEN_DAY_UTIL 0)
-    p_7r=$(result_value "$usage_tmpf" SEVEN_DAY_RESET "")
-    p_extra=$(result_value "$usage_tmpf" EXTRA_USAGE_ENABLED false)
-    p_creds=$(result_value "$usage_tmpf" CREDS_STATUS missing)
-    p_spend=$(result_value "$usage_tmpf" SPEND null)
-    # keep means this refresh obtained no reading; none means a successful
-    # response explicitly had no Window. Both are distinct from a real 0%.
-    if [ "$p_creds" = "unavailable" ]; then
-        p_5u="keep"; p_5r="keep"; p_7u="keep"; p_7r="keep"; p_spend="keep"
-    fi
-    p_blocking=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
-
-    # Default profile drives the top-level aggregate fields
-    if [ "$pname" = "default" ]; then
-        SUBSCRIPTION_TYPE="$p_sub"
-        RATE_LIMIT_TIER="$p_tier"
-        FIVE_HOUR_UTIL="$p_5u"
-        FIVE_HOUR_RESET="$p_5r"
-        SEVEN_DAY_UTIL="$p_7u"
-        SEVEN_DAY_RESET="$p_7r"
-        EXTRA_USAGE_ENABLED="$p_extra"
-        SPEND="$p_spend"
-        CREDS_STATUS="$p_creds"
-        # The command list beside the status is the default Profile's, because
-        # the status is: the two always describe the same report.
-        BLOCKING_REQUIREMENTS="$p_blocking"
-    fi
 
     # Aggregate token totals
     WEEK_TOKENS=$(( WEEK_TOKENS + p_wt ))
@@ -781,18 +798,75 @@ for idx in "${!TMPFILES[@]}"; do
         END { for(i=1;i<=7;i++) printf "%s%.2f", (i>1?",":""), a[i]+0; print "" }
     ')
     IFS=',' read -ra DAILY_COSTS_ARR <<< "$DAILY_COSTS"
+}
 
-    # Per-profile token lists
-    PROF_WEEK_TOKENS_LIST="${PROF_WEEK_TOKENS_LIST:+${PROF_WEEK_TOKENS_LIST},}${pname}:${p_wt}"
-    PROF_MONTH_TOKENS_LIST="${PROF_MONTH_TOKENS_LIST:+${PROF_MONTH_TOKENS_LIST},}${pname}:${p_mt}"
-    PROF_WEEK_MESSAGES_LIST="${PROF_WEEK_MESSAGES_LIST:+${PROF_WEEK_MESSAGES_LIST},}${pname}:${p_wm}"
-    PROF_WEEK_SESSIONS_LIST="${PROF_WEEK_SESSIONS_LIST:+${PROF_WEEK_SESSIONS_LIST},}${pname}:${p_ws}"
-    PROF_TODAY_COST_LIST="${PROF_TODAY_COST_LIST:+${PROF_TODAY_COST_LIST},}${pname}:${p_tc}"
-    PROF_WEEK_COST_LIST="${PROF_WEEK_COST_LIST:+${PROF_WEEK_COST_LIST},}${pname}:${p_wc}"
-    PROF_MONTH_COST_LIST="${PROF_MONTH_COST_LIST:+${PROF_MONTH_COST_LIST},}${pname}:${p_mc}"
-    PROF_DAILY_LIST="${PROF_DAILY_LIST:+${PROF_DAILY_LIST}|}${pname}:${p_daily}"
-    PROF_DAILY_COSTS_LIST="${PROF_DAILY_COSTS_LIST:+${PROF_DAILY_COSTS_LIST}|}${pname}:${p_dc}"
-    PROF_WEEK_MODELS_LIST="${PROF_WEEK_MODELS_LIST:+${PROF_WEEK_MODELS_LIST}|}${pname}:${p_models}"
+# The Profile whose reading stands for the Source: "default" locally, and the
+# first one cli-proxy holds enabled. With every cli-proxy Profile disabled there
+# is none, and the Source reports disabled rather than a reading.
+AGGREGATE_PROFILE="default"
+if [ "$CLIPROXY_ACTIVE" -eq 1 ]; then
+    AGGREGATE_PROFILE=$(cliproxy_first_enabled)
+    [ -n "$AGGREGATE_PROFILE" ] || CREDS_STATUS="disabled"
+fi
+
+for idx in "${!TMPFILES[@]}"; do
+    tmpf="${TMPFILES[$idx]}"
+    usage_tmpf="${USAGE_TMPFILES[$idx]}"
+    pname="${ACCOUNT_NAMES[$idx]}"
+
+    add_token_totals "$tmpf"
+
+    # Read per-profile usage/subscription. An absent file — a fetch that aborted
+    # before its result write — is a failed fetch, not an empty reading: every
+    # field falls back to its documented default, so CREDS_STATUS is never empty.
+    # The defaults are reachable because each is applied after the read, outside
+    # the pipeline that produced the value.
+    p_sub=$(result_value "$usage_tmpf" SUBSCRIPTION_TYPE unknown)
+    p_tier=$(result_value "$usage_tmpf" RATE_LIMIT_TIER unknown)
+    p_5u=$(result_value "$usage_tmpf" FIVE_HOUR_UTIL 0)
+    p_5r=$(result_value "$usage_tmpf" FIVE_HOUR_RESET "")
+    p_7u=$(result_value "$usage_tmpf" SEVEN_DAY_UTIL 0)
+    p_7r=$(result_value "$usage_tmpf" SEVEN_DAY_RESET "")
+    p_extra=$(result_value "$usage_tmpf" EXTRA_USAGE_ENABLED false)
+    p_creds=$(result_value "$usage_tmpf" CREDS_STATUS missing)
+    p_spend=$(result_value "$usage_tmpf" SPEND null)
+    # keep means this refresh obtained no reading; none means a successful
+    # response explicitly had no Window. Both are distinct from a real 0%.
+    if [ "$p_creds" = "unavailable" ] || [ "$p_creds" = "disabled" ]; then
+        p_5u="keep"; p_5r="keep"; p_7u="keep"; p_7r="keep"; p_spend="keep"
+    fi
+    p_blocking=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
+
+    # Default profile drives the top-level aggregate fields
+    if [ "$pname" = "$AGGREGATE_PROFILE" ]; then
+        SUBSCRIPTION_TYPE="$p_sub"
+        RATE_LIMIT_TIER="$p_tier"
+        FIVE_HOUR_UTIL="$p_5u"
+        FIVE_HOUR_RESET="$p_5r"
+        SEVEN_DAY_UTIL="$p_7u"
+        SEVEN_DAY_RESET="$p_7r"
+        EXTRA_USAGE_ENABLED="$p_extra"
+        SPEND="$p_spend"
+        CREDS_STATUS="$p_creds"
+        # The command list beside the status is the default Profile's, because
+        # the status is: the two always describe the same report.
+        BLOCKING_REQUIREMENTS="$p_blocking"
+    fi
+
+    # Per-profile token lists. A cli-proxy Profile has no transcripts of its
+    # own, so it reports none rather than a zero it never counted.
+    if [ "$CLIPROXY_ACTIVE" -eq 0 ]; then
+        PROF_WEEK_TOKENS_LIST="${PROF_WEEK_TOKENS_LIST:+${PROF_WEEK_TOKENS_LIST},}${pname}:${p_wt}"
+        PROF_MONTH_TOKENS_LIST="${PROF_MONTH_TOKENS_LIST:+${PROF_MONTH_TOKENS_LIST},}${pname}:${p_mt}"
+        PROF_WEEK_MESSAGES_LIST="${PROF_WEEK_MESSAGES_LIST:+${PROF_WEEK_MESSAGES_LIST},}${pname}:${p_wm}"
+        PROF_WEEK_SESSIONS_LIST="${PROF_WEEK_SESSIONS_LIST:+${PROF_WEEK_SESSIONS_LIST},}${pname}:${p_ws}"
+        PROF_TODAY_COST_LIST="${PROF_TODAY_COST_LIST:+${PROF_TODAY_COST_LIST},}${pname}:${p_tc}"
+        PROF_WEEK_COST_LIST="${PROF_WEEK_COST_LIST:+${PROF_WEEK_COST_LIST},}${pname}:${p_wc}"
+        PROF_MONTH_COST_LIST="${PROF_MONTH_COST_LIST:+${PROF_MONTH_COST_LIST},}${pname}:${p_mc}"
+        PROF_DAILY_LIST="${PROF_DAILY_LIST:+${PROF_DAILY_LIST}|}${pname}:${p_daily}"
+        PROF_DAILY_COSTS_LIST="${PROF_DAILY_COSTS_LIST:+${PROF_DAILY_COSTS_LIST}|}${pname}:${p_dc}"
+        PROF_WEEK_MODELS_LIST="${PROF_WEEK_MODELS_LIST:+${PROF_WEEK_MODELS_LIST}|}${pname}:${p_models}"
+    fi
 
     # Per-profile subscription/usage lists
     PROF_SUBSCRIPTION_LIST="${PROF_SUBSCRIPTION_LIST:+${PROF_SUBSCRIPTION_LIST},}${pname}:${p_sub}"
@@ -808,6 +882,13 @@ for idx in "${!TMPFILES[@]}"; do
     rm -f "$tmpf" "$usage_tmpf"
 done
 
+LOCAL_WEEK_MODELS_LIST=""
+for tmpf in "${LOCAL_TMPFILES[@]:-}"; do
+    [ -n "$tmpf" ] || continue
+    add_token_totals "$tmpf"
+    LOCAL_WEEK_MODELS_LIST="${LOCAL_WEEK_MODELS_LIST:+${LOCAL_WEEK_MODELS_LIST}|}local:${p_models}"
+done
+
 # --- All-time from stats cache (supplementary) ---
 if [ -f "$STATS_CACHE" ]; then
     ALLTIME_SESSIONS=$(jq -r '.totalSessions // 0' "$STATS_CACHE" 2>/dev/null || echo 0)
@@ -817,7 +898,7 @@ if [ -f "$STATS_CACHE" ]; then
 fi
 
 # Build final strings
-WEEK_MODELS=$(echo "$PROF_WEEK_MODELS_LIST" | tr '|' '\n' | cut -d: -f2- | tr ',' '\n' | grep '=' | \
+WEEK_MODELS=$(echo "${PROF_WEEK_MODELS_LIST}${LOCAL_WEEK_MODELS_LIST:+|${LOCAL_WEEK_MODELS_LIST}}" | tr '|' '\n' | cut -d: -f2- | tr ',' '\n' | grep '=' | \
     awk -F= '{ acc[$1]+=$2 } END { first=1; for(m in acc) { printf "%s%s=%d", (first?"":","),(m),(acc[m]+0); first=0 } print "" }')
 DAILY=$(IFS=,; printf '%s' "${DAILY_ARR[*]}")
 DAILY_COSTS=$(IFS=,; printf '%s' "${DAILY_COSTS_ARR[*]}")
@@ -833,6 +914,9 @@ echo "SEVEN_DAY_RESET=${SEVEN_DAY_RESET}"
 echo "EXTRA_USAGE_ENABLED=${EXTRA_USAGE_ENABLED}"
 echo "SPEND=${SPEND}"
 echo "CREDS_STATUS=${CREDS_STATUS}"
+# Which path answered, so the widget sends a sign-in to cli-proxy rather than to
+# the local CLI (ADR 0009).
+[ "$CLIPROXY_ACTIVE" -eq 1 ] && echo "CLIPROXY=true" || echo "CLIPROXY=false"
 # Emitted only for a Blocked report, so the ok, missing and expired outputs are
 # unchanged and the widget's own clearing of the key on any other status is what
 # removes one left by an earlier Blocked fetch.

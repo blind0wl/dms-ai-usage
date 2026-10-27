@@ -31,6 +31,12 @@ Item {
         return name === "all" ? api.tr("All") : name;
     }
 
+    // An Account cli-proxy holds disabled stays listed, dimmed, so it reads as
+    // switched off rather than gone.
+    function dimmed(name) {
+        return api.accountStatus(ctx.source.id, name) === "disabled";
+    }
+
     Loader {
         id: selectorLoader
         width: parent.width
@@ -67,6 +73,7 @@ Item {
                         font.pixelSize: Theme.fontSizeSmall
                         font.weight: root.selected === modelData ? Font.Medium : Font.Normal
                         color: root.selected === modelData ? Theme.primaryText : Theme.surfaceVariantText
+                        opacity: root.dimmed(modelData) ? 0.5 : 1
                     }
 
                     MouseArea {
@@ -159,6 +166,7 @@ Item {
                                 text: root.labelFor(modelData)
                                 font.pixelSize: Theme.fontSizeSmall
                                 color: root.selected === modelData ? Theme.primaryText : Theme.surfaceText
+                                opacity: root.dimmed(modelData) ? 0.5 : 1
                             }
 
                             MouseArea {

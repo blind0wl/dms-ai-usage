@@ -167,6 +167,11 @@ check(reg.overviewRow(fixture("zai", { credsStatus: "missing" })).missing === tr
       "a Missing row is unranked, so it draws the sign-in affordance instead of a bar");
 check(reg.overviewRow(fixture("opencode", { credsStatus: "unavailable" })).stale === true,
       "an Unavailable row keeps a reading to draw dimmed and marked stale");
+const disabledRow = reg.overviewRow(fixture("claude", { credsStatus: "disabled" }));
+check(disabledRow.disabled === true && disabledRow.ranked === false && disabledRow.missing === false,
+      "a Source whose every cli-proxy Account is disabled is unranked and offers no sign-in, even with a last reading");
+check(reg.overviewRow(fixture("opencode", { credsStatus: "expired", cliProxy: true })).loginKind === "cli",
+      "a cli-proxy Source's row offers the sign-in button, which opens cli-proxy");
 
 // --- The Section that draws them ---
 check(/model: root\.rows/.test(section), "the Overview is a repeater over the rows it is handed");

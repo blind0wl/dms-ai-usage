@@ -17,6 +17,10 @@ if ! . "$SCRIPT_DIR/lib/source-script.sh" 2>/dev/null; then
     printf 'BLOCKING_REQUIREMENT=%s\n' 'lib/source-script.sh'
     exit 0
 fi
+if ! . "$SCRIPT_DIR/lib/cli-proxy.sh" 2>/dev/null; then
+    blocked_report 'lib/cli-proxy.sh' "$@"
+    exit 0
+fi
 
 # Before anything else: with a Requirement absent nothing downstream can be read,
 # so a swallowed jq failure would report a credential verdict instead of naming
@@ -55,24 +59,33 @@ read_key() {
     jq -r '."opencode-go".key // ""' "$1" 2>/dev/null
 }
 
-if ! pi_key=$(read_key "$PI_AUTH"); then
-    blocked_report "jq" "$@"
-    exit 0
-fi
-[ -n "$pi_key" ] && add_account "default" "$pi_key" "~/.pi/agent/auth.json"
+# cli-proxy is asked first: when it holds keys the local ones are not read at
+# all, so a broken local auth file cannot stand in the way of its answer.
+cliproxy_read opencode-go
+if [ "$CLIPROXY_ACTIVE" -eq 0 ]; then
+    if ! pi_key=$(read_key "$PI_AUTH"); then
+        blocked_report "jq" "$@"
+        exit 0
+    fi
+    [ -n "$pi_key" ] && add_account "default" "$pi_key" "~/.pi/agent/auth.json"
 
-if ! opencode_key=$(read_key "$OPENCODE_AUTH"); then
-    blocked_report "jq" "$@"
-    exit 0
-fi
-[ -n "$opencode_key" ] && add_account "default" "$opencode_key" "~/.local/share/opencode/auth.json"
+    if ! opencode_key=$(read_key "$OPENCODE_AUTH"); then
+        blocked_report "jq" "$@"
+        exit 0
+    fi
+    [ -n "$opencode_key" ] && add_account "default" "$opencode_key" "~/.local/share/opencode/auth.json"
 
-[ -n "${OPENCODE_GO_KEY:-}" ] && add_account "default" "$OPENCODE_GO_KEY" "OPENCODE_GO_KEY"
-[ -n "${OPENCODE_API_KEY:-}" ] && add_account "default" "$OPENCODE_API_KEY" "OPENCODE_API_KEY"
+    [ -n "${OPENCODE_GO_KEY:-}" ] && add_account "default" "$OPENCODE_GO_KEY" "OPENCODE_GO_KEY"
+    [ -n "${OPENCODE_API_KEY:-}" ] && add_account "default" "$OPENCODE_API_KEY" "OPENCODE_API_KEY"
+fi
 
 # An Account's value here is its API key. The Custom Accounts register last, so
 # the discovery order above takes priority over them.
 parse_account_args "$@"
+
+# With cli-proxy holding opencode Go keys, they are the Accounts instead of the
+# ones found above (ADR 0009).
+cliproxy_take_registry
 
 # The settings page's Account editor asks for the list on its own, with the same
 # name=value arguments the widget fetches with so that the two agree about which
@@ -155,9 +168,15 @@ fetch_account_usage() {
     # The key goes in Authorization as "Bearer <key>", which the endpoint
     # accepts; without one it answers 401 with an AuthError body.
     local raw http body
-    raw=$(curl -s --max-time 10 -w $'\n%{http_code}' \
-        -H "Authorization: Bearer $key" \
-        "$API_URL" 2>/dev/null || echo "")
+    if [[ "$key" == "$CLIPROXY_VALUE_PREFIX"* ]]; then
+        # cli-proxy holds the key and puts it in the request itself.
+        # shellcheck disable=SC2016
+        raw=$(cliproxy_call "$key" "$API_URL" '{"Authorization": "Bearer $TOKEN$"}')
+    else
+        raw=$(curl -s --max-time 10 -w $'\n%{http_code}' \
+            -H "Authorization: Bearer $key" \
+            "$API_URL" 2>/dev/null || echo "")
+    fi
     http="${raw##*$'\n'}"
     body="${raw%$'\n'*}"
     [ "$raw" = "$http" ] && body=""
@@ -273,6 +292,11 @@ PIDS=()
 for idx in "${!ACCOUNT_VALUES[@]}"; do
     usage_tmpf=$(mktemp "$TMPDIR_ROOT/account_XXXXXX")
     USAGE_TMPFILES+=("$usage_tmpf")
+    # An Account cli-proxy holds disabled is not asked for a reading at all.
+    if [ "$CLIPROXY_ACTIVE" -eq 1 ] && cliproxy_disabled "${ACCOUNT_NAMES[$idx]}"; then
+        write_usage_result "$usage_tmpf" "CREDS_STATUS=disabled"
+        continue
+    fi
     fetch_account_usage "${ACCOUNT_VALUES[$idx]}" "$usage_tmpf" &
     PIDS+=("$!")
 done
@@ -306,6 +330,15 @@ ACCOUNT_TERTIARY_RESET=""
 ACCOUNT_CREDS_STATUS=""
 BLOCKING_REQUIREMENT=""
 
+# With cli-proxy, the Account whose status stands for the Source is the first
+# one it holds enabled. With every one disabled there is none, so the Source
+# reports disabled rather than a reading.
+AGGREGATE_ACCOUNT=""
+if [ "$CLIPROXY_ACTIVE" -eq 1 ]; then
+    AGGREGATE_ACCOUNT=$(cliproxy_first_enabled)
+    [ -n "$AGGREGATE_ACCOUNT" ] || CREDS_STATUS="disabled"
+fi
+
 max_util() {
     awk -v a="$1" -v b="$2" 'BEGIN { print (a + 0 > b + 0) ? 1 : 0 }'
 }
@@ -333,7 +366,8 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
 
     # Plan/status come from the "default" account, falling back to the first
     # account when the user only configured named ones.
-    if [ "$aname" = "default" ] || [ "$idx" -eq 0 ]; then
+    if { [ "$CLIPROXY_ACTIVE" -eq 1 ] && [ "$aname" = "$AGGREGATE_ACCOUNT" ]; } \
+        || { [ "$CLIPROXY_ACTIVE" -eq 0 ] && { [ "$aname" = "default" ] || [ "$idx" -eq 0 ]; }; }; then
         PLAN_TYPE="$a_plan"
         CREDS_STATUS="$a_cs"
         # The command list beside the status is the default Account's, because
@@ -341,25 +375,29 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
         BLOCKING_REQUIREMENT="$a_br"
     fi
 
-    # Windows: the highest utilisation is the binding constraint, so its reset
-    # is the one the countdown must show.
-    if [ -n "$a_pr" ] && { [ -z "$PRIMARY_RESET" ] || [ "$(max_util "$a_pu" "$PRIMARY_UTIL")" = "1" ]; }; then
-        PRIMARY_UTIL="$a_pu"
-        PRIMARY_RESET="$a_pr"
-    fi
-    if [ -n "$a_sr" ] && { [ -z "$SECONDARY_RESET" ] || [ "$(max_util "$a_su" "$SECONDARY_UTIL")" = "1" ]; }; then
-        SECONDARY_UTIL="$a_su"
-        SECONDARY_RESET="$a_sr"
-    fi
-    # Tertiary binds the same way: the highest monthly Utilisation wins, and
-    # its reset is the one the countdown shows. An Account with no monthly
-    # reading binds nothing.
-    if [ -n "$a_has_tertiary" ] && [ -n "$a_tr" ] && { [ -z "$TERTIARY_RESET" ] || [ "$(max_util "$a_tu" "$TERTIARY_UTIL")" = "1" ]; }; then
-        TERTIARY_UTIL="$a_tu"
-        TERTIARY_RESET="$a_tr"
-    fi
-    if [ -n "$a_has_tertiary" ]; then
-        TERTIARY_REPORTED=1
+    # With cli-proxy the Source's Windows are the first enabled Account's,
+    # as its status is; locally every Account binds.
+    if [ "$CLIPROXY_ACTIVE" -eq 0 ] || [ "$aname" = "$AGGREGATE_ACCOUNT" ]; then
+        # Windows: the highest utilisation is the binding constraint, so its reset
+        # is the one the countdown must show.
+        if [ -n "$a_pr" ] && { [ -z "$PRIMARY_RESET" ] || [ "$(max_util "$a_pu" "$PRIMARY_UTIL")" = "1" ]; }; then
+            PRIMARY_UTIL="$a_pu"
+            PRIMARY_RESET="$a_pr"
+        fi
+        if [ -n "$a_sr" ] && { [ -z "$SECONDARY_RESET" ] || [ "$(max_util "$a_su" "$SECONDARY_UTIL")" = "1" ]; }; then
+            SECONDARY_UTIL="$a_su"
+            SECONDARY_RESET="$a_sr"
+        fi
+        # Tertiary binds the same way: the highest monthly Utilisation wins, and
+        # its reset is the one the countdown shows. An Account with no monthly
+        # reading binds nothing.
+        if [ -n "$a_has_tertiary" ] && [ -n "$a_tr" ] && { [ -z "$TERTIARY_RESET" ] || [ "$(max_util "$a_tu" "$TERTIARY_UTIL")" = "1" ]; }; then
+            TERTIARY_UTIL="$a_tu"
+            TERTIARY_RESET="$a_tr"
+        fi
+        if [ -n "$a_has_tertiary" ]; then
+            TERTIARY_REPORTED=1
+        fi
     fi
 
     # Each Account's own reading, so a rejected key cannot disappear behind a
@@ -368,7 +406,7 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     # keys omit them (ADR 0002/0005): there is no reading, and a zero would be
     # fabricated rather than measured.
     ACCOUNT_CREDS_STATUS="${ACCOUNT_CREDS_STATUS:+${ACCOUNT_CREDS_STATUS},}${aname}:${a_cs}"
-    if [ "$a_cs" != "unavailable" ] && [ "$a_cs" != "blocked" ]; then
+    if [ "$a_cs" != "unavailable" ] && [ "$a_cs" != "blocked" ] && [ "$a_cs" != "disabled" ]; then
         ACCOUNT_PRIMARY_UTIL="${ACCOUNT_PRIMARY_UTIL:+${ACCOUNT_PRIMARY_UTIL},}${aname}:${a_pu}"
         ACCOUNT_PRIMARY_RESET="${ACCOUNT_PRIMARY_RESET:+${ACCOUNT_PRIMARY_RESET},}${aname}:${a_pr}"
         ACCOUNT_SECONDARY_UTIL="${ACCOUNT_SECONDARY_UTIL:+${ACCOUNT_SECONDARY_UTIL},}${aname}:${a_su}"
@@ -405,6 +443,9 @@ if [ "$CREDS_STATUS" != "unavailable" ] && [ "$CREDS_STATUS" != "blocked" ]; the
     fi
 fi
 echo "CREDS_STATUS=${CREDS_STATUS}"
+# Which path answered, so the widget sends a sign-in to cli-proxy rather than to
+# the local CLI (ADR 0009).
+[ "$CLIPROXY_ACTIVE" -eq 1 ] && echo "CLIPROXY=true" || echo "CLIPROXY=false"
 # Emitted only for a Blocked report, so the other outputs are unchanged and the
 # widget's own clearing of the key removes one a previous fetch left.
 if [ "$CREDS_STATUS" = "blocked" ]; then
