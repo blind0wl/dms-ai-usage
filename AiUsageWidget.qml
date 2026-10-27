@@ -50,6 +50,18 @@ PluginComponent {
     }
     property var lastAccountSettings: null
 
+    // cli-proxy, when switched on, is every Script's source of truth and the
+    // local credentials its fallback (ADR 0009). The Scripts read it from their
+    // environment, so the key never reaches a command line.
+    property var cliProxyEnvironment: Sources.cliProxyEnvironment(pluginData.cliProxyEnabled === true, pluginData.cliProxyUrl, pluginData.cliProxyKey)
+    // pluginData is reassigned whole on every save, so the change is compared as
+    // text rather than refetching on every setting.
+    readonly property string cliProxySignature: JSON.stringify(cliProxyEnvironment)
+    onCliProxySignatureChanged: {
+        if (root.sourceOrder)
+            root.fetchEnabled();
+    }
+
     // The currency rate the cost figures are read through. One Source's Script
     // reports it and every Source's costs use it, so it lands on that Source's
     // State like any other key and the one the widget formats with is derived
@@ -441,6 +453,7 @@ PluginComponent {
             readonly property string sourceId: modelData.id
 
             command: root.commandFor(sourceId)
+            environment: root.cliProxyEnvironment
             running: false
 
             stdout: SplitParser {
@@ -558,6 +571,13 @@ PluginComponent {
     }
 
     function startLogin(id) {
+        // A cli-proxy Account is signed in again on cli-proxy's own page: a
+        // local login would not reach the credential cli-proxy holds.
+        var st = root.sourceData[id];
+        if (st && st.cliProxy) {
+            Qt.openUrlExternally(Sources.cliProxyManagementUrl(pluginData.cliProxyUrl));
+            return;
+        }
         var d = Sources.byId(id);
         if (!d || !d.login || d.login.kind !== "cli")
             return;
@@ -688,6 +708,11 @@ PluginComponent {
 
         function selectAccount(id, name) {
             root.selectAccount(id, name);
+        }
+
+        function accountStatus(id, name) {
+            var overlay = (root.accountData[id] || {})[name];
+            return overlay && overlay.credsStatus ? overlay.credsStatus : "";
         }
 
         // Selecting a tab is what a press on an Overview row does: the Overview

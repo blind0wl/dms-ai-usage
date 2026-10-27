@@ -17,11 +17,19 @@ if ! . "$SCRIPT_DIR/lib/source-script.sh" 2>/dev/null; then
     printf 'BLOCKING_REQUIREMENT=%s\n' 'lib/source-script.sh'
     exit 0
 fi
+if ! . "$SCRIPT_DIR/lib/cli-proxy.sh" 2>/dev/null; then
+    blocked_report 'lib/cli-proxy.sh' "$@"
+    exit 0
+fi
 
 # Before anything else: with a Requirement absent nothing downstream can be read,
 # so a swallowed jq failure would report a credential verdict instead of naming
 # the real cause (ADR 0005). Reports Blocked and ends the Script.
 require_requirements "$@"
+
+# cli-proxy, when configured, is asked first: Accounts it holds put the Source in
+# use on this machine whether or not the codex CLI is installed (ADR 0009).
+cliproxy_read codex
 
 # Cheapest possible check, before any temp dirs, network calls, or account
 # scanning: if the `codex` binary genuinely isn't installed, this Source
@@ -37,7 +45,7 @@ require_requirements "$@"
 # read as "not installed". Widen the search PATH with the common install
 # locations, and treat an existing auth file as proof of installation
 # regardless of PATH (if it's there, `codex` was run to create it).
-if ! PATH="${PATH}:${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/bin:${HOME}/go/bin:${HOME}/.cargo/bin:${HOME}/.volta/bin" command -v codex >/dev/null 2>&1 \
+if [ "$CLIPROXY_ACTIVE" -eq 0 ] && ! PATH="${PATH}:${HOME}/.local/bin:${HOME}/.npm-global/bin:${HOME}/bin:${HOME}/go/bin:${HOME}/.cargo/bin:${HOME}/.volta/bin" command -v codex >/dev/null 2>&1 \
     && [ ! -f "${CODEX_HOME:-${HOME}/.codex}/auth.json" ]; then
     cat <<'NOTINSTALLED'
 PLAN_TYPE=unknown
@@ -360,72 +368,90 @@ fetch_account_usage() {
         fi
     }
 
-    if [ ! -f "$auth_file" ]; then
-        creds_status="missing"
-        write_out
-        return
-    fi
+    local api_resp
 
-    # A jq that fails reading the credential file must not read as the file
-    # lacking the key: the two outcomes are different states (ADR 0005). The exit
-    # status is what tells them apart, so it is captured rather than swallowed.
-    local token account_id last_refresh
-    token=$(jq -r '.tokens.access_token // ""' "$auth_file" 2>/dev/null) || blocking="jq"
-    account_id=$(jq -r '.tokens.account_id // ""' "$auth_file" 2>/dev/null) || blocking="jq"
-    last_refresh=$(jq -r '.last_refresh // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+    # A cli-proxy Account has no auth file here: cli-proxy holds the token and
+    # puts it in the request itself, and refreshes it on its own schedule.
+    if [[ "$codex_home" == "$CLIPROXY_VALUE_PREFIX"* ]]; then
+        local cp_account="${codex_home#"$CLIPROXY_VALUE_PREFIX"}" cp_raw cp_status
+        cp_account="${cp_account#*:}"
+        cp_raw=$(cliproxy_call "$codex_home" "https://chatgpt.com/backend-api/wham/usage" \
+            "$(jq -cn --arg a "$cp_account" '{"Authorization": "Bearer $TOKEN$", "User-Agent": "codex-cli"} + (if $a != "" then {"ChatGPT-Account-Id": $a} else {} end)')")
+        cp_status="${cp_raw##*$'\n'}"
+        api_resp="${cp_raw%$'\n'*}"
+        # The api-call route failing is cli-proxy's, not the token's.
+        if [ "$cp_status" = "000" ]; then
+            creds_status="unavailable"
+            write_failure
+            return
+        fi
+    else
+        if [ ! -f "$auth_file" ]; then
+            creds_status="missing"
+            write_out
+            return
+        fi
 
-    if [ -n "$blocking" ]; then
-        creds_status="blocked"
-        write_failure
-        return
-    fi
-
-    if [ -z "$token" ] || [ -z "$account_id" ]; then
-        creds_status="missing"
-        write_out
-        return
-    fi
-
-    # Stale per CodexBar's rule: last_refresh older than 8 days, or the JWT's
-    # own exp within 5 minutes. Never refresh the token ourselves here (races
-    # the `codex` CLI's own writer) — shell out to `codex login status` once,
-    # which triggers Codex's normal startup refresh if it decides one is due.
-    local stale=false now_ts
-    now_ts=$(date +%s)
-    if [ -n "$last_refresh" ]; then
-        local refresh_ts age_days
-        refresh_ts=$(date -d "$last_refresh" +%s 2>/dev/null || echo 0)
-        age_days=$(( (now_ts - refresh_ts) / 86400 ))
-        [ "$age_days" -ge "$STALE_REFRESH_DAYS" ] && stale=true
-    fi
-    local exp
-    if ! exp=$(jwt_exp "$token"); then
-        creds_status="blocked"
-        blocking="jq"
-        write_failure
-        return
-    fi
-    if [[ "$exp" =~ ^[0-9]+$ ]] && [ "$exp" -gt 0 ] && [ $(( exp - now_ts )) -le "$STALE_EXP_SECONDS" ]; then
-        stale=true
-    fi
-
-    if [ "$stale" = true ]; then
-        CODEX_HOME="$codex_home" timeout 15 codex login status >/dev/null 2>&1 || true
+        # A jq that fails reading the credential file must not read as the file
+        # lacking the key: the two outcomes are different states (ADR 0005). The exit
+        # status is what tells them apart, so it is captured rather than swallowed.
+        local token account_id last_refresh
         token=$(jq -r '.tokens.access_token // ""' "$auth_file" 2>/dev/null) || blocking="jq"
         account_id=$(jq -r '.tokens.account_id // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+        last_refresh=$(jq -r '.last_refresh // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+
         if [ -n "$blocking" ]; then
             creds_status="blocked"
             write_failure
             return
         fi
-    fi
 
-    local api_resp
-    api_resp=$(curl -s --max-time 5 \
-        -H "Authorization: Bearer $token" \
-        -H "ChatGPT-Account-Id: $account_id" \
-        -H "User-Agent: codex-cli" \
-        "https://chatgpt.com/backend-api/wham/usage" 2>/dev/null || echo '{}')
+        if [ -z "$token" ] || [ -z "$account_id" ]; then
+            creds_status="missing"
+            write_out
+            return
+        fi
+
+        # Stale per CodexBar's rule: last_refresh older than 8 days, or the JWT's
+        # own exp within 5 minutes. Never refresh the token ourselves here (races
+        # the `codex` CLI's own writer) — shell out to `codex login status` once,
+        # which triggers Codex's normal startup refresh if it decides one is due.
+        local stale=false now_ts
+        now_ts=$(date +%s)
+        if [ -n "$last_refresh" ]; then
+            local refresh_ts age_days
+            refresh_ts=$(date -d "$last_refresh" +%s 2>/dev/null || echo 0)
+            age_days=$(( (now_ts - refresh_ts) / 86400 ))
+            [ "$age_days" -ge "$STALE_REFRESH_DAYS" ] && stale=true
+        fi
+        local exp
+        if ! exp=$(jwt_exp "$token"); then
+            creds_status="blocked"
+            blocking="jq"
+            write_failure
+            return
+        fi
+        if [[ "$exp" =~ ^[0-9]+$ ]] && [ "$exp" -gt 0 ] && [ $(( exp - now_ts )) -le "$STALE_EXP_SECONDS" ]; then
+            stale=true
+        fi
+
+        if [ "$stale" = true ]; then
+            CODEX_HOME="$codex_home" timeout 15 codex login status >/dev/null 2>&1 || true
+            token=$(jq -r '.tokens.access_token // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+            account_id=$(jq -r '.tokens.account_id // ""' "$auth_file" 2>/dev/null) || blocking="jq"
+            if [ -n "$blocking" ]; then
+                creds_status="blocked"
+                write_failure
+                return
+            fi
+        fi
+
+        api_resp=$(curl -s --max-time 5 \
+            -H "Authorization: Bearer $token" \
+            -H "ChatGPT-Account-Id: $account_id" \
+            -H "User-Agent: codex-cli" \
+            "https://chatgpt.com/backend-api/wham/usage" 2>/dev/null || echo '{}')
+    fi
 
     # The response body separates the two jq failure modes (ADR 0005). A body
     # that is not valid JSON is the endpoint answering with something unexpected,
@@ -513,6 +539,10 @@ for arg in "$@"; do
     esac
 done
 
+# With cli-proxy holding Codex auths, they are the Accounts and the local ones
+# above are kept aside for their session logs alone (ADR 0009).
+cliproxy_take_registry
+
 # The settings page's Account editor asks for the list on its own, with the same
 # name=value arguments the widget fetches with so that the two agree about which
 # Account a name refers to. This returns before the first request: opening the
@@ -543,11 +573,38 @@ for idx in "${!ACCOUNT_VALUES[@]}"; do
     USAGE_TMPFILES+=("$usage_tmpf")
     TOKENS_TMPFILES+=("$tokens_tmpf")
     ALLTIME_TMPFILES+=("$alltime_tmpf")
+    # A cli-proxy Account has no session logs of its own to count, and one
+    # cli-proxy holds disabled is not asked for a reading at all.
+    if [ "$CLIPROXY_ACTIVE" -eq 1 ]; then
+        if cliproxy_disabled "${ACCOUNT_NAMES[$idx]}"; then
+            write_usage_result "$usage_tmpf" "CREDS_STATUS=disabled"
+        else
+            fetch_account_usage "${ACCOUNT_VALUES[$idx]}" "$usage_tmpf" &
+            PIDS+=("$!")
+        fi
+        continue
+    fi
     fetch_account_usage "${ACCOUNT_VALUES[$idx]}" "$usage_tmpf" &
     PIDS+=("$!")
     count_account_tokens "${ACCOUNT_VALUES[$idx]}/sessions" "$tokens_tmpf" &
     PIDS+=("$!")
     count_account_alltime "${ACCOUNT_VALUES[$idx]}/sessions" "$alltime_tmpf" &
+    PIDS+=("$!")
+done
+
+# The token history is still the local session logs', counted once per local
+# Account into the Source's totals, since no cli-proxy Account maps onto one.
+LOCAL_TOKENS_TMPFILES=()
+LOCAL_ALLTIME_TMPFILES=()
+for value in "${LOCAL_ACCOUNT_VALUES[@]:-}"; do
+    [ -n "$value" ] || continue
+    tokens_tmpf=$(mktemp "$TMPDIR_ROOT/local_tokens_XXXXXX")
+    alltime_tmpf=$(mktemp "$TMPDIR_ROOT/local_alltime_XXXXXX")
+    LOCAL_TOKENS_TMPFILES+=("$tokens_tmpf")
+    LOCAL_ALLTIME_TMPFILES+=("$alltime_tmpf")
+    count_account_tokens "${value}/sessions" "$tokens_tmpf" &
+    PIDS+=("$!")
+    count_account_alltime "${value}/sessions" "$alltime_tmpf" &
     PIDS+=("$!")
 done
 
@@ -601,30 +658,21 @@ ACCOUNT_DAILY_COSTS_LIST=""
 DAILY_ARR=(0 0 0 0 0 0 0)
 DAILY_COSTS_ARR=(0.00 0.00 0.00 0.00 0.00 0.00 0.00)
 
-for idx in "${!USAGE_TMPFILES[@]}"; do
-    usage_tmpf="${USAGE_TMPFILES[$idx]}"
-    tokens_tmpf="${TOKENS_TMPFILES[$idx]}"
-    alltime_tmpf="${ALLTIME_TMPFILES[$idx]}"
-    aname="${ACCOUNT_NAMES[$idx]}"
-    [ -f "$usage_tmpf" ] || continue
+# The Account whose reading stands for the Source: "default" locally, and the
+# first one cli-proxy holds enabled. With every cli-proxy Account disabled there
+# is none, and the Source reports disabled rather than a reading.
+AGGREGATE_ACCOUNT="default"
+if [ "$CLIPROXY_ACTIVE" -eq 1 ]; then
+    AGGREGATE_ACCOUNT=$(cliproxy_first_enabled)
+    [ -n "$AGGREGATE_ACCOUNT" ] || CREDS_STATUS="disabled"
+fi
 
-    a_plan="unknown"
-    a_pu=0; a_pr=""; a_pw=0
-    a_su=0; a_sr=""; a_sw=0
-    a_cb="0"; a_ch="false"; a_cs="missing"; a_br=""
-
-    a_plan=$(result_value "$usage_tmpf" PLAN_TYPE unknown)
-    a_pu=$(result_value "$usage_tmpf" PRIMARY_UTIL 0)
-    a_pr=$(result_value "$usage_tmpf" PRIMARY_RESET "")
-    a_pw=$(result_value "$usage_tmpf" PRIMARY_WINDOW_SECONDS 0)
-    a_su=$(result_value "$usage_tmpf" SECONDARY_UTIL 0)
-    a_sr=$(result_value "$usage_tmpf" SECONDARY_RESET "")
-    a_sw=$(result_value "$usage_tmpf" SECONDARY_WINDOW_SECONDS 0)
-    a_cb=$(result_value "$usage_tmpf" CREDITS_BALANCE "0")
-    a_ch=$(result_value "$usage_tmpf" CREDITS_HAS false)
-    a_cs=$(result_value "$usage_tmpf" CREDS_STATUS missing)
-    a_br=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
-
+# Reads one Account's token and all-time files into the a_* values and adds them
+# to the Source's totals. The per-Account loop and the local session logs
+# cli-proxy Accounts sit beside both call it, so the two cannot total
+# differently.
+add_token_totals() {
+    local tokens_tmpf="$1" alltime_tmpf="$2"
     a_wt=0; a_wm=0; a_ws=0; a_mt=0; a_daily="0,0,0,0,0,0,0"; a_models=""
     a_tc="0.00"; a_wc="0.00"; a_mc="0.00"; a_dc="0.00,0.00,0.00,0.00,0.00,0.00,0.00"
     if [ -f "$tokens_tmpf" ]; then
@@ -645,22 +693,6 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
         a_as=$(result_value "$alltime_tmpf" ALLTIME_SESSIONS 0)
         a_am=$(result_value "$alltime_tmpf" ALLTIME_MESSAGES 0)
         a_fs=$(result_value "$alltime_tmpf" FIRST_SESSION unknown)
-    fi
-
-    if [ "$aname" = "default" ]; then
-        PLAN_TYPE="$a_plan"
-        PRIMARY_UTIL="$a_pu"
-        PRIMARY_RESET="$a_pr"
-        PRIMARY_WINDOW_SECONDS="$a_pw"
-        SECONDARY_UTIL="$a_su"
-        SECONDARY_RESET="$a_sr"
-        SECONDARY_WINDOW_SECONDS="$a_sw"
-        CREDITS_BALANCE="$a_cb"
-        CREDITS_HAS="$a_ch"
-        CREDS_STATUS="$a_cs"
-        # The command list beside the status is the default Account's, because
-        # the status is: the two always describe the same report.
-        BLOCKING_REQUIREMENT="$a_br"
     fi
 
     # Aggregate token totals across all accounts
@@ -691,6 +723,49 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
         END { for(i=1;i<=7;i++) printf "%s%.2f", (i>1?",":""), a[i]+0; print "" }
     ')
     IFS=',' read -ra DAILY_COSTS_ARR <<< "$DAILY_COSTS"
+}
+
+for idx in "${!USAGE_TMPFILES[@]}"; do
+    usage_tmpf="${USAGE_TMPFILES[$idx]}"
+    tokens_tmpf="${TOKENS_TMPFILES[$idx]}"
+    alltime_tmpf="${ALLTIME_TMPFILES[$idx]}"
+    aname="${ACCOUNT_NAMES[$idx]}"
+    [ -f "$usage_tmpf" ] || continue
+
+    a_plan="unknown"
+    a_pu=0; a_pr=""; a_pw=0
+    a_su=0; a_sr=""; a_sw=0
+    a_cb="0"; a_ch="false"; a_cs="missing"; a_br=""
+
+    a_plan=$(result_value "$usage_tmpf" PLAN_TYPE unknown)
+    a_pu=$(result_value "$usage_tmpf" PRIMARY_UTIL 0)
+    a_pr=$(result_value "$usage_tmpf" PRIMARY_RESET "")
+    a_pw=$(result_value "$usage_tmpf" PRIMARY_WINDOW_SECONDS 0)
+    a_su=$(result_value "$usage_tmpf" SECONDARY_UTIL 0)
+    a_sr=$(result_value "$usage_tmpf" SECONDARY_RESET "")
+    a_sw=$(result_value "$usage_tmpf" SECONDARY_WINDOW_SECONDS 0)
+    a_cb=$(result_value "$usage_tmpf" CREDITS_BALANCE "0")
+    a_ch=$(result_value "$usage_tmpf" CREDITS_HAS false)
+    a_cs=$(result_value "$usage_tmpf" CREDS_STATUS missing)
+    a_br=$(result_value "$usage_tmpf" BLOCKING_REQUIREMENT "")
+
+    add_token_totals "$tokens_tmpf" "$alltime_tmpf"
+
+    if [ "$aname" = "$AGGREGATE_ACCOUNT" ]; then
+        PLAN_TYPE="$a_plan"
+        PRIMARY_UTIL="$a_pu"
+        PRIMARY_RESET="$a_pr"
+        PRIMARY_WINDOW_SECONDS="$a_pw"
+        SECONDARY_UTIL="$a_su"
+        SECONDARY_RESET="$a_sr"
+        SECONDARY_WINDOW_SECONDS="$a_sw"
+        CREDITS_BALANCE="$a_cb"
+        CREDITS_HAS="$a_ch"
+        CREDS_STATUS="$a_cs"
+        # The command list beside the status is the default Account's, because
+        # the status is: the two always describe the same report.
+        BLOCKING_REQUIREMENT="$a_br"
+    fi
 
     ACCOUNT_PLAN_LIST="${ACCOUNT_PLAN_LIST:+${ACCOUNT_PLAN_LIST},}${aname}:${a_plan}"
     ACCOUNT_PRIMARY_UTIL_LIST="${ACCOUNT_PRIMARY_UTIL_LIST:+${ACCOUNT_PRIMARY_UTIL_LIST},}${aname}:${a_pu}"
@@ -698,23 +773,33 @@ for idx in "${!USAGE_TMPFILES[@]}"; do
     ACCOUNT_SECONDARY_UTIL_LIST="${ACCOUNT_SECONDARY_UTIL_LIST:+${ACCOUNT_SECONDARY_UTIL_LIST},}${aname}:${a_su}"
     ACCOUNT_SECONDARY_RESET_LIST="${ACCOUNT_SECONDARY_RESET_LIST:+${ACCOUNT_SECONDARY_RESET_LIST},}${aname}:${a_sr}"
     ACCOUNT_CREDS_STATUS_LIST="${ACCOUNT_CREDS_STATUS_LIST:+${ACCOUNT_CREDS_STATUS_LIST},}${aname}:${a_cs}"
-    ACCOUNT_WEEK_TOKENS_LIST="${ACCOUNT_WEEK_TOKENS_LIST:+${ACCOUNT_WEEK_TOKENS_LIST},}${aname}:${a_wt}"
-    ACCOUNT_MONTH_TOKENS_LIST="${ACCOUNT_MONTH_TOKENS_LIST:+${ACCOUNT_MONTH_TOKENS_LIST},}${aname}:${a_mt}"
-    ACCOUNT_WEEK_MESSAGES_LIST="${ACCOUNT_WEEK_MESSAGES_LIST:+${ACCOUNT_WEEK_MESSAGES_LIST},}${aname}:${a_wm}"
-    ACCOUNT_WEEK_SESSIONS_LIST="${ACCOUNT_WEEK_SESSIONS_LIST:+${ACCOUNT_WEEK_SESSIONS_LIST},}${aname}:${a_ws}"
-    ACCOUNT_DAILY_LIST="${ACCOUNT_DAILY_LIST:+${ACCOUNT_DAILY_LIST}|}${aname}:${a_daily}"
-    ACCOUNT_WEEK_MODELS_LIST="${ACCOUNT_WEEK_MODELS_LIST:+${ACCOUNT_WEEK_MODELS_LIST}|}${aname}:${a_models}"
-    ACCOUNT_TODAY_COST_LIST="${ACCOUNT_TODAY_COST_LIST:+${ACCOUNT_TODAY_COST_LIST},}${aname}:${a_tc}"
-    ACCOUNT_WEEK_COST_LIST="${ACCOUNT_WEEK_COST_LIST:+${ACCOUNT_WEEK_COST_LIST},}${aname}:${a_wc}"
-    ACCOUNT_MONTH_COST_LIST="${ACCOUNT_MONTH_COST_LIST:+${ACCOUNT_MONTH_COST_LIST},}${aname}:${a_mc}"
-    ACCOUNT_DAILY_COSTS_LIST="${ACCOUNT_DAILY_COSTS_LIST:+${ACCOUNT_DAILY_COSTS_LIST}|}${aname}:${a_dc}"
+    # A cli-proxy Account has no session logs of its own, so it reports none
+    # rather than a zero it never counted.
+    if [ "$CLIPROXY_ACTIVE" -eq 0 ]; then
+        ACCOUNT_WEEK_TOKENS_LIST="${ACCOUNT_WEEK_TOKENS_LIST:+${ACCOUNT_WEEK_TOKENS_LIST},}${aname}:${a_wt}"
+        ACCOUNT_MONTH_TOKENS_LIST="${ACCOUNT_MONTH_TOKENS_LIST:+${ACCOUNT_MONTH_TOKENS_LIST},}${aname}:${a_mt}"
+        ACCOUNT_WEEK_MESSAGES_LIST="${ACCOUNT_WEEK_MESSAGES_LIST:+${ACCOUNT_WEEK_MESSAGES_LIST},}${aname}:${a_wm}"
+        ACCOUNT_WEEK_SESSIONS_LIST="${ACCOUNT_WEEK_SESSIONS_LIST:+${ACCOUNT_WEEK_SESSIONS_LIST},}${aname}:${a_ws}"
+        ACCOUNT_DAILY_LIST="${ACCOUNT_DAILY_LIST:+${ACCOUNT_DAILY_LIST}|}${aname}:${a_daily}"
+        ACCOUNT_WEEK_MODELS_LIST="${ACCOUNT_WEEK_MODELS_LIST:+${ACCOUNT_WEEK_MODELS_LIST}|}${aname}:${a_models}"
+        ACCOUNT_TODAY_COST_LIST="${ACCOUNT_TODAY_COST_LIST:+${ACCOUNT_TODAY_COST_LIST},}${aname}:${a_tc}"
+        ACCOUNT_WEEK_COST_LIST="${ACCOUNT_WEEK_COST_LIST:+${ACCOUNT_WEEK_COST_LIST},}${aname}:${a_wc}"
+        ACCOUNT_MONTH_COST_LIST="${ACCOUNT_MONTH_COST_LIST:+${ACCOUNT_MONTH_COST_LIST},}${aname}:${a_mc}"
+        ACCOUNT_DAILY_COSTS_LIST="${ACCOUNT_DAILY_COSTS_LIST:+${ACCOUNT_DAILY_COSTS_LIST}|}${aname}:${a_dc}"
+    fi
 
     rm -f "$usage_tmpf" "$tokens_tmpf" "$alltime_tmpf"
 done
 
+LOCAL_WEEK_MODELS_LIST=""
+for idx in "${!LOCAL_TOKENS_TMPFILES[@]}"; do
+    add_token_totals "${LOCAL_TOKENS_TMPFILES[$idx]}" "${LOCAL_ALLTIME_TMPFILES[$idx]}"
+    LOCAL_WEEK_MODELS_LIST="${LOCAL_WEEK_MODELS_LIST:+${LOCAL_WEEK_MODELS_LIST}|}local:${a_models}"
+done
+
 ACCOUNTS=$(IFS=,; echo "${ACCOUNT_NAMES[*]}")
 
-WEEK_MODELS=$(echo "$ACCOUNT_WEEK_MODELS_LIST" | tr '|' '\n' | cut -d: -f2- | tr ',' '\n' | grep '=' | \
+WEEK_MODELS=$(echo "${ACCOUNT_WEEK_MODELS_LIST}${LOCAL_WEEK_MODELS_LIST:+|${LOCAL_WEEK_MODELS_LIST}}" | tr '|' '\n' | cut -d: -f2- | tr ',' '\n' | grep '=' | \
     awk -F= '{ acc[$1]+=$2 } END { first=1; for(m in acc) { printf "%s%s=%d", (first?"":","),(m),(acc[m]+0); first=0 } print "" }')
 
 echo "PLAN_TYPE=${PLAN_TYPE}"
@@ -732,6 +817,9 @@ if [ "$CREDS_STATUS" != "blocked" ] && [ "$CREDS_STATUS" != "unavailable" ]; the
     echo "CREDITS_HAS=${CREDITS_HAS}"
 fi
 echo "CREDS_STATUS=${CREDS_STATUS}"
+# Which path answered, so the widget sends a sign-in to cli-proxy rather than to
+# the local CLI (ADR 0009).
+[ "$CLIPROXY_ACTIVE" -eq 1 ] && echo "CLIPROXY=true" || echo "CLIPROXY=false"
 # Emitted only for a Blocked report, so the other outputs are unchanged and the
 # widget's own clearing of the key removes one a previous fetch left.
 if [ "$CREDS_STATUS" = "blocked" ]; then

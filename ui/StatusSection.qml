@@ -35,9 +35,12 @@ StyledRect {
     // missing or failing Requirement, which the Script named in its report;
     // Unavailable is a failed endpoint, whose copy the descriptor carries.
     readonly property bool blocked: source && source.credsStatus === "blocked"
+    // An Account cli-proxy holds disabled has no reading, by the user's choice
+    // in cli-proxy rather than a failure, so the fix it names is cli-proxy's.
+    readonly property bool disabled: source && source.credsStatus === Sources.DISABLED
     // The Section's own intent to show. The renderer reads this rather than
     // `visible`, which QML reports as false while an ancestor is hidden.
-    readonly property bool shown: blocked || unavailable
+    readonly property bool shown: blocked || unavailable || disabled
 
     // The commands the Script could not read past, as its report named them, so
     // the card can say which one to install. The list is the report's, not a
@@ -51,6 +54,8 @@ StyledRect {
     readonly property string title: {
         if (blocked)
             return api.tr("Blocked by a requirement");
+        if (disabled)
+            return api.tr("Disabled in cli-proxy");
         if (status && status.titleKey)
             return api.tr(status.titleKey);
         return api.tr("Usage endpoint unavailable");
@@ -58,6 +63,8 @@ StyledRect {
     readonly property string body: {
         if (blocked)
             return api.tr("This Source could not be read because a required command is unavailable") + ": " + requirements + ".";
+        if (disabled)
+            return api.tr("cli-proxy holds this account disabled, so it has no reading. Enable it in cli-proxy to track it again.");
         if (!status)
             return "";
         if (!hasData && status.emptyBodyKey)

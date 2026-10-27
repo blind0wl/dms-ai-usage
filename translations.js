@@ -332,6 +332,39 @@ var strings = {
         { fr: "Connexion en cours…", es: "Iniciando sesión…" },
     "Setup guide":
         { fr: "Guide de configuration", es: "Guía de configuración" },
+    "Use cli-proxy":
+        { fr: "Utiliser cli-proxy", es: "Usar cli-proxy" },
+    "Read Claude, ChatGPT and opencode Go usage from cli-proxy, using the accounts it holds. The local credentials are used whenever cli-proxy cannot answer.":
+        {
+            fr: "Lire l'utilisation de Claude, ChatGPT et opencode Go depuis cli-proxy, avec les comptes qu'il détient. Les identifiants locaux sont utilisés chaque fois que cli-proxy ne peut pas répondre.",
+            es: "Leer el uso de Claude, ChatGPT y opencode Go desde cli-proxy, con las cuentas que contiene. Se usan las credenciales locales siempre que cli-proxy no pueda responder."
+        },
+    "cli-proxy URL":
+        { fr: "URL de cli-proxy", es: "URL de cli-proxy" },
+    "The address cli-proxy serves its management API on.":
+        {
+            fr: "L'adresse à laquelle cli-proxy sert son API de gestion.",
+            es: "La dirección en la que cli-proxy sirve su API de gestión."
+        },
+    "Management key":
+        { fr: "Clé de gestion", es: "Clave de gestión" },
+    "cli-proxy's management key: the plain value behind management secret-key in its config.yaml.":
+        {
+            fr: "La clé de gestion de cli-proxy : la valeur en clair derrière management secret-key dans son config.yaml.",
+            es: "La clave de gestión de cli-proxy: el valor en claro detrás de management secret-key en su config.yaml."
+        },
+    "Disabled in cli-proxy":
+        { fr: "Désactivé dans cli-proxy", es: "Desactivado en cli-proxy" },
+    "cli-proxy holds this account disabled, so it has no reading. Enable it in cli-proxy to track it again.":
+        {
+            fr: "Ce compte est désactivé dans cli-proxy, il n'a donc aucune mesure. Réactivez-le dans cli-proxy pour le suivre à nouveau.",
+            es: "Esta cuenta está desactivada en cli-proxy, así que no tiene lectura. Actívala en cli-proxy para volver a seguirla."
+        },
+    "Sign in to this account again in cli-proxy.":
+        {
+            fr: "Reconnectez ce compte dans cli-proxy.",
+            es: "Vuelve a iniciar sesión en esta cuenta en cli-proxy."
+        },
 }
 
 function tr(key, lang) {

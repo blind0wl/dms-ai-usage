@@ -32,7 +32,10 @@ StyledRect {
 
     readonly property bool missing: source && source.credsStatus === "missing"
     readonly property bool expired: source && source.credsStatus === "expired"
-    readonly property bool isCli: login && login.kind === "cli"
+    // A cli-proxy Account signs in again on cli-proxy's page, so it gets the
+    // button whatever its local login would be.
+    readonly property bool viaCliProxy: source && source.cliProxy === true
+    readonly property bool isCli: viaCliProxy || (login && login.kind === "cli")
     // The Section's own intent to show. The renderer reads this rather than
     // `visible`, which QML reports as false while an ancestor is hidden.
     readonly property bool shown: missing || expired
@@ -42,6 +45,8 @@ StyledRect {
         return missing ? api.tr(login.titleKey) : api.tr("Session expired");
     }
     readonly property string body: {
+        if (viaCliProxy)
+            return api.tr("Sign in to this account again in cli-proxy.");
         if (isCli)
             return api.tr("Usage data unavailable until you log in.");
         return missing ? api.tr(login.bodyKey) : api.tr("Usage data unavailable until you log in.");

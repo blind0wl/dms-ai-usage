@@ -40,7 +40,7 @@ const load = (file, suffix, extra) => {
     return sandbox;
 };
 
-const reg = load("sources.js", "; this.api = { SOURCES, byId, wirePair, splitList, nameValueMap, overviewRow, overviewRows, hasReading, nextNotInstalledCount, isHidden, STATUS_KEY, NOT_INSTALLED, BLOCKING_REQUIREMENT, BLOCKED };").api;
+const reg = load("sources.js", "; this.api = { SOURCES, byId, wirePair, splitList, nameValueMap, overviewRow, overviewRows, hasReading, nextNotInstalledCount, isHidden, STATUS_KEY, NOT_INSTALLED, BLOCKING_REQUIREMENT, BLOCKED, DISABLED };").api;
 const State = load("state.js", "; this.api = { empty, readLine, render, hasCurrentReading };", { Sources: reg }).api;
 
 const widget = fs.readFileSync(path.join(root, "AiUsageWidget.qml"), "utf8");
@@ -116,6 +116,13 @@ check(blockedState.notInstalledCount === 0, "a Blocked report resets the consecu
 const restoredState = readInto(blockedState, "CREDS_STATUS=ok");
 check(restoredState.credsStatus === "ok" && restoredState.blockingRequirement === "" && restoredState.hasData === true,
       "a restored Source returns with no stale command list and its reading back");
+// A Source or Account cli-proxy holds disabled drops its last-good reading
+// (ADR 0009), unlike Blocked, which keeps one.
+check(readInto(restoredState, "CREDS_STATUS=disabled").hasData === false,
+      "a disabled Source keeps no last-good reading");
+const accountsAfter = (accts, line) => State.readLine(State.empty(), accts, "claude", line).accounts;
+const disabledAccount = accountsAfter(accountsAfter({}, "ACCOUNT_CREDS_STATUS=a:ok"), "ACCOUNT_CREDS_STATUS=a:disabled");
+check(disabledAccount.a.hasData === false, "a disabled Account keeps no last-good reading");
 
 // The Pill's own reading predicate. The rule is narrower than the registry's:
 // it asks whether the reading is current, so a Blocked Source draws a hollow

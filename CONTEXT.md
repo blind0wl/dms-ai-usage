@@ -199,6 +199,17 @@ user cannot fix it, so the Source does not point at settings and the widget
 marks its last known values stale instead of showing them as current.
 _Avoid_: missing, not installed, error, offline
 
+**cli-proxy**:
+CLIProxyAPI, a proxy that holds subscription credentials for several Sources. When the
+user switches it on, it is the source of truth for Claude, ChatGPT and opencode Go: its
+auths are those Sources' Accounts, under the Origin _cli-proxy_, and usage is read through
+it. A Source falls back to its local Accounts whenever cli-proxy gives no auth list for it.
+
+**Disabled**:
+An Account cli-proxy holds but has switched off. It stays listed, has no reading, and is
+not asked for one. A Source whose every cli-proxy Account is Disabled reports Disabled.
+_Avoid_: missing, hidden, removed
+
 **Blocked**:
 A Source whose Script could not read its data because a Requirement is missing
 or failed, so no credential was read. A Blocked Source stays visible and names

@@ -89,6 +89,27 @@ var BLOCKING_REQUIREMENT = "BLOCKING_REQUIREMENT";
 // command rather than a credential or an endpoint.
 var BLOCKED = "blocked";
 
+// The STATUS_KEY value for an Account cli-proxy holds disabled, and for a
+// Source whose every cli-proxy Account is (ADR 0009). It carries no reading:
+// the Script does not ask for one, and the Account stays listed rather than
+// vanishing, because the user disabled it rather than removed it.
+var DISABLED = "disabled";
+
+// The environment a Script reads cli-proxy from. Empty unless the setting is on
+// and both values are filled in, which leaves every Script on its local path.
+// The widget's fetch and the settings page's listing both start Scripts with
+// it, so the two agree about which Accounts exist.
+function cliProxyEnvironment(enabled, url, key) {
+    if (!enabled || !url || !key)
+        return {};
+    return { AI_USAGE_CLIPROXY_URL: String(url), AI_USAGE_CLIPROXY_KEY: String(key) };
+}
+
+// cli-proxy's own page, where an expired auth is signed in again.
+function cliProxyManagementUrl(url) {
+    return String(url || "").replace(/\/+$/, "") + "/management.html";
+}
+
 // The number of consecutive Not installed reports that hides a Source. Fixed,
 // not a setting: one report cannot tell a genuine absence from a transient one,
 // and a Source hidden by a transient report has no way back (ADR 0004).
@@ -938,7 +959,8 @@ function overviewRow(state) {
     var missing = state.credsStatus === "missing" || state.credsStatus === "expired";
     var unavailable = state.credsStatus === "unavailable";
     var blocked = state.credsStatus === BLOCKED;
-    var reading = hasReading(state);
+    var disabled = state.credsStatus === DISABLED;
+    var reading = hasReading(state) && !disabled;
     var tightest = reading && !blocked ? tightestWindow(state) : null;
     var budgetUtil = !tightest && reading ? spendUtilisation(state.spend) : null;
     var which = tightest ? tightest.window : null;
@@ -967,6 +989,9 @@ function overviewRow(state) {
         missing: missing,
         unavailable: unavailable,
         blocked: blocked,
+        // Every Account cli-proxy holds for the Source is disabled, so it has
+        // no reading to rank and no sign-in to offer.
+        disabled: disabled,
         // The commands a Blocked Source could not read past, in the order its
         // Script reported them. Empty for every other state.
         requirements: blocked ? splitList(state.blockingRequirement) : [],
@@ -975,7 +1000,9 @@ function overviewRow(state) {
         // the descriptor says whether the Source has a CLI flow to run or only a
         // key to point at. Carried here so the row can be drawn by a repeater
         // that knows nothing about descriptors.
-        loginKind: d && d.login ? d.login.kind : null,
+        // A cli-proxy Source signs in on cli-proxy's page, whatever its local
+        // login would be.
+        loginKind: state.cliProxy === true ? "cli" : d && d.login ? d.login.kind : null,
         loginBodyKey: d && d.login && d.login.bodyKey ? d.login.bodyKey : null
     };
 }
